@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "samy-wgen"
+version = "0.1.0"
+description = "Stochastic future weather EPW generation using RS-VAR + CMIP5/6 climate deltas"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "statsmodels>=0.14",
+    "pyyaml>=6.0",
+    "openpyxl>=3.1",
+    "timezonefinder>=6.0",
+    "pytz>=2023.3",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-timeout>=2.1",
+]
+
+[project.scripts]
+samy-rsvar = "samy_wgen.pipeline.run_rsvar:main"
+samy-delta = "samy_wgen.pipeline.run_climate_delta:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/samy_wgen"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/samy_wgen/config/config.yaml",
+    "src/samy_wgen/config/cities_config.csv",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: end-to-end pipeline tests requiring Miami dataset (deselect with -m 'not slow')",
+]

@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+.pytest_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Pipeline outputs (large, user-generated)
+_ARCHIVED/
+data/
+tests/output/
+output/
+logs/
+*.pdf
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Agents
+AGENTS.md
+CLAUDE.md
+.calude/
+

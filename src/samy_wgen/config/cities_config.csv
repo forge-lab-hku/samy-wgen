@@ -1,0 +1,5 @@
+continent,kg_label,ashrae_label,city,country,latitude,longitude,cordex_domain
+North America,Csb,3B,Los Angeles,USA,34.0522,-118.2437,NAM-22
+North America,Am,1A,Miami,USA,25.7617,-80.1918,NAM-22
+North America,Dfa,5A,Toronto,Canada,43.6532,-79.3832,NAM-22
+North America,Dfb,6A,Montreal,Canada,45.5017,-73.5673,NAM-22
