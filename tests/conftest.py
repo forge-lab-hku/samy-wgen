@@ -11,6 +11,21 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--overwrite",
+        action="store_true",
+        default=False,
+        help="Overwrite cached stage outputs and rerun all pipeline stages from scratch.",
+    )
+
+
+@pytest.fixture(scope="session")
+def overwrite(request) -> bool:
+    """Whether to overwrite cached pipeline stage outputs."""
+    return request.config.getoption("--overwrite")
+
+
 @pytest.fixture(scope="session")
 def miami_data():
     """Paths to the Miami POC dataset."""

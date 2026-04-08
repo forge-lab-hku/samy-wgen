@@ -23,6 +23,77 @@ import argparse
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
+# Mapping from isdparser mandatory-section field names to samy_wgen internal names.
+# Values are exactly as returned by ISDRecordFactory (already scaled, e.g. °C, hPa, m/s).
+ISD_RENAME: dict[str, str] = {
+    "air_temperature_observation_air_temperature":       "temp",        # °C
+    "air_temperature_observation_dew_point_temperature": "dewpoint",    # °C
+    "atmospheric_pressure_observation_sea_level_pressure": "pressure",  # hPa
+    "wind_observation_speed_rate":                       "wind_speed",  # m/s
+    "wind_observation_direction_angle":                  "wind_dir",    # degrees
+}
+
+
+def remap_isd_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename ISD raw field names to samy_wgen internal names and coerce to numeric.
+
+    Keeps only the columns present in ISD_RENAME; unknown columns are dropped.
+    Missing ISD fields (e.g. wind_dir absent in older records) are silently skipped.
+
+    Args:
+        df: DataFrame with isdparser field names as columns (output of
+            ``process_station_directory`` after loading into a DataFrame).
+
+    Returns:
+        DataFrame with columns: temp, dewpoint, pressure, wind_speed, wind_dir
+        (subset, depending on what was present in the input).
+    """
+    keep = {raw: internal for raw, internal in ISD_RENAME.items() if raw in df.columns}
+    if not keep:
+        raise ValueError(
+            "No recognised ISD mandatory fields found. "
+            f"Expected one of: {list(ISD_RENAME)}. Got: {list(df.columns)}"
+        )
+    out = df[list(keep)].rename(columns=keep)
+    for col in out.columns:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out
+
+
+# Columns that are circular variables (0–360°) and must not be averaged arithmetically.
+_CIRCULAR_COLS: set[str] = {"wind_dir"}
+
+
+def resample_isd_hourly(df: pd.DataFrame) -> pd.DataFrame:
+    """Resample a remapped ISD DataFrame to one row per hour.
+
+    Aggregation rules:
+    - Continuous variables (temp, dewpoint, pressure, wind_speed): arithmetic mean.
+    - Circular variables (wind_dir): mode of observed values within the hour.
+      Mode avoids the 0°/360° wrap-around error produced by arithmetic mean,
+      and represents the prevailing direction — the standard meteorological convention.
+
+    Args:
+        df: DataFrame produced by ``remap_isd_columns``, with a DatetimeIndex.
+
+    Returns:
+        Hourly DataFrame with the same columns.
+    """
+    continuous = [c for c in df.columns if c not in _CIRCULAR_COLS]
+    circular   = [c for c in df.columns if c in _CIRCULAR_COLS]
+
+    parts = []
+    if continuous:
+        parts.append(df[continuous].resample("h").mean())
+    if circular:
+        def _mode(s: pd.Series) -> float:
+            vals = s.dropna()
+            return float(vals.mode().iloc[0]) if len(vals) > 0 else float("nan")
+        parts.append(df[circular].resample("h").agg(_mode))
+
+    result = pd.concat(parts, axis=1)[df.columns]  # restore original column order
+    return result
+
 
 def _setup_logging(log_dir: str = "logs") -> None:
     """Configure file + console logging for CLI use. Call from main() only."""
