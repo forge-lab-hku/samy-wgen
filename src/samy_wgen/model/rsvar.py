@@ -32,7 +32,10 @@ warnings.filterwarnings('ignore')
 from samy_wgen.utils.calculate_weather_var import (
     calc_RH_from_dewpoint,
     calc_Q_from_dewpoint,
-    calc_dewpoint_from_RH,
+)
+from samy_wgen.utils.physics_qa import (
+    apply_physics_qa as shared_apply_physics_qa,
+    enforce_solar_constraints as shared_enforce_solar_constraints,
 )
 
 
@@ -1063,103 +1066,58 @@ class ForecastTo2100V5:
     def _enforce_solar_constraints(self, forecast_df, preserve='blend'):
         """Enforce physical constraints on solar radiation."""
         print(f"\n  Enforcing solar radiation constraints...")
-
-        # Check if at least GHI exists
-        if 'GHI' not in forecast_df.columns:
+        output_df = shared_enforce_solar_constraints(
+            forecast_df,
+            lat=self.lat,
+            preserve=preserve,
+            night_cos_zenith_threshold=0.0,
+        )
+        if 'GHI' not in output_df.columns:
             print(f"    ⚠ No GHI column found, skipping solar constraints")
-            return forecast_df
+            return output_df
 
-        has_dni_dhi = all(v in forecast_df.columns for v in ['DNI', 'DHI'])
-        if not has_dni_dhi:
-            print(f"    ⚠ DNI/DHI not found, applying simplified constraints (GHI only)")
-
-        lat_deg = self.lat
-        lat = np.radians(lat_deg)
-
-        hours = forecast_df.index.hour.values
-        doy = forecast_df.index.dayofyear.values
-
-        declination = np.radians(23.45) * np.sin(2 * np.pi * (doy - 81) / 365)
-        hour_angle = (hours - 12) * 15
-        hour_angle_rad = np.radians(hour_angle)
-
-        cos_zenith = (np.sin(lat) * np.sin(declination) +
-                      np.cos(lat) * np.cos(declination) * np.cos(hour_angle_rad))
-
-        night_mask = cos_zenith <= 0.0  # Only zero when sun below horizon
-
-        # Force nighttime radiation to 0
-        forecast_df.loc[night_mask, 'GHI'] = 0.0
-        if has_dni_dhi:
-            forecast_df.loc[night_mask, 'DNI'] = 0.0
-            forecast_df.loc[night_mask, 'DHI'] = 0.0
-
-        # Force negative values to 0
-        forecast_df.loc[forecast_df['GHI'] < 0, 'GHI'] = 0.0
-        if has_dni_dhi:
-            forecast_df.loc[forecast_df['DNI'] < 0, 'DNI'] = 0.0
-            forecast_df.loc[forecast_df['DHI'] < 0, 'DHI'] = 0.0
-
-        # Apply closure only if DNI/DHI exist
-        day_mask = ~night_mask
-        if has_dni_dhi and day_mask.sum() > 0:
-            if preserve == 'blend':
-                computed_GHI = forecast_df.loc[day_mask, 'DHI'] + forecast_df.loc[day_mask, 'DNI'] * cos_zenith[day_mask]
-                forecast_df.loc[day_mask, 'GHI'] = 0.5 * forecast_df.loc[day_mask, 'GHI'] + 0.5 * computed_GHI
-                forecast_df.loc[forecast_df['GHI'] < 0, 'GHI'] = 0.0
-            elif preserve == 'GHI':
-                GHI_corrected = forecast_df.loc[day_mask, 'GHI'].values
-                DNI_current = forecast_df.loc[day_mask, 'DNI'].values
-                cos_z = cos_zenith[day_mask]
-                DHI_reconciled = GHI_corrected - DNI_current * cos_z
-                DHI_reconciled = np.maximum(DHI_reconciled, 0.0)
-                forecast_df.loc[day_mask, 'DHI'] = DHI_reconciled
-
-        if has_dni_dhi:
-            print(f"    ✓ Zeroed {night_mask.sum():,} night hours, applied closure to {day_mask.sum():,} daytime hours")
+        if all(v in output_df.columns for v in ['DNI', 'DHI']):
+            night_mask = output_df['GHI'].eq(0.0) & output_df['DNI'].eq(0.0) & output_df['DHI'].eq(0.0)
+            day_count = len(output_df) - int(night_mask.sum())
+            print(f"    ✓ Zeroed {int(night_mask.sum()):,} night hours, applied closure to {day_count:,} daytime hours")
         else:
-            print(f"    ✓ Zeroed {night_mask.sum():,} night hours, forced non-negative GHI")
-
-        return forecast_df
+            night_mask = output_df['GHI'].eq(0.0)
+            print(f"    ✓ Zeroed {int(night_mask.sum()):,} night hours, forced non-negative GHI")
+        return output_df
 
     def _calculate_dewpoint_from_RH(self, forecast_df):
         """Back-calculate dewpoint from RH and T."""
         if 'relative_humidity' not in forecast_df.columns or 'temp' not in forecast_df.columns:
             return forecast_df
-
-        T = forecast_df['temp'].values
-        RH = forecast_df['relative_humidity'].values
-
-        Td = calc_dewpoint_from_RH(T, RH)
-
-        forecast_df['dewpoint'] = Td
-
-        print(f"  ✓ Dewpoint: {np.nanmean(Td):.1f}°C (range: {np.nanmin(Td):.1f}-{np.nanmax(Td):.1f}°C)")
-
-        return forecast_df
+        output_df = shared_apply_physics_qa(
+            forecast_df,
+            lat=self.lat,
+            preserve='blend',
+            night_cos_zenith_threshold=0.0,
+        )
+        if 'dewpoint' in output_df.columns:
+            td = output_df['dewpoint'].to_numpy(dtype=float, copy=False)
+            print(f"  ✓ Dewpoint: {np.nanmean(td):.1f}°C (range: {np.nanmin(td):.1f}-{np.nanmax(td):.1f}°C)")
+        return output_df
 
     def apply_physics_qa(self, forecast_df):
         """Apply physics QA and back-calculate dewpoint."""
         print("\n" + "="*80)
         print("STEP 9: PHYSICS QA")
         print("="*80)
+        output_df = shared_apply_physics_qa(
+            forecast_df,
+            lat=self.lat,
+            preserve='GHI',
+            night_cos_zenith_threshold=0.0,
+        )
+        if 'dewpoint' in output_df.columns:
+            td = output_df['dewpoint'].to_numpy(dtype=float, copy=False)
+            print(f"  ✓ Dewpoint: {np.nanmean(td):.1f}°C (range: {np.nanmin(td):.1f}-{np.nanmax(td):.1f}°C)")
 
-        # Clip humidity
-        if 'relative_humidity' in forecast_df.columns:
-            forecast_df['relative_humidity'] = np.clip(forecast_df['relative_humidity'], 0, 100)
-        if 'specific_humidity' in forecast_df.columns:
-            forecast_df['specific_humidity'] = np.clip(forecast_df['specific_humidity'], 0, 0.06)
-
-        # Back-calculate dewpoint
-        forecast_df = self._calculate_dewpoint_from_RH(forecast_df)
-
-        # Final solar closure
-        forecast_df = self._enforce_solar_constraints(forecast_df, preserve='GHI')
-
-        self.forecast_corrected = forecast_df
+        self.forecast_corrected = output_df
         print(f"✓ Physics QA complete")
-
-        return forecast_df
+        return output_df
 
     def run_full_pipeline(self, chunk_years=5, test_stationarity=True,
                           forecast_start='2025-01-01', forecast_end='2100-12-31'):

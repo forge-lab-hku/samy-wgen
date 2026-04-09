@@ -40,6 +40,11 @@ import yaml
 
 import importlib.resources
 
+from samy_wgen.utils.physics_qa import (
+    apply_physics_qa as shared_apply_physics_qa,
+    enforce_solar_constraints as shared_enforce_solar_constraints,
+)
+
 
 def _get_bundled_config_path() -> Path:
     ref = importlib.resources.files("samy_wgen.config").joinpath("config.yaml")
@@ -370,52 +375,24 @@ def _print_temperature_statistics_by_window_mixed(
         print(f"  RS-VAR (after delta) Warming:     {output_warming:+.2f}°C")
 
 
-def enforce_solar_constraints(forecast_df, lat):
-    """
-    Enforce physical constraints on solar radiation.
+def enforce_solar_constraints(forecast_df, lat, preserve="GHI"):
+    """Backward-compatible wrapper around shared solar constraints."""
+    return shared_enforce_solar_constraints(
+        forecast_df,
+        lat=lat,
+        preserve=preserve,
+        night_cos_zenith_threshold=0.0,
+    )
 
-    Consistent with ForecastTo2100V5._enforce_solar_constraints().
-    """
-    if not all(v in forecast_df.columns for v in ['GHI', 'DNI', 'DHI']):
-        return forecast_df
 
-    lat_rad = np.radians(lat)
-
-    hours = forecast_df.index.hour.values
-    doy = forecast_df.index.dayofyear.values
-
-    # Solar geometry
-    declination = np.radians(23.45) * np.sin(2 * np.pi * (doy - 81) / 365)
-    hour_angle = (hours - 12) * 15
-    hour_angle_rad = np.radians(hour_angle)
-
-    cos_zenith = (np.sin(lat_rad) * np.sin(declination) +
-                  np.cos(lat_rad) * np.cos(declination) * np.cos(hour_angle_rad))
-
-    # Nighttime: zero all solar
-    night_mask = cos_zenith <= 0.065
-    forecast_df.loc[night_mask, 'GHI'] = 0.0
-    forecast_df.loc[night_mask, 'DNI'] = 0.0
-    forecast_df.loc[night_mask, 'DHI'] = 0.0
-
-    # Non-negative
-    forecast_df.loc[forecast_df['GHI'] < 0, 'GHI'] = 0.0
-    forecast_df.loc[forecast_df['DNI'] < 0, 'DNI'] = 0.0
-    forecast_df.loc[forecast_df['DHI'] < 0, 'DHI'] = 0.0
-
-    # Daytime: reconcile with closure equation (preserve GHI)
-    day_mask = ~night_mask
-    if day_mask.sum() > 0:
-        GHI = forecast_df.loc[day_mask, 'GHI'].values
-        DNI = forecast_df.loc[day_mask, 'DNI'].values
-        cos_z = cos_zenith[day_mask]
-
-        # DHI = GHI - DNI * cos(zenith)
-        DHI_reconciled = GHI - DNI * cos_z
-        DHI_reconciled = np.maximum(DHI_reconciled, 0.0)
-        forecast_df.loc[day_mask, 'DHI'] = DHI_reconciled
-
-    return forecast_df
+def apply_physics_qa(forecast_df: pd.DataFrame, lat: float, preserve: str = "GHI") -> pd.DataFrame:
+    """Backward-compatible wrapper around shared physical QA."""
+    return shared_apply_physics_qa(
+        forecast_df,
+        lat=lat,
+        preserve=preserve,
+        night_cos_zenith_threshold=0.0,
+    )
 
 
 def load_rsvar_output(rsvar_path: Path):
@@ -1190,9 +1167,9 @@ def apply_climate_delta(rsvar_df, cordex, baseline, gcm: str, rcm: str | None, l
             if reasons:
                 print(f"[DEBUG] why {var} might be missing: " + "; ".join(reasons))
 
-    # Enforce solar constraints (consistent with V5 pipeline)
-    print(f"\nEnforcing solar constraints...")
-    output_df = enforce_solar_constraints(output_df, lat)
+    # Apply legacy end-of-pipeline physical QA (humidity bounds, dewpoint, solar closure)
+    print(f"\nApplying physics QA...")
+    output_df = apply_physics_qa(output_df, lat, preserve="GHI")
 
     # Print delta statistics
     _print_delta_statistics(delta_stats)
@@ -1334,9 +1311,9 @@ def apply_mixed_resolution_climate_delta(
     # Clean up temp columns
     output_df.drop(['_date', '_doy', '_month'], axis=1, inplace=True)
 
-    # Enforce solar constraints
-    print(f"Enforcing solar constraints...")
-    output_df = enforce_solar_constraints(output_df, lat)
+    # Apply legacy end-of-pipeline physical QA (humidity bounds, dewpoint, solar closure)
+    print(f"Applying physics QA...")
+    output_df = apply_physics_qa(output_df, lat, preserve="GHI")
 
     # Print delta statistics
     _print_delta_statistics(delta_stats)
