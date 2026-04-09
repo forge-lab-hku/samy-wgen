@@ -92,6 +92,7 @@ class ForecastTo2100V5:
         self.seasonal_profiles = {}  # Computed from baseline period only
         self.regime_probs = None
         self.regime_models = {}
+        self.regime_residuals = {}   # VAR residuals per regime for ensemble bootstrap
         self.ms_result = None
 
         # Outputs
@@ -591,6 +592,7 @@ class ForecastTo2100V5:
                 print(f"✓ VAR(1) fitted on deviations - {len(regime_data):,} obs, AIC: {result.aic:.2f}")
 
                 self.regime_models[regime_i] = result
+                self.regime_residuals[regime_i] = result.resid.values  # (n_obs, n_vars)
 
             except Exception as e:
                 print(f"✗ Failed: {e}")
