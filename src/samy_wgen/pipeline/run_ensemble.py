@@ -64,6 +64,17 @@ TARGET_VARS = [
     'relative_humidity', 'specific_humidity',
 ]
 
+ABS_LIMITS = {
+    'temp': 100.0,
+    'pressure': 2.0e5,
+    'wind_speed': 200.0,
+    'GHI': 2.0e3,
+    'DNI': 2.0e3,
+    'DHI': 2.0e3,
+    'relative_humidity': 200.0,
+    'specific_humidity': 0.1,
+}
+
 
 # ==========================================================================
 # TRAINING PIPELINE
@@ -96,6 +107,23 @@ class EnsemblePipeline(ForecastTo2100V5):
         return self
 
 
+def _validate_member(member_df: pd.DataFrame, member_idx: int) -> None:
+    """Fail fast on non-finite or obviously exploded member values."""
+    values = member_df.to_numpy(dtype=float, copy=False)
+    if not np.isfinite(values).all():
+        raise ValueError(f"member_{member_idx:03d} contains non-finite values")
+
+    for col, limit in ABS_LIMITS.items():
+        if col not in member_df.columns:
+            continue
+        col_max = float(np.nanmax(np.abs(member_df[col].to_numpy(dtype=float, copy=False))))
+        if col_max > limit:
+            raise ValueError(
+                f"member_{member_idx:03d} column '{col}' exceeded sanity bound "
+                f"{limit:g} with abs max {col_max:.3f}"
+            )
+
+
 # ==========================================================================
 # ENSEMBLE GENERATION
 # ==========================================================================
@@ -112,6 +140,7 @@ def run_and_save_ensemble(
     regime_strength: float = 1.0,
     residual_scale: float = 1.0,
     block_size: int = 24,
+    centering_period: int = 365,
     seed: int = 0,
     target_vars: list[str] | None = None,
 ) -> Path:
@@ -170,6 +199,7 @@ def run_and_save_ensemble(
         block_size=block_size,
         regime_strength=regime_strength,
         residual_scale=residual_scale,
+        centering_period=centering_period,
     )
 
     members = gen.generate(
@@ -182,6 +212,7 @@ def run_and_save_ensemble(
     # --- Save individual members ---
     print(f"\nSaving {n_members} members to {output_dir}/")
     for m, df in enumerate(members):
+        _validate_member(df, m)
         out_path = output_dir / f"member_{m:03d}.parquet"
         df.to_parquet(out_path)
 
@@ -276,6 +307,8 @@ def main():
                         help="Layer 2 intensity [0,inf): multiplier on bootstrapped residuals")
     parser.add_argument('--block-size', type=int, default=24,
                         help="Residual block size in hours (for block mode)")
+    parser.add_argument('--centering-period', type=int, default=365,
+                        help="Days between drift corrections (annual centering = 365)")
     parser.add_argument('--seed', type=int, default=0, help="Base random seed")
 
     args = parser.parse_args()
@@ -294,6 +327,7 @@ def main():
         regime_strength=args.regime_strength,
         residual_scale=args.residual_scale,
         block_size=args.block_size,
+        centering_period=args.centering_period,
         seed=args.seed,
     )
 

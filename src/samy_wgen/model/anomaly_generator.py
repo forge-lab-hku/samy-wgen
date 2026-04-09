@@ -61,6 +61,7 @@ class AnomalyGenerator:
         block_size: int = 24,
         regime_strength: float = 1.0,
         residual_scale: float = 1.0,
+        centering_period: int = 365,
     ):
         if regime_mode not in _REGIME_MODES:
             raise ValueError(f"regime_mode must be one of {_REGIME_MODES}")
@@ -73,6 +74,7 @@ class AnomalyGenerator:
         self.block_size = block_size
         self.regime_strength = float(regime_strength)
         self.residual_scale = float(residual_scale)
+        self.centering_period = int(centering_period)  # days between drift corrections
 
         # Validate required model attributes
         if not fitted_model.regime_models:
@@ -123,8 +125,9 @@ class AnomalyGenerator:
         """Extract coefficient matrices and intercepts from fitted VAR results."""
         for regime_i, result in self.model.regime_models.items():
             # statsmodels VAR result: coefs shape (n_lags, n_vars, n_vars)
-            # intercept shape (n_vars,)
-            self._coefs[regime_i] = result.coefs[0].T  # (n_vars, n_vars)
+            # intercept shape (n_vars,). Keep statsmodels orientation so
+            # A_t = intercept + coefs[0] @ A_{t-1} matches VARResults.forecast().
+            self._coefs[regime_i] = result.coefs[0]  # (n_vars, n_vars)
             self._intercepts[regime_i] = result.intercept  # (n_vars,)
             if self._n_vars is None:
                 self._n_vars = result.coefs.shape[2]
@@ -319,6 +322,12 @@ class AnomalyGenerator:
         """
         Core VAR propagation with regime-weighted coefficients and bootstrapped residuals.
 
+        Drift correction: every `centering_period` days the accumulated anomaly for that
+        segment is mean-subtracted, and the carry-forward state A_prev is adjusted by the
+        same offset.  This mirrors the chunk-level centering in the original deterministic
+        pipeline (rsvar.py:972) and prevents long-term drift from accumulating when the
+        blended VAR intercept sum_r(w_r * mu_r) is non-zero.
+
         Args:
             sampled_path:   (n_days,) regime label per day
             soft_probs:     (n_days, k) Markov probability vectors
@@ -334,7 +343,9 @@ class AnomalyGenerator:
         assert n_days * 24 >= n_hours, "sampled_path must cover the full forecast period"
 
         anomaly = np.empty((n_hours, self._n_vars), dtype=float)
-        A_prev = initial_y[-1].copy()  # (n_vars,) last known state
+        A_prev = initial_y[-1].copy()  # (n_vars,) carry-forward state
+
+        segment_start_hour = 0  # hour index where the current centering segment began
 
         for d in range(n_days):
             # Blending weights for this day
@@ -349,7 +360,7 @@ class AnomalyGenerator:
                 if t >= n_hours:
                     break
 
-                # Weighted VAR step: A_t = sum_r(w_r * (intercept_r + Phi_r @ A_{t-1})) + eps
+                # Weighted VAR step: A_t = sum_r(w_r * (mu_r + Phi_r @ A_{t-1})) + eps
                 A_t = np.zeros(self._n_vars, dtype=float)
                 for i, regime_i in enumerate(self._regimes):
                     if weights[i] < 1e-10:
@@ -361,6 +372,23 @@ class AnomalyGenerator:
 
                 anomaly[t] = A_t
                 A_prev = A_t
+
+            # Periodic drift correction: at the end of each centering_period-day segment,
+            # subtract the segment mean from the anomaly and from A_prev so the carry-
+            # forward state does not import the drift into the next segment.
+            day_in_segment = (d + 1) % self.centering_period
+            segment_end_day = d + 1
+            is_segment_boundary = (day_in_segment == 0)
+            is_last_day = (segment_end_day * 24 >= n_hours)
+
+            if is_segment_boundary or is_last_day:
+                segment_end_hour = min(segment_end_day * 24, n_hours)
+                seg = anomaly[segment_start_hour:segment_end_hour]
+                if len(seg) > 0:
+                    seg_mean = seg.mean(axis=0)
+                    anomaly[segment_start_hour:segment_end_hour] -= seg_mean
+                    A_prev -= seg_mean  # prevent bias from carrying into next segment
+                segment_start_hour = segment_end_hour
 
         return anomaly
 
