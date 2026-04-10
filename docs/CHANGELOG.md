@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.1] - 2026-04-10
+
+### Added
+- Added strict deterministic compatibility path in `AnomalyGenerator` so `regime_mode='soft'` + `residual_mode='deterministic'` can reproduce legacy RS-VAR output
+- Added regression coverage in `tests/test_ensemble.py` for contiguous residual block extraction and soft-weighted residual mixture sampling
+- Added slow validation harness `tests/test_validation_temp_distributions.py` for 2011Q1 temperature distribution comparisons across legacy/ensemble pathways
+
+### Changed
+- Updated ensemble CLI/pipeline defaults in `pipeline/run_ensemble.py` to `regime_mode='soft'` and `residual_mode='deterministic'` for safer baseline behavior
+
+### Fixed
+- Fixed residual storage in `ForecastTo2100V5` to preserve residual timestamps (`result.resid.copy()`), enabling contiguous-window block sampling
+- Fixed block residual sampling to use truly contiguous hourly windows instead of naive reshape on regime-filtered rows
+- Fixed soft-regime residual generation to support probability-weighted innovation draws across regimes (`iid`, `block`, `parametric`)
+
 ## [0.1.0] - 2026-04-07
 
 ### Added
