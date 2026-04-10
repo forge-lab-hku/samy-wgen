@@ -22,6 +22,7 @@ tests/output/
 output/
 logs/
 *.pdf
+docs/validation_review_2026-04-10.md
 
 # macOS
 .DS_Store
@@ -39,4 +40,3 @@ logs/
 AGENTS.md
 CLAUDE.md
 .calude/
-
