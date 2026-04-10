@@ -595,7 +595,7 @@ class ForecastTo2100V5:
                 print(f"✓ VAR(1) fitted on deviations - {len(regime_data):,} obs, AIC: {result.aic:.2f}")
 
                 self.regime_models[regime_i] = result
-                self.regime_residuals[regime_i] = result.resid.values  # (n_obs, n_vars)
+                self.regime_residuals[regime_i] = result.resid.copy()
 
             except Exception as e:
                 print(f"✗ Failed: {e}")

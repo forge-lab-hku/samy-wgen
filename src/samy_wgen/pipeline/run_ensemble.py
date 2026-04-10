@@ -27,7 +27,7 @@ OUTPUT:
 USAGE:
     samy-ensemble --isd data/ISD/Miami_with_solar.csv --city Miami \\
                   --members 50 --out-dir output/ensemble/ \\
-                  --regime-mode ensemble --residual-mode block \\
+                  --regime-mode soft --residual-mode deterministic \\
                   --start 2025-01-01 --end 2025-12-31
 
     # Reproduce existing soft-mode behavior (regression check)
@@ -135,8 +135,8 @@ def run_and_save_ensemble(
     n_members: int = 50,
     start_date: str = '2025-01-01',
     end_date: str = '2025-12-31',
-    regime_mode: str = 'ensemble',
-    residual_mode: str = 'block',
+    regime_mode: str = 'soft',
+    residual_mode: str = 'deterministic',
     regime_strength: float = 1.0,
     residual_scale: float = 1.0,
     block_size: int = 24,
@@ -295,12 +295,12 @@ def main():
                         help="Number of ensemble members M")
     parser.add_argument('--start', default='2025-01-01', help="Forecast start date")
     parser.add_argument('--end', default='2025-12-31', help="Forecast end date")
-    parser.add_argument('--regime-mode', default='ensemble',
+    parser.add_argument('--regime-mode', default='soft',
                         choices=['soft', 'hard', 'ensemble'],
                         help="Layer 1: regime path generation mode")
     parser.add_argument('--regime-strength', type=float, default=1.0,
                         help="Layer 1 intensity [0,1]: 0=pure soft, 1=pure Markov sample (ensemble mode only)")
-    parser.add_argument('--residual-mode', default='block',
+    parser.add_argument('--residual-mode', default='deterministic',
                         choices=['deterministic', 'iid', 'block', 'parametric'],
                         help="Layer 2: residual sampling mode")
     parser.add_argument('--residual-scale', type=float, default=1.0,

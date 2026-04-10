@@ -134,25 +134,50 @@ class AnomalyGenerator:
                 self._deviation_vars = result.model.endog_names
 
     def _build_residual_structures(self):
-        """Pre-slice residuals into blocks and compute covariance matrices."""
+        """Build residual pools and contiguous block candidates from stored residuals."""
         for regime_i, resid in self.model.regime_residuals.items():
-            resid = np.array(resid, dtype=float)
-            self._residual_pool[regime_i] = resid
-
-            # Trim to full blocks
-            n_blocks = len(resid) // self.block_size
-            if n_blocks > 0:
-                trimmed = resid[: n_blocks * self.block_size]
-                blocks = trimmed.reshape(n_blocks, self.block_size, -1)
-                self._residual_blocks[regime_i] = blocks
+            if isinstance(resid, pd.DataFrame):
+                resid_df = resid.copy()
             else:
-                # Not enough residuals for even one block — fall back to single block
-                self._residual_blocks[regime_i] = resid[np.newaxis, ...]
+                resid_df = pd.DataFrame(np.asarray(resid, dtype=float))
 
-            if resid.shape[0] > 1:
-                self._residual_cov[regime_i] = np.cov(resid.T)
+            resid_values = resid_df.to_numpy(dtype=float, copy=False)
+            self._residual_pool[regime_i] = resid_values
+            self._residual_blocks[regime_i] = self._extract_contiguous_blocks(resid_df)
+
+            if resid_values.shape[0] > 1:
+                self._residual_cov[regime_i] = np.cov(resid_values.T)
             else:
-                self._residual_cov[regime_i] = np.eye(resid.shape[1])
+                self._residual_cov[regime_i] = np.eye(resid_values.shape[1])
+
+    def _extract_contiguous_blocks(self, resid_df: pd.DataFrame) -> np.ndarray:
+        """Return only truly contiguous hourly residual windows of length block_size."""
+        values = resid_df.to_numpy(dtype=float, copy=False)
+        if len(values) == 0:
+            return np.empty((0, self.block_size, self._n_vars), dtype=float)
+
+        if not isinstance(resid_df.index, pd.DatetimeIndex):
+            n_blocks = len(values) // self.block_size
+            if n_blocks == 0:
+                return np.empty((0, self.block_size, self._n_vars), dtype=float)
+            trimmed = values[: n_blocks * self.block_size]
+            return trimmed.reshape(n_blocks, self.block_size, self._n_vars)
+
+        if len(values) < self.block_size:
+            return np.empty((0, self.block_size, self._n_vars), dtype=float)
+
+        blocks = []
+        timestamps = resid_df.index
+        expected_step = pd.Timedelta(hours=1)
+        for start in range(0, len(values) - self.block_size + 1):
+            window = timestamps[start:start + self.block_size]
+            deltas = np.diff(window.to_numpy())
+            if len(deltas) == self.block_size - 1 and np.all(deltas == expected_step.to_numpy()):
+                blocks.append(values[start:start + self.block_size])
+
+        if not blocks:
+            return np.empty((0, self.block_size, self._n_vars), dtype=float)
+        return np.stack(blocks, axis=0)
 
     # ------------------------------------------------------------------
     # Layer 1: regime path generation
@@ -247,8 +272,28 @@ class AnomalyGenerator:
     # Layer 2: residual sampling
     # ------------------------------------------------------------------
 
+    def _normalize_weights(self, weights: np.ndarray | None, regime: int | None = None) -> np.ndarray:
+        """Convert optional regime weights or a hard regime label to a probability vector."""
+        if weights is not None:
+            probs = np.asarray(weights, dtype=float).copy()
+        elif regime is not None:
+            probs = np.zeros(self._k, dtype=float)
+            probs[self._regimes.index(regime)] = 1.0
+        else:
+            probs = np.full(self._k, 1.0 / self._k, dtype=float)
+
+        probs = np.maximum(probs, 0.0)
+        total = probs.sum()
+        if total <= 0:
+            return np.full(self._k, 1.0 / self._k, dtype=float)
+        return probs / total
+
     def _draw_residuals(
-        self, regime: int, n_hours: int, rng: np.random.Generator
+        self,
+        n_hours: int,
+        rng: np.random.Generator,
+        weights: np.ndarray | None = None,
+        regime: int | None = None,
     ) -> np.ndarray:
         """
         Returns (n_hours, n_vars) array of innovations scaled by residual_scale.
@@ -260,24 +305,52 @@ class AnomalyGenerator:
         if self.residual_mode == 'deterministic' or self.residual_scale == 0.0:
             return np.zeros((n_hours, self._n_vars), dtype=float)
 
+        probs = self._normalize_weights(weights, regime=regime)
+
         if self.residual_mode == 'block':
-            blocks = self._residual_blocks.get(regime)
-            if blocks is None or len(blocks) == 0:
-                return np.zeros((n_hours, self._n_vars), dtype=float)
             n_blocks_needed = int(np.ceil(n_hours / self.block_size))
-            chosen = [blocks[rng.integers(0, len(blocks))] for _ in range(n_blocks_needed)]
-            eps = np.vstack(chosen)[:n_hours]
+            chosen_blocks = []
+            for _ in range(n_blocks_needed):
+                regime_idx = int(rng.choice(self._k, p=probs))
+                regime_label = self._regimes[regime_idx]
+                blocks = self._residual_blocks.get(regime_label)
+                if blocks is not None and len(blocks) > 0:
+                    chosen_blocks.append(blocks[rng.integers(0, len(blocks))])
+                    continue
+
+                pool = self._residual_pool.get(regime_label)
+                if pool is None or len(pool) == 0:
+                    chosen_blocks.append(np.zeros((self.block_size, self._n_vars), dtype=float))
+                    continue
+                idx = rng.integers(0, len(pool), size=self.block_size)
+                chosen_blocks.append(pool[idx])
+
+            eps = np.vstack(chosen_blocks)[:n_hours]
 
         elif self.residual_mode == 'iid':
-            pool = self._residual_pool.get(regime)
-            if pool is None or len(pool) == 0:
-                return np.zeros((n_hours, self._n_vars), dtype=float)
-            idx = rng.integers(0, len(pool), size=n_hours)
-            eps = pool[idx]
+            regime_draws = rng.choice(self._k, size=n_hours, p=probs)
+            eps = np.zeros((n_hours, self._n_vars), dtype=float)
+            for regime_idx, regime_label in enumerate(self._regimes):
+                mask = regime_draws == regime_idx
+                if not np.any(mask):
+                    continue
+                pool = self._residual_pool.get(regime_label)
+                if pool is None or len(pool) == 0:
+                    continue
+                idx = rng.integers(0, len(pool), size=int(mask.sum()))
+                eps[mask] = pool[idx]
 
         elif self.residual_mode == 'parametric':
-            cov = self._residual_cov.get(regime, np.eye(self._n_vars))
-            eps = rng.multivariate_normal(np.zeros(self._n_vars), cov, size=n_hours)
+            regime_draws = rng.choice(self._k, size=n_hours, p=probs)
+            eps = np.zeros((n_hours, self._n_vars), dtype=float)
+            for regime_idx, regime_label in enumerate(self._regimes):
+                mask = regime_draws == regime_idx
+                if not np.any(mask):
+                    continue
+                cov = self._residual_cov.get(regime_label, np.eye(self._n_vars))
+                eps[mask] = rng.multivariate_normal(
+                    np.zeros(self._n_vars), cov, size=int(mask.sum())
+                )
 
         else:
             return np.zeros((n_hours, self._n_vars), dtype=float)
@@ -351,9 +424,12 @@ class AnomalyGenerator:
             # Blending weights for this day
             weights = self._day_weights(d, sampled_path, soft_probs)  # (k,)
 
-            # Draw residuals for this 24h block (from sampled regime)
-            regime_label = sampled_path[d]
-            eps = self._draw_residuals(regime_label, self.block_size, rng)  # (24, n_vars)
+            eps = self._draw_residuals(
+                self.block_size,
+                rng,
+                weights=weights,
+                regime=sampled_path[d],
+            )  # (24, n_vars)
 
             for h in range(self.block_size):
                 t = d * self.block_size + h
@@ -391,6 +467,128 @@ class AnomalyGenerator:
                 segment_start_hour = segment_end_hour
 
         return anomaly
+
+    def _generate_soft_deterministic_compatible(
+        self,
+        forecast_index: pd.DatetimeIndex,
+        chunk_years: int = 5,
+    ) -> pd.DataFrame:
+        """
+        Reproduce the legacy soft deterministic path inside AnomalyGenerator.
+
+        This mirrors ForecastTo2100V5.forecast_without_climate_delta() but stays
+        inside the generator rather than delegating to the legacy pipeline entrypoint.
+        """
+        target_vars = [c.replace('_deviation', '') for c in self._deviation_vars]
+        n_steps = len(forecast_index)
+        chunk_size = chunk_years * 8760
+        n_chunks = int(np.ceil(n_steps / chunk_size))
+
+        start_date = str(forecast_index[0])
+        end_date = str(forecast_index[-1])
+        daily_regime_probs = self.model._forecast_regime_probabilities(start_date, end_date)
+        regime_prob_cols = sorted(
+            [col for col in daily_regime_probs.columns if col.endswith('_prob')],
+            key=lambda name: int(name.split('_')[1]) if name.split('_')[1].isdigit() else name
+        )
+
+        recent_data = self.model.isd_baseline[target_vars].iloc[-1000:].copy()
+        recent_data['month'] = recent_data.index.month
+        recent_data['hour'] = recent_data.index.hour
+
+        deviation_vars = []
+        for var in target_vars:
+            if var not in self.model.seasonal_profiles:
+                continue
+            seasonal_vals = recent_data.apply(
+                lambda row: self.model.seasonal_profiles[var][(row['month'], row['hour'])],
+                axis=1,
+            )
+            recent_data[f'{var}_deviation'] = recent_data[var] - seasonal_vals
+            deviation_vars.append(f'{var}_deviation')
+
+        hourly_regime_probs = daily_regime_probs[regime_prob_cols].reindex(forecast_index, method='ffill')
+        hourly_regime_probs = hourly_regime_probs.div(hourly_regime_probs.sum(1), axis=0)
+
+        all_forecasts = []
+        for chunk_idx in range(n_chunks):
+            chunk_start = chunk_idx * chunk_size
+            chunk_end = min((chunk_idx + 1) * chunk_size, n_steps)
+            chunk_len = chunk_end - chunk_start
+            chunk_index = forecast_index[chunk_start:chunk_end]
+
+            chunk_df = pd.DataFrame(index=chunk_index, columns=target_vars, dtype=float)
+            chunk_df['month'] = chunk_index.month
+            chunk_df['hour'] = chunk_index.hour
+            chunk_df['year'] = chunk_index.year
+
+            for var in target_vars:
+                if var not in self.model.seasonal_profiles:
+                    continue
+                seasonal_values = chunk_df.apply(
+                    lambda row: self.model.seasonal_profiles[var][(row['month'], row['hour'])],
+                    axis=1,
+                )
+                chunk_df[var] = seasonal_values
+
+            chunk_probs = hourly_regime_probs.loc[chunk_index]
+            blended_deviations = pd.DataFrame(
+                np.zeros((chunk_len, len(deviation_vars))),
+                index=chunk_index,
+                columns=deviation_vars,
+            )
+            regime_weights = pd.DataFrame(
+                0.0, index=chunk_index, columns=regime_prob_cols, dtype=float
+            )
+
+            for regime_i, var_model in sorted(self.model.regime_models.items()):
+                regime_prob_col = f'regime_{regime_i}_prob'
+                if regime_prob_col not in chunk_probs:
+                    continue
+
+                last_deviation = recent_data[deviation_vars].iloc[-var_model.k_ar:].values
+                regime_deviation_forecast = var_model.forecast(y=last_deviation, steps=chunk_len)
+                regime_probs_vals = chunk_probs[regime_prob_col].values.reshape(-1, 1)
+
+                blended_deviations += regime_deviation_forecast * regime_probs_vals
+                regime_weights.loc[chunk_index, regime_prob_col] = chunk_probs[regime_prob_col].values
+
+            total_weights = regime_weights.sum(axis=1).clip(lower=1e-10)
+            blended_deviations = blended_deviations.div(total_weights, axis=0)
+
+            for dev_var in blended_deviations.columns:
+                dev_mean = blended_deviations[dev_var].mean()
+                blended_deviations[dev_var] = blended_deviations[dev_var] - dev_mean
+
+            for var in target_vars:
+                dev_var = f'{var}_deviation'
+                if dev_var in blended_deviations.columns:
+                    chunk_df[var] = chunk_df[var] + blended_deviations[dev_var]
+
+            chunk_df = chunk_df[target_vars]
+
+            recent_deviation_update = chunk_df.copy()
+            recent_deviation_update['month'] = chunk_index.month
+            recent_deviation_update['hour'] = chunk_index.hour
+            for var in target_vars:
+                if var not in self.model.seasonal_profiles:
+                    continue
+                profile = self.model.seasonal_profiles[var]
+                seasonal_vals = pd.Series(
+                    [float(profile.get((m, h), np.nan)) for m, h in zip(
+                        recent_deviation_update['month'],
+                        recent_deviation_update['hour'],
+                    )],
+                    index=recent_deviation_update.index,
+                )
+                recent_deviation_update[f'{var}_deviation'] = chunk_df[var] - seasonal_vals
+
+            recent_data = pd.concat([recent_data, recent_deviation_update]).iloc[-1000:]
+            all_forecasts.append(chunk_df)
+
+        forecast_df = pd.concat(all_forecasts)
+        forecast_df = self.model._enforce_solar_constraints(forecast_df)
+        return forecast_df
 
     # ------------------------------------------------------------------
     # Public API
@@ -431,6 +629,10 @@ class AnomalyGenerator:
         initial_y = self._get_initial_y()
 
         members = []
+        if self.regime_mode == 'soft' and self.residual_mode == 'deterministic':
+            compatible = self._generate_soft_deterministic_compatible(forecast_index)
+            return [compatible.copy() for _ in range(n_members)]
+
         for m in range(n_members):
             rng = np.random.default_rng(base_seed + m)
 
