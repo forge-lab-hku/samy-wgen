@@ -52,26 +52,21 @@ from samy_wgen.utils.parse_ISD import ISD_RENAME, remap_isd_columns, resample_is
 # Stage helpers  (each accepts overwrite=False to skip if output already exists)
 # ---------------------------------------------------------------------------
 
-def _stage1_parse_isd(out_dir: Path, overwrite: bool = False) -> Path:
-    """Parse all ISD .gz files in the Miami station directory to a raw UTC CSV."""
+def _stage1_parse_isd() -> pd.DataFrame:
+    """Parse all ISD .gz files in the Miami station directory to a raw UTC DataFrame."""
+    import tempfile
     from samy_wgen.utils.parse_ISD import process_station_directory
 
-    csv_path = out_dir / "stage1_isd_raw_utc.csv"
-    if csv_path.exists() and not overwrite:
-        print(f"  [stage 1] Cache hit: {csv_path.name}")
-        return csv_path
-
     print(f"  [stage 1] Parsing ISD .gz files from:\n    {ISD_STATION_DIR}")
-    result_path = process_station_directory(str(ISD_STATION_DIR), str(out_dir))
-    assert result_path is not None, "process_station_directory returned None"
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        result_path = process_station_directory(str(ISD_STATION_DIR), tmp_dir)
+        assert result_path is not None, "process_station_directory returned None"
+        raw = pd.read_csv(result_path, parse_dates=["datestamp"], low_memory=False)
+    print(f"  [stage 1] Parsed {len(raw):,} records")
+    return raw
 
-    import shutil
-    shutil.move(result_path, str(csv_path))
-    print(f"  [stage 1] Saved: {csv_path.name}")
-    return csv_path
 
-
-def _stage2_remap_to_lst(isd_csv: Path, out_dir: Path, overwrite: bool = False) -> pd.DataFrame:
+def _stage2_remap_to_lst(isd_raw: pd.DataFrame, out_dir: Path, overwrite: bool = False) -> pd.DataFrame:
     """Remap ISD field names, UTC → LST, resample to hourly.
 
     Output columns: temp (°C), dewpoint (°C), pressure (hPa), wind_speed (m/s), wind_dir (°)
@@ -79,14 +74,12 @@ def _stage2_remap_to_lst(isd_csv: Path, out_dir: Path, overwrite: bool = False) 
     """
     from samy_wgen.utils.time_utils import utc_to_lst
 
-    csv_path = out_dir / "stage2_isd_lst.csv"
+    csv_path = out_dir / "1_isd_lst.csv"
     if csv_path.exists() and not overwrite:
         print(f"  [stage 2] Cache hit: {csv_path.name}")
         return pd.read_csv(csv_path, parse_dates=["DATE"]).set_index("DATE")
 
-    print(f"  [stage 2] Loading ISD raw CSV: {isd_csv.name}")
-    raw = pd.read_csv(isd_csv, parse_dates=["datestamp"], low_memory=False)
-    raw = raw.dropna(subset=["datestamp"]).set_index("datestamp").sort_index()
+    raw = isd_raw.dropna(subset=["datestamp"]).set_index("datestamp").sort_index()
 
     df = remap_isd_columns(raw)
 
@@ -117,7 +110,7 @@ def _stage3_merge_with_nsrdb(isd_lst: pd.DataFrame, out_dir: Path,
     NSRDB timestamps (Minute=30) are floored to the hour start.
     Returns path to the merged CSV (DATE index, LST).
     """
-    csv_path = out_dir / "stage3_isd_solar_lst.csv"
+    csv_path = out_dir / "2_isd_solar_lst.csv"
     if csv_path.exists() and not overwrite:
         print(f"  [stage 3] Cache hit: {csv_path.name}")
         return csv_path
@@ -156,7 +149,7 @@ def _stage4_run_rsvar(merged_csv: Path, out_dir: Path, overwrite: bool = False) 
     """Run RS-VAR training + forecast (2025-2100). Returns path to Excel output."""
     from samy_wgen.pipeline.run_rsvar import run_and_save_rsvar
 
-    excel_path = out_dir / "stage4_rsvar_miami.xlsx"
+    excel_path = out_dir / "3_rsvar_miami.xlsx"
     if excel_path.exists() and not overwrite:
         print(f"  [stage 4] Cache hit: {excel_path.name}")
         return excel_path
@@ -177,7 +170,7 @@ def _stage5_load_cmip6(out_dir: Path, overwrite: bool = False):
     """Load CMIP6 MPI-ESM1-2-LR SSP245. Returns (daily_df, monthly_df, meta)."""
     from samy_wgen.pipeline.run_climate_delta import load_cmip6_or_cordex6
 
-    csv_path = out_dir / "stage5_cmip6_mpi_ssp245_daily.csv"
+    csv_path = out_dir / "4_cmip6_mpi_ssp245_daily.csv"
 
     print(f"  [stage 5] Loading CMIP6 MPI-SSP245 from: {CMIP6_DIR.name}/Miami/")
     daily_df, monthly_df, meta = load_cmip6_or_cordex6(
@@ -190,7 +183,7 @@ def _stage5_load_cmip6(out_dir: Path, overwrite: bool = False):
         daily_df.to_csv(csv_path)
         print(f"  [stage 5] Saved daily: {csv_path.name}")
         if not monthly_df.empty:
-            monthly_csv = out_dir / "stage5_cmip6_mpi_ssp245_monthly.csv"
+            monthly_csv = out_dir / "4_cmip6_mpi_ssp245_monthly.csv"
             monthly_df.to_csv(monthly_csv)
             print(f"  [stage 5] Saved monthly: {monthly_csv.name}")
 
@@ -206,7 +199,7 @@ def _stage6_compute_baseline(daily_df: pd.DataFrame, out_dir: Path,
     """Compute CORDEX DOY baseline climatology (1991-2010). Returns baseline dict."""
     from samy_wgen.pipeline.run_climate_delta import compute_cordex_baseline
 
-    csv_path = out_dir / "stage6_cordex_baseline_doy.csv"
+    csv_path = out_dir / "5_cordex_baseline_doy.csv"
 
     print(f"  [stage 6] Computing CORDEX baseline ({BASELINE_START}–{BASELINE_END})")
     baseline = compute_cordex_baseline(daily_df, BASELINE_START, BASELINE_END, mode="daily")
@@ -233,7 +226,7 @@ def _stage7_apply_delta(rsvar_excel: Path, daily_df: pd.DataFrame,
     """Apply MPI-SSP245 climate delta to RS-VAR output. Returns hourly output DataFrame."""
     from samy_wgen.pipeline.run_climate_delta import load_rsvar_output, apply_climate_delta
 
-    csv_path = out_dir / "stage7_miami_mpi_ssp245_hourly.csv"
+    csv_path = out_dir / "6_miami_mpi_ssp245_hourly.csv"
     if csv_path.exists() and not overwrite:
         print(f"  [stage 7] Cache hit: {csv_path.name}")
         return pd.read_csv(csv_path, parse_dates=["datetime"]).set_index("datetime")
@@ -271,7 +264,7 @@ def _stage7_apply_delta(rsvar_excel: Path, daily_df: pd.DataFrame,
             })
     if delta_rows:
         pd.DataFrame(delta_rows).to_csv(
-            out_dir / "stage7_delta_stats.csv", index=False
+            out_dir / "6_delta_stats.csv", index=False
         )
 
     output_df.index.name = "datetime"
@@ -359,18 +352,21 @@ def test_miami_cmip6_ssp245_full_pipeline(overwrite):
     print(f"\nOutput directory: {OUTPUT_DIR}")
     print(f"Overwrite mode: {ow}")
 
-    # stage 1 — parse ISD
+    # stage 1+2 — parse ISD → remap to LST
     assert ISD_STATION_DIR.exists(), f"ISD dir not found: {ISD_STATION_DIR}"
-    isd_csv = _stage1_parse_isd(OUTPUT_DIR, overwrite=ow)
-
-    # stage 2 — remap + UTC→LST
-    isd_lst = _stage2_remap_to_lst(isd_csv, OUTPUT_DIR, overwrite=ow)
+    assert NSRDB_CSV.exists(), f"NSRDB not found: {NSRDB_CSV}"
+    isd_lst_cache = OUTPUT_DIR / "1_isd_lst.csv"
+    if isd_lst_cache.exists() and not ow:
+        print("  [stage 2] Cache hit: 1_isd_lst.csv")
+        isd_lst = pd.read_csv(isd_lst_cache, parse_dates=["DATE"]).set_index("DATE")
+    else:
+        isd_raw = _stage1_parse_isd()
+        isd_lst = _stage2_remap_to_lst(isd_raw, OUTPUT_DIR, overwrite=ow)
     assert not isd_lst.empty
     assert "temp" in isd_lst.columns
     assert isd_lst.index.tzinfo is None, "Index must be tz-naive (LST)"
 
     # stage 3 — merge with NSRDB
-    assert NSRDB_CSV.exists(), f"NSRDB not found: {NSRDB_CSV}"
     merged_csv = _stage3_merge_with_nsrdb(isd_lst, OUTPUT_DIR, overwrite=ow)
     sample = pd.read_csv(merged_csv, nrows=5)
     for col in ["temp", "GHI", "DNI", "DHI"]:
