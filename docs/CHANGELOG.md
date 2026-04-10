@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.2] - 2026-04-10
+
+### Added
+- `pipeline/run_pipeline.py` — one-click `samy-run` CLI that chains ISD parse → LST remap → NSRDB merge → RS-VAR → CMIP6 delta → EPW in a single command; supports `--mode deterministic` (default) and `--mode ensemble`
+- `samy-run` registered as a CLI entry point in `pyproject.toml`
+- Key `samy-run` parameters: `--baseline-start/end`, `--start/end`, `--ssp`, `--epw-years`, `--members`, `--regime-mode`, `--residual-mode`, `--overwrite`; all have defaults for zero-config quick runs
+
+### Changed
+- `test_miami_pipeline_poc.py`: stage 1 (`_stage1_parse_isd`) no longer writes a CSV to disk; ISD parsing now uses `tempfile.TemporaryDirectory` and returns a `pd.DataFrame` directly
+- `test_miami_pipeline_poc.py`: `_stage2_remap_to_lst` signature changed from `(Path, ...)` to `(pd.DataFrame, ...)`; test function checks `1_isd_lst.csv` cache before calling stage 0, avoiding unnecessary ISD re-parsing
+- Intermediate cache files in `tests/output/miami_poc_cmip6_ssp245/` renamed from `stageN_*` to `N_*`, numbered by output order (stage 1 raw UTC CSV removed, so numbering starts at 1):
+  - `stage2_isd_lst.csv` → `1_isd_lst.csv`
+  - `stage3_isd_solar_lst.csv` → `2_isd_solar_lst.csv`
+  - `stage4_rsvar_miami.xlsx` → `3_rsvar_miami.xlsx`
+  - `stage5_cmip6_*.csv` → `4_cmip6_*.csv`
+  - `stage6_cordex_baseline_doy.csv` → `5_cordex_baseline_doy.csv`
+  - `stage7_*.csv` → `6_*.csv`
+
 ## [0.1.1] - 2026-04-10
 
 ### Added

@@ -28,6 +28,7 @@ dev = [
 ]
 
 [project.scripts]
+samy-run = "samy_wgen.pipeline.run_pipeline:main"
 samy-rsvar = "samy_wgen.pipeline.run_rsvar:main"
 samy-delta = "samy_wgen.pipeline.run_climate_delta:main"
 samy-ensemble = "samy_wgen.pipeline.run_ensemble:main"
