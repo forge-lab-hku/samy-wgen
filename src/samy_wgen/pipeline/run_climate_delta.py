@@ -906,19 +906,24 @@ def compute_mixed_resolution_baseline(
     return baseline
 
 
-def compute_daily_delta(cordex, baseline, target_date):
+def compute_daily_delta(cordex, baseline, target_date, cordex_daily=None):
     """Compute climate delta for a specific date.
 
     For additive variables: delta = CORDEX_CMIP5(date) - CORDEX_baseline(doy)
     For multiplicative variables: ratio = CORDEX_CMIP5(date) / CORDEX_baseline(doy)
 
     This mirrors compute_climate_delta_daily() in ForecastTo2100V5.
+
+    Args:
+        cordex_daily: Optional pre-computed daily view (from _cordex_daily_view).
+            Pass this when calling in a loop to avoid recomputing on every call.
     """
     deltas = {}
 
     # Use a robust daily view (1 row per day) instead of relying on exact
     # timestamps (CORDEX daily data is often at 12:00).
-    cordex_daily = _cordex_daily_view(cordex)
+    if cordex_daily is None:
+        cordex_daily = _cordex_daily_view(cordex)
 
     # Get CORDEX value for target date
     target_day = pd.Timestamp(target_date).normalize()
@@ -1088,9 +1093,12 @@ def apply_climate_delta(rsvar_df, cordex, baseline, gcm: str, rcm: str | None, l
     mode_label = "daily" if delta_mode == "daily" else "monthly"
     print(f"\nComputing {mode_label} deltas for {len(dates):,} days...")
 
-    # Precompute monthly view if needed
+    # Precompute daily/monthly views once (not once per day)
+    cordex_daily_view = None
     cordex_monthly = None
-    if delta_mode == "monthly":
+    if delta_mode == "daily":
+        cordex_daily_view = _cordex_daily_view(cordex)
+    else:
         cordex_monthly = _cordex_monthly_view(cordex)
 
     # Precompute all daily deltas
@@ -1102,7 +1110,7 @@ def apply_climate_delta(rsvar_df, cordex, baseline, gcm: str, rcm: str | None, l
 
     for date in dates:
         if delta_mode == "daily":
-            d = compute_daily_delta(cordex, baseline, date)
+            d = compute_daily_delta(cordex, baseline, date, cordex_daily=cordex_daily_view)
         else:
             d = compute_monthly_delta(cordex_monthly, baseline, date)
         if not d:
