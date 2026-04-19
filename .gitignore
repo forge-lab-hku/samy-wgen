@@ -15,6 +15,9 @@ venv/
 env/
 uv.lock
 
+# Temporary / one-off scripts
+tmp/
+
 # Pipeline outputs (large, user-generated)
 _ARCHIVED/
 data/

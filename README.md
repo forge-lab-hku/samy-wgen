@@ -6,28 +6,140 @@ Stochastic weather generation for long-term climate projections (2025–2100), p
 
 ## Installation
 
-```bash
-# From local source (editable — code changes apply immediately)
-pip install -e /path/to/samy-wgen
+> **Dev status** — the package has not yet been published to PyPI and is under active development.
+> A stable release is planned for the future.
 
-# With dev/test dependencies
-pip install -e "/path/to/samy-wgen[dev]"
+**With conda (recommended)**
+
+```bash
+git clone https://github.com/<org>/samy-wgen.git
+cd samy-wgen
+
+conda create -n samy-wgen python=3.11
+conda activate samy-wgen
+
+pip install -e .          # core dependencies
+pip install -e ".[dev]"   # + dev/test dependencies
+```
+
+**With pip only**
+
+```bash
+git clone https://github.com/<org>/samy-wgen.git
+cd samy-wgen
+pip install -e .
 ```
 
 Python ≥ 3.10 required. All dependencies are declared in `pyproject.toml` and installed automatically.
 
 ---
 
-## Data layout expected
+## Downloading input data
+
+Before running the pipeline, three data sources must be present for each city.
+`samy-download` handles all three from the command line.
+
+### 1 · Register API credentials
+
+**NOAA ISD** — no registration required (public FTP).
+
+**NREL NSRDB** (solar irradiance)
+
+1. Register for a free API key at <https://developer.nlr.gov/signup/>
+2. Save credentials once via the interactive prompt:
+   ```bash
+   samy-download config
+   #   NSRDB API key : your_key_here
+   #   NSRDB email   : your@email.com
+   ```
+
+**Copernicus CDS** (CMIP6 and CORDEX-CMIP5 climate projections)
+
+1. Register at <https://cds.climate.copernicus.eu>
+2. Accept the dataset licence for *CMIP6 climate projections* and *CORDEX regional climate projections* in your CDS profile
+3. Create `~/.cdsapirc`:
+   ```ini
+   # ~/.cdsapirc
+   url: https://cds.climate.copernicus.eu/api
+   key: <UID>:<API-key>          # shown on your CDS profile page
+   ```
+
+### 2 · Find and select an ISD station
+
+ISD files are keyed by station ID. Run `list-stations` first to pick the best station for your city:
+
+```bash
+samy-download list-stations --city Miami
+```
+
+```
+ISD stations within 150 km of (25.7617, -80.1918):
+
+      USAF-WBAN          STATION NAME  dist_km  BEGIN    END
+  722020-12839    MIAMI INTL AIRPORT      3.2  1942  2024
+  722016-12841  MIAMI EXECUTIVE AP       18.4  1973  2024
+  ...
+
+Pass the USAF-WBAN value to --isd-station when running 'samy-download download'.
+```
+
+### 3 · Download all data for a city
+
+```bash
+# ISD + NSRDB + CMIP6 (default set)
+samy-download download \
+  --city Miami \
+  --isd-station 722020-12839
+
+# Limit the ISD/NSRDB year range (speeds up initial testing)
+samy-download download \
+  --city Miami \
+  --isd-station 722020-12839 \
+  --years 1991 2024
+
+# Also download CORDEX-CMIP5 (optional — needed for CORDEX scenarios)
+samy-download download \
+  --city Miami \
+  --isd-station 722020-12839 \
+  --data isd nsrdb cmip6 cordex
+
+# Download additional CMIP6 models or scenarios
+samy-download download \
+  --city Miami \
+  --data cmip6 \
+  --models mpi_esm1_2_lr cnrm_esm2_1 \
+  --experiments historical ssp2_4_5 ssp5_8_5
+```
+
+Files are written directly to the paths the pipeline expects:
 
 ```
 data/
-├── ISD/<City>/<station_id>/        # NOAA ISD .gz files (one per year)
-├── NSRDB/nsrdb_<city>_*.csv        # NREL NSRDB solar irradiance (LST)
-└── CMIP6/<City>/
-    ├── mpi_esm1_2_lr_historical.csv
-    └── mpi_esm1_2_lr_ssp245.csv    # or ssp370 / ssp585
+├── ISD/Miami/722020-12839_MIAMI_INTERNATIONAL_AIRPORT/
+│   ├── 722020-12839-1991.gz
+│   └── ...
+├── NSRDB/nsrdb_miami_1991-2024.csv
+├── CMIP6/Miami/
+│   ├── mpi_esm1_2_lr_historical.csv
+│   ├── mpi_esm1_2_lr_ssp245.csv
+│   └── mpi_esm1_2_lr_ssp245_monthly.csv
+└── CORDEX_CMIP5/NAM-22_RegCM_historical_r1i1p1/
+    └── Miami_historical.csv
 ```
+
+CMIP6 and CORDEX data are downloaded as city-specific grid-point extractions (using the CDS `area` parameter) — no large global files are stored locally.
+
+### `samy-download` reference
+
+| Subcommand | Purpose |
+|------------|---------|
+| `config` | Save NSRDB credentials to `~/.config/samy_wgen/credentials.yaml` |
+| `list-stations --city <name> [--radius 150]` | Print nearby ISD stations sorted by distance |
+| `download --city <name> --isd-station <USAF-WBAN>` | Download ISD + NSRDB + CMIP6 |
+| `download --data cordex` | Also download CORDEX-CMIP5 |
+| `download --models mpi_esm1_2_lr cnrm_esm2_1` | Specify CMIP6 models |
+| `download --experiments historical ssp2_4_5 ssp5_8_5` | Specify CMIP6 CDS experiment names |
+| `download --cordex-gcm <gcm> --cordex-rcm <rcm>` | Override CORDEX GCM/RCM |
 
 ---
 
@@ -190,6 +302,9 @@ for year in [2030, 2050, 2080]:
 
 | Command | Description |
 |---------|-------------|
+| `samy-download config` | Save NSRDB credentials to `~/.config/samy_wgen/credentials.yaml` |
+| `samy-download list-stations --city <name>` | List nearby ISD stations |
+| `samy-download download --city <name> --isd-station <id>` | Download ISD / NSRDB / CMIP6 / CORDEX |
 | `samy-run --city <name>` | Full pipeline — ISD parse → RS-VAR → delta → EPW |
 | `samy-run --city <name> --mode ensemble` | Full pipeline in ensemble mode |
 | `samy-rsvar --isd <csv> --city <name> --output <xlsx>` | Train RS-VAR + forecast only |
