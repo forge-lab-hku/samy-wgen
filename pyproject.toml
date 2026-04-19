@@ -25,6 +25,8 @@ dependencies = [
     "tqdm>=4.65",
     "xarray>=2023.1",
     "netCDF4>=1.6",
+    "h5py>=3.0",
+    "h5netcdf>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +49,7 @@ packages = ["src/samy_wgen"]
 include = [
     "src/samy_wgen/config/config.yaml",
     "src/samy_wgen/config/cities_config.csv",
+    "src/samy_wgen/config/cmip6_catalog.json",
 ]
 
 [tool.pytest.ini_options]

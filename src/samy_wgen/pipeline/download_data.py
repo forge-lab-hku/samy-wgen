@@ -17,6 +17,8 @@ Credentials
 from __future__ import annotations
 
 import argparse
+import functools
+import json
 import logging
 import os
 import time
@@ -33,29 +35,6 @@ logger = logging.getLogger(__name__)
 
 # ─── Static configuration ─────────────────────────────────────────────────────
 
-CMIP6_MODEL_VARS: dict[str, dict[str, str]] = {
-    "mpi_esm1_2_lr": {
-        "near_surface_air_temperature":               "daily",
-        "near_surface_specific_humidity":             "daily",
-        "near_surface_wind_speed":                    "daily",
-        "daily_maximum_near_surface_air_temperature": "daily",
-        "daily_minimum_near_surface_air_temperature": "daily",
-        "precipitation":                              "daily",
-        "sea_level_pressure":                         "daily",
-        "surface_downwelling_shortwave_radiation":    "monthly",
-    },
-    "cnrm_esm2_1": {
-        "near_surface_air_temperature":               "daily",
-        "near_surface_specific_humidity":             "daily",
-        "daily_maximum_near_surface_air_temperature": "daily",
-        "daily_minimum_near_surface_air_temperature": "daily",
-        "precipitation":                              "daily",
-        "sea_level_pressure":                         "daily",
-        "surface_downwelling_shortwave_radiation":    "monthly",
-        "near_surface_wind_speed":                    "monthly",
-    },
-}
-
 CMIP6_VAR_SHORT = {
     "near_surface_air_temperature":               "tas",
     "near_surface_specific_humidity":             "huss",
@@ -69,13 +48,17 @@ CMIP6_VAR_SHORT = {
 
 CMIP6_EXP_YEARS = {
     "historical": list(range(1970, 2015)),
+    "ssp1_2_6":   list(range(2015, 2101)),
     "ssp2_4_5":   list(range(2015, 2101)),
+    "ssp3_7_0":   list(range(2015, 2101)),
     "ssp5_8_5":   list(range(2015, 2101)),
 }
 
 CMIP6_EXP_LABEL = {
     "historical": "historical",
+    "ssp1_2_6":   "ssp126",
     "ssp2_4_5":   "ssp245",
+    "ssp3_7_0":   "ssp370",
     "ssp5_8_5":   "ssp585",
 }
 
@@ -127,6 +110,13 @@ ISD_FTP_HOST    = "ftp.ncei.noaa.gov"
 ISD_FTP_DIR     = "/pub/data/noaa/{year}/"
 ISD_HISTORY_URL = "https://www.ncei.noaa.gov/pub/data/noaa/isd-history.csv"
 
+CDS_CMIP6_DATASET = "projections-cmip6"
+CDS_CORDEX_DATASET = "projections-cordex-domains-single-levels"
+CMIP6_SUPPORTED_VARIABLES = set(CMIP6_VAR_SHORT.keys())
+CMIP6_TEMPORAL_PRIORITY = ("daily", "monthly", "fixed")
+CORDEX_SUPPORTED_VARIABLES = set(CORDEX_VARS)
+CORDEX_DOMAIN_BY_CDS = {value: key for key, value in CORDEX_DOMAIN_MAP.items()}
+
 
 def _credentials_path() -> Path:
     import sys
@@ -137,6 +127,18 @@ def _credentials_path() -> Path:
     return base / "samy_wgen" / "credentials.yaml"
 
 CREDENTIALS_PATH = _credentials_path()
+
+
+def _cache_dir() -> Path:
+    import sys
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path.home() / ".cache"
+    return base / "samy_wgen"
+
+
+CONSTRAINT_CACHE_PATH = _cache_dir() / "cds_constraints.json"
 
 
 # ─── Shared helpers ───────────────────────────────────────────────────────────
@@ -180,6 +182,513 @@ def _save_nsrdb_credentials(api_key: str, email: str) -> None:
     if sys.platform != "win32":
         CREDENTIALS_PATH.chmod(0o600)
     logger.info(f"Credentials saved → {CREDENTIALS_PATH}")
+
+
+def _load_cds_credentials() -> tuple[str, str]:
+    """Return (url, key) from ~/.cdsapirc for CDS-compatible clients."""
+    path = Path.home() / ".cdsapirc"
+    if not path.exists():
+        raise EnvironmentError(
+            "CDS credentials not found. Create ~/.cdsapirc before requesting CMIP6/CORDEX metadata."
+        )
+
+    cfg: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        cfg[key.strip()] = value.strip()
+
+    try:
+        return cfg["url"], cfg["key"]
+    except KeyError as exc:
+        raise EnvironmentError(f"Invalid CDS credentials file {path}. Expected keys: url, key") from exc
+
+
+@functools.lru_cache(maxsize=1)
+def _get_datastores_client():
+    """Build an ECMWF datastores client from the local CDS credentials."""
+    from ecmwf.datastores import Client
+
+    url, key = _load_cds_credentials()
+    return Client(url=url, key=key, progress=False)
+
+
+@functools.lru_cache(maxsize=4)
+def _get_collection(collection_id: str):
+    """Return a cached CDS collection object."""
+    return _get_datastores_client().get_collection(collection_id)
+
+
+@functools.lru_cache(maxsize=1)
+def _load_constraint_cache() -> dict[str, dict[str, list[str]]]:
+    """Load the persistent CDS constraints cache."""
+    if not CONSTRAINT_CACHE_PATH.exists():
+        return {}
+    try:
+        return json.loads(CONSTRAINT_CACHE_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_constraint_cache(cache: dict[str, dict[str, list[str]]]) -> None:
+    """Persist the CDS constraints cache."""
+    CONSTRAINT_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONSTRAINT_CACHE_PATH.write_text(json.dumps(cache, sort_keys=True))
+    _load_constraint_cache.cache_clear()
+
+
+def _constraint_cache_key(collection_id: str, request: dict[str, list[str]]) -> str:
+    """Build a stable cache key for a collection constraint request."""
+    return json.dumps(
+        {"collection_id": collection_id, "request": request},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _apply_collection_constraints(collection_id: str, request: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Apply collection constraints and return the remaining value space."""
+    cache = _load_constraint_cache()
+    cache_key = _constraint_cache_key(collection_id, request)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    collection = _get_collection(collection_id)
+    constrained = collection.apply_constraints(request)
+    if not isinstance(constrained, dict):
+        raise TypeError(
+            f"Unexpected constraints response for {collection_id}: {type(constrained).__name__}"
+        )
+    cache[cache_key] = constrained
+    _save_constraint_cache(cache)
+    return constrained
+
+
+def _requested_values_available(
+    constrained: dict[str, list[str]],
+    request: dict[str, list[str]],
+    fields: list[str],
+) -> bool:
+    """Return True when every requested value still appears in the constrained value set."""
+    for field in fields:
+        requested = request.get(field, [])
+        available = constrained.get(field, [])
+        if not requested:
+            continue
+        if not available:
+            return False
+        if any(value not in available for value in requested):
+            return False
+    return True
+
+
+def _get_cmip6_variable_groups(model: str, experiment: str) -> dict[str, list[str]]:
+    """Return CMIP6 variables grouped by their highest available CDS temporal resolution."""
+    grouped_candidates: dict[str, list[str]] = {}
+    selected_resolution: dict[str, str] = {}
+
+    for temporal_resolution in CMIP6_TEMPORAL_PRIORITY:
+        request = {
+            "model": [model],
+            "experiment": [experiment],
+            "temporal_resolution": [temporal_resolution],
+        }
+        constrained = _apply_collection_constraints(CDS_CMIP6_DATASET, request)
+        if not _requested_values_available(
+            constrained, request, ["model", "experiment", "temporal_resolution"]
+        ):
+            continue
+
+        variables = sorted(
+            var for var in constrained.get("variable", []) if var in CMIP6_SUPPORTED_VARIABLES
+        )
+        for variable in variables:
+            if variable in selected_resolution:
+                continue
+            grouped_candidates.setdefault(temporal_resolution, []).append(variable)
+            selected_resolution[variable] = temporal_resolution
+
+    return {
+        temporal_resolution: sorted(variables)
+        for temporal_resolution, variables in grouped_candidates.items()
+        if variables
+    }
+
+
+def _filter_cmip6_variable_groups(
+    groups: dict[str, list[str]],
+    requested_variables: list[str] | None,
+) -> dict[str, list[str]]:
+    """Filter CMIP6 variable groups to the requested subset."""
+    if requested_variables is None:
+        return groups
+
+    requested_set = set(requested_variables)
+    return {
+        temporal_resolution: [var for var in variables if var in requested_set]
+        for temporal_resolution, variables in groups.items()
+        if any(var in requested_set for var in variables)
+    }
+
+
+def _list_cmip6_models(
+    experiment: str | None = None,
+    variable: str | None = None,
+    temporal_resolution: str | None = None,
+) -> dict[str, list[str]]:
+    """Return the currently available CMIP6 models and compatible request values from CDS."""
+    request: dict[str, list[str]] = {}
+    if experiment:
+        request["experiment"] = [experiment]
+    if variable:
+        request["variable"] = [variable]
+    if temporal_resolution:
+        request["temporal_resolution"] = [temporal_resolution]
+
+    constrained = _apply_collection_constraints(CDS_CMIP6_DATASET, request)
+    if request and not _requested_values_available(
+        constrained, request, list(request.keys())
+    ):
+        return {"model": [], "experiment": [], "variable": [], "temporal_resolution": []}
+
+    return {
+        "model": sorted(constrained.get("model", [])),
+        "experiment": sorted(constrained.get("experiment", [])),
+        "variable": sorted(constrained.get("variable", [])),
+        "temporal_resolution": sorted(constrained.get("temporal_resolution", [])),
+    }
+
+
+def _list_cmip6_model_rows(
+    experiment: str | None = None,
+    variable: str | None = None,
+    temporal_resolution: str | None = None,
+    show_progress: bool = False,
+) -> list[dict[str, str]]:
+    """Return CMIP6 availability rows as model/experiment/resolution/variable tuples."""
+    model_info = _list_cmip6_models(
+        experiment=experiment,
+        variable=variable,
+        temporal_resolution=temporal_resolution,
+    )
+    rows: list[dict[str, str]] = []
+
+    model_iter = model_info["model"]
+    if show_progress:
+        model_iter = tqdm(model_iter, desc="CDS model details", unit="model")
+
+    for model in model_iter:
+        request: dict[str, list[str]] = {"model": [model]}
+        if experiment:
+            request["experiment"] = [experiment]
+        if variable:
+            request["variable"] = [variable]
+        if temporal_resolution:
+            request["temporal_resolution"] = [temporal_resolution]
+
+        detail = _apply_collection_constraints(CDS_CMIP6_DATASET, request)
+        experiments = [experiment] if experiment else sorted(detail.get("experiment", []))
+        resolutions = [temporal_resolution] if temporal_resolution else sorted(
+            detail.get("temporal_resolution", []),
+            key=lambda item: CMIP6_TEMPORAL_PRIORITY.index(item)
+            if item in CMIP6_TEMPORAL_PRIORITY else len(CMIP6_TEMPORAL_PRIORITY),
+        )
+
+        for exp in experiments:
+            for resolution in resolutions:
+                scoped = _apply_collection_constraints(
+                    CDS_CMIP6_DATASET,
+                    {
+                        "model": [model],
+                        "experiment": [exp],
+                        "temporal_resolution": [resolution],
+                    },
+                )
+                variables = [
+                    var for var in sorted(scoped.get("variable", []))
+                    if var in CMIP6_SUPPORTED_VARIABLES and (variable is None or var == variable)
+                ]
+                if not variables:
+                    continue
+                rows.append(
+                    {
+                        "model": model,
+                        "experiment": exp,
+                        "resolution": resolution,
+                        "variable": ",".join(CMIP6_VAR_SHORT[var] for var in variables),
+                    }
+                )
+
+    return rows
+
+
+def _normalize_cordex_domain(domain: str | None) -> str | None:
+    """Translate user-facing CORDEX domain IDs into CDS domain IDs."""
+    if domain is None:
+        return None
+    if domain in CORDEX_DOMAIN_MAP:
+        return CORDEX_DOMAIN_MAP[domain]
+    if domain in CORDEX_DOMAIN_BY_CDS:
+        return domain
+    raise ValueError(
+        f"Unknown cordex_domain '{domain}'. Supported: {sorted(CORDEX_DOMAIN_MAP)}"
+    )
+
+
+def _list_cordex_options(
+    domain: str | None = None,
+    experiment: str | None = None,
+    gcm: str | None = None,
+    rcm: str | None = None,
+    ensemble: str | None = None,
+    resolution: str | None = None,
+    variable: str | None = None,
+) -> dict[str, list[str]]:
+    """Return currently available CORDEX request values from CDS."""
+    request: dict[str, list[str]] = {}
+    cds_domain = _normalize_cordex_domain(domain)
+    if cds_domain:
+        request["domain"] = [cds_domain]
+    if experiment:
+        request["experiment"] = [experiment]
+    if gcm:
+        request["gcm_model"] = [gcm]
+    if rcm:
+        request["rcm_model"] = [rcm]
+    if ensemble:
+        request["ensemble_member"] = [ensemble]
+    if resolution:
+        request["horizontal_resolution"] = [resolution]
+    if variable:
+        request["variable"] = [variable]
+
+    constrained = _apply_collection_constraints(CDS_CORDEX_DATASET, request)
+    if request and not _requested_values_available(constrained, request, list(request.keys())):
+        return {
+            "domain": [],
+            "experiment": [],
+            "gcm_model": [],
+            "rcm_model": [],
+            "ensemble_member": [],
+            "horizontal_resolution": [],
+            "variable": [],
+        }
+
+    return {
+        "domain": sorted(CORDEX_DOMAIN_BY_CDS.get(item, item) for item in constrained.get("domain", [])),
+        "experiment": sorted(constrained.get("experiment", [])),
+        "gcm_model": sorted(constrained.get("gcm_model", [])),
+        "rcm_model": sorted(constrained.get("rcm_model", [])),
+        "ensemble_member": sorted(constrained.get("ensemble_member", [])),
+        "horizontal_resolution": sorted(constrained.get("horizontal_resolution", [])),
+        "variable": sorted(
+            var for var in constrained.get("variable", []) if var in CORDEX_SUPPORTED_VARIABLES
+        ),
+    }
+
+
+def _list_cordex_rows(
+    domain: str | None = None,
+    experiment: str | None = None,
+    gcm: str | None = None,
+    rcm: str | None = None,
+    ensemble: str | None = None,
+    resolution: str | None = None,
+    variable: str | None = None,
+    show_progress: bool = False,
+    expand_ensemble: bool = False,
+) -> list[dict[str, str]]:
+    """Return CORDEX availability rows as domain/experiment/GCM/RCM/ensemble/resolution tuples."""
+    options = _list_cordex_options(
+        domain=domain,
+        experiment=experiment,
+        gcm=gcm,
+        rcm=rcm,
+        ensemble=ensemble,
+        resolution=resolution,
+        variable=variable,
+    )
+    rows: list[dict[str, str]] = []
+
+    if expand_ensemble or ensemble is not None:
+        base_rows = [
+            {"gcm_model": gcm_id, "rcm_model": rcm_id, "ensemble_member": ens_id}
+            for gcm_id in options["gcm_model"]
+            for rcm_id in options["rcm_model"]
+            for ens_id in options["ensemble_member"]
+        ]
+    else:
+        base_rows = [
+            {"gcm_model": gcm_id, "rcm_model": rcm_id}
+            for gcm_id in options["gcm_model"]
+            for rcm_id in options["rcm_model"]
+        ]
+    if show_progress:
+        base_rows = tqdm(base_rows, desc="CDS CORDEX details", unit="combo")
+
+    for combo in base_rows:
+        request: dict[str, list[str]] = {
+            "gcm_model": [combo["gcm_model"]],
+            "rcm_model": [combo["rcm_model"]],
+        }
+        if "ensemble_member" in combo:
+            request["ensemble_member"] = [combo["ensemble_member"]]
+        cds_domain = _normalize_cordex_domain(domain)
+        if cds_domain:
+            request["domain"] = [cds_domain]
+        if experiment:
+            request["experiment"] = [experiment]
+        if resolution:
+            request["horizontal_resolution"] = [resolution]
+        if variable:
+            request["variable"] = [variable]
+
+        detail = _apply_collection_constraints(CDS_CORDEX_DATASET, request)
+        if not _requested_values_available(detail, request, list(request.keys())):
+            continue
+
+        available_ensembles = sorted(detail.get("ensemble_member", []))
+        if "ensemble_member" in combo:
+            ensembles = [combo["ensemble_member"]]
+        elif available_ensembles:
+            ensembles = [available_ensembles[0]]
+        else:
+            continue
+
+        domains = [cds_domain] if cds_domain else sorted(detail.get("domain", []))
+        experiments = [experiment] if experiment else sorted(detail.get("experiment", []))
+        resolutions = [resolution] if resolution else sorted(detail.get("horizontal_resolution", []))
+
+        for cds_domain_value in domains:
+            for exp in experiments:
+                for ens in ensembles:
+                    for res in resolutions:
+                        scoped = _apply_collection_constraints(
+                            CDS_CORDEX_DATASET,
+                            {
+                                "domain": [cds_domain_value],
+                                "experiment": [exp],
+                                "gcm_model": [combo["gcm_model"]],
+                                "rcm_model": [combo["rcm_model"]],
+                                "ensemble_member": [ens],
+                                "horizontal_resolution": [res],
+                            },
+                        )
+                        variables = [
+                            var for var in sorted(scoped.get("variable", []))
+                            if var in CORDEX_SUPPORTED_VARIABLES and (variable is None or var == variable)
+                        ]
+                        if not variables:
+                            continue
+                        rows.append(
+                            {
+                                "domain": CORDEX_DOMAIN_BY_CDS.get(cds_domain_value, cds_domain_value),
+                                "experiment": exp,
+                                "gcm_model": combo["gcm_model"],
+                                "rcm_model": combo["rcm_model"],
+                                "ensemble_member": ens,
+                                "resolution": res,
+                                "variable": ",".join(variables),
+                            }
+                        )
+
+    return rows
+
+
+def _resolve_cordex_download_plan(
+    cordex_domain: str,
+    gcm: str,
+    rcm: str,
+    ensemble: str | None,
+    experiments: list[str],
+    variables: list[str] | None = None,
+) -> list[dict[str, str | list[str]]]:
+    """Resolve requested CORDEX filters into valid CDS download combinations."""
+    cds_domain = _normalize_cordex_domain(cordex_domain)
+    assert cds_domain is not None
+    requested_variables = variables or sorted(CORDEX_SUPPORTED_VARIABLES)
+    plan: list[dict[str, str | list[str]]] = []
+
+    for experiment in experiments:
+        request = {
+            "domain": [cds_domain],
+            "experiment": [experiment],
+            "gcm_model": [gcm],
+            "rcm_model": [rcm],
+        }
+        if ensemble is not None:
+            request["ensemble_member"] = [ensemble]
+        constrained = _apply_collection_constraints(CDS_CORDEX_DATASET, request)
+        if not _requested_values_available(constrained, request, list(request.keys())):
+            ensemble_msg = ensemble if ensemble is not None else "<auto>"
+            logger.warning(
+                "CORDEX combination not available in CDS: "
+                f"domain='{cordex_domain}', experiment='{experiment}', gcm='{gcm}', rcm='{rcm}', ensemble='{ensemble_msg}'. "
+                "Run 'samy-download list-cordex' to inspect currently available combinations."
+            )
+            continue
+
+        available_ensembles = sorted(constrained.get("ensemble_member", []))
+        selected_ensemble = ensemble if ensemble is not None else (available_ensembles[0] if available_ensembles else None)
+        if selected_ensemble is None:
+            logger.warning(
+                "No CORDEX ensemble_member returned for "
+                f"domain='{cordex_domain}', experiment='{experiment}', gcm='{gcm}', rcm='{rcm}'."
+            )
+            continue
+
+        available_resolutions = sorted(constrained.get("horizontal_resolution", []))
+        if not available_resolutions:
+            logger.warning(
+                f"No CORDEX horizontal_resolution returned for domain='{cordex_domain}', experiment='{experiment}'."
+            )
+            continue
+
+        preferred_resolution = CORDEX_DOMAIN_RES.get(cds_domain)
+        resolution = (
+            preferred_resolution
+            if preferred_resolution in available_resolutions
+            else available_resolutions[0]
+        )
+        scoped = _apply_collection_constraints(
+            CDS_CORDEX_DATASET,
+            {
+                "domain": [cds_domain],
+                "experiment": [experiment],
+                "gcm_model": [gcm],
+                "rcm_model": [rcm],
+                "ensemble_member": [selected_ensemble],
+                "horizontal_resolution": [resolution],
+            },
+        )
+        available_variables = [
+            var for var in sorted(scoped.get("variable", []))
+            if var in CORDEX_SUPPORTED_VARIABLES and var in requested_variables
+        ]
+        if not available_variables:
+            logger.warning(
+                "No supported CORDEX variables available after applying CDS constraints for "
+                f"domain='{cordex_domain}', experiment='{experiment}', gcm='{gcm}', rcm='{rcm}', ensemble='{ensemble}', "
+                f"resolution='{resolution}'."
+            )
+            continue
+
+        plan.append(
+            {
+                "domain": cds_domain,
+                "experiment": experiment,
+                "gcm_model": gcm,
+                "rcm_model": rcm,
+                "ensemble_member": selected_ensemble,
+                "horizontal_resolution": resolution,
+                "variable": available_variables,
+            }
+        )
+
+    return plan
 
 def _load_cities_config() -> pd.DataFrame:
     import importlib.resources as ir
@@ -252,7 +761,7 @@ def _nc_bytes_to_point_df(nc_bytes: bytes, lat: float, lon: float) -> pd.DataFra
                 raise ValueError("No .nc file found inside zip archive")
             nc_bytes = zf.read(nc_names[0])
 
-    ds = xr.open_dataset(BytesIO(nc_bytes))
+    ds = xr.open_dataset(BytesIO(nc_bytes), engine="h5netcdf")
 
     # Resolve lat/lon coordinate names (CMIP6: lat/lon; CORDEX: may be rlat/rlon + lat2d/lon2d)
     lat_name = next((c for c in ds.coords if c in ("lat", "latitude")), None)
@@ -488,6 +997,8 @@ def download_cmip6(
     lon: Optional[float] = None,
     models: Optional[List[str]] = None,
     experiments: Optional[List[str]] = None,
+    variables: Optional[List[str]] = None,
+    year_range: Optional[tuple] = None,
     output_dir: str = "data/CMIP6",
 ) -> None:
     """Download CMIP6 projections for a city via CDS, extracting the nearest grid point.
@@ -501,31 +1012,36 @@ def download_cmip6(
     lat, lon    = _resolve_coords(city, lat, lon)
     models      = models      or ["mpi_esm1_2_lr"]
     experiments = experiments or ["historical", "ssp2_4_5"]
+    variables   = variables   or sorted(CMIP6_SUPPORTED_VARIABLES)
     all_months  = [f"{i:02d}" for i in range(1, 13)]
     all_days    = [f"{i:02d}" for i in range(1, 32)]
     client      = cdsapi.Client()
 
     for model in models:
-        if model not in CMIP6_MODEL_VARS:
-            logger.warning(f"Unknown CMIP6 model '{model}', skipping")
-            continue
-        var_config = CMIP6_MODEL_VARS[model]
         city_dir   = Path(output_dir) / city
         city_dir.mkdir(parents=True, exist_ok=True)
 
         for cds_exp in experiments:
-            years = CMIP6_EXP_YEARS.get(cds_exp)
+            variable_groups = _filter_cmip6_variable_groups(
+                _get_cmip6_variable_groups(model, cds_exp),
+                variables,
+            )
+            if not variable_groups:
+                logger.warning(
+                    f"CMIP6 combination not available in CDS: model='{model}', experiment='{cds_exp}'. "
+                    "Run 'samy-download list-cmip6' to inspect currently available combinations."
+                )
+                continue
+
+            years = CMIP6_EXP_YEARS.get(cds_exp, [])
+            if year_range is not None:
+                years = [y for y in years if year_range[0] <= y <= year_range[1]]
             if not years:
-                logger.warning(f"No year range configured for experiment '{cds_exp}'")
+                logger.warning(f"No years available for experiment '{cds_exp}' with given range, skipping")
                 continue
             label = CMIP6_EXP_LABEL[cds_exp]
 
-            # Group variables by temporal resolution → separate output CSVs
-            groups: dict[str, list[str]] = {}
-            for var, res in var_config.items():
-                groups.setdefault(res, []).append(var)
-
-            for temporal_res, var_list in groups.items():
+            for temporal_res, var_list in variable_groups.items():
                 suffix  = "" if temporal_res == "daily" else "_monthly"
                 out_csv = city_dir / f"{model}_{label}{suffix}.csv"
                 if out_csv.exists():
@@ -546,7 +1062,7 @@ def download_cmip6(
                             "variable":            variable,
                             "model":               model,
                             "year":                [str(y) for y in years],
-                            "area":                [lat + 1.5, lon - 1.5, lat - 1.5, lon + 1.5],
+                            "area":                [round(lat + 1.5, 2), round(lon - 1.5, 2), round(lat - 1.5, 2), round(lon + 1.5, 2)],
                         }
                         if temporal_res == "daily":
                             req["month"] = all_months
@@ -603,19 +1119,31 @@ def download_cordex_cmip5(
     if cordex_domain is None:
         cordex_domain = _city_meta(city)["cordex_domain"]
 
-    cds_domain = CORDEX_DOMAIN_MAP.get(cordex_domain)
+    cds_domain = _normalize_cordex_domain(cordex_domain)
     if cds_domain is None:
         raise ValueError(
             f"Unknown cordex_domain '{cordex_domain}'. "
             f"Supported: {list(CORDEX_DOMAIN_MAP)}"
         )
-    horizontal_res = CORDEX_DOMAIN_RES.get(cds_domain, "0_22_degree_x_0_22_degree")
 
     # Short RCM label for directory naming
     rcm_short = "RegCM" if "regcm" in rcm.lower() else rcm.replace("_", "").upper()
     client    = cdsapi.Client()
 
-    for experiment in experiments:
+    download_plan = _resolve_cordex_download_plan(
+        cordex_domain=cordex_domain,
+        gcm=gcm,
+        rcm=rcm,
+        ensemble=ensemble,
+        experiments=experiments,
+        variables=CORDEX_VARS,
+    )
+    if not download_plan:
+        logger.warning("No CORDEX download combinations remained after CDS constraint validation.")
+        return
+
+    for plan in download_plan:
+        experiment = str(plan["experiment"])
         years = CORDEX_EXP_YEARS.get(experiment)
         if not years:
             logger.warning(f"No year range configured for CORDEX experiment '{experiment}'")
@@ -636,17 +1164,17 @@ def download_cordex_cmip5(
             tmp_nc = out_subdir / f"_tmp_{city}_{experiment}_{year}.nc"
             try:
                 req = {
-                    "domain":               cds_domain,
+                    "domain":               str(plan["domain"]),
                     "experiment":           experiment,
-                    "horizontal_resolution": horizontal_res,
+                    "horizontal_resolution": str(plan["horizontal_resolution"]),
                     "temporal_resolution":  "daily_mean",
-                    "variable":             CORDEX_VARS,
-                    "gcm_model":            gcm,
-                    "rcm_model":            rcm,
-                    "ensemble_member":      ensemble,
+                    "variable":             list(plan["variable"]),
+                    "gcm_model":            str(plan["gcm_model"]),
+                    "rcm_model":            str(plan["rcm_model"]),
+                    "ensemble_member":      str(plan["ensemble_member"]),
                     "start_year":           [str(year)],
                     "end_year":             [str(year)],
-                    "area":                 [lat, lon, lat, lon],
+                    "area":                 [round(lat, 2), round(lon, 2), round(lat, 2), round(lon, 2)],
                 }
                 client.retrieve(
                     "projections-cordex-domains-single-levels", req, str(tmp_nc)
@@ -684,6 +1212,32 @@ def _build_parser() -> argparse.ArgumentParser:
     # ── config ─────────────────────────────────────────────────────────────────
     sub.add_parser("config", help="Save NSRDB credentials to ~/.config/samy_wgen/credentials.yaml")
 
+    # ── list-cmip6 ─────────────────────────────────────────────────────────────
+    p_lm = sub.add_parser("list-cmip6", help="List available CMIP6 model / experiment / resolution / variable combinations from the live CDS catalogue")
+    p_lm.add_argument("--detail", action="store_true", help="Expand each model into experiment / resolution / variable rows")
+    p_lm.add_argument("--experiment", help="Filter by CDS experiment name, e.g. ssp2_4_5")
+    p_lm.add_argument(
+        "--var",
+        choices=sorted(CMIP6_VAR_SHORT),
+        help="Filter by CMIP6 CDS variable name",
+    )
+    p_lm.add_argument(
+        "--resolution",
+        choices=["daily", "monthly", "fixed"],
+        help="Filter by CDS temporal resolution",
+    )
+
+    # ── list-cordex ───────────────────────────────────────────────────────────
+    p_lc = sub.add_parser("list-cordex", help="List available CORDEX domain / experiment / GCM / RCM / ensemble / resolution / variable combinations from the live CDS catalogue")
+    p_lc.add_argument("--detail", action="store_true", help="Expand each GCM/RCM/ensemble combination into domain / experiment / resolution / variable rows")
+    p_lc.add_argument("--domain", choices=sorted(CORDEX_DOMAIN_MAP), help="Filter by CORDEX domain, e.g. NAM-22")
+    p_lc.add_argument("--experiment", help="Filter by CORDEX CDS experiment name, e.g. historical or rcp_8_5")
+    p_lc.add_argument("--gcm", help="Filter by CORDEX driving GCM model")
+    p_lc.add_argument("--rcm", help="Filter by CORDEX regional climate model")
+    p_lc.add_argument("--ensemble", help="Filter by CORDEX ensemble member")
+    p_lc.add_argument("--resolution", help="Filter by CORDEX horizontal resolution")
+    p_lc.add_argument("--var", choices=sorted(CORDEX_SUPPORTED_VARIABLES), help="Filter by CORDEX variable")
+
     # ── list-stations ──────────────────────────────────────────────────────────
     p_list = sub.add_parser("list-stations", help="List nearby ISD stations for a city")
     p_list.add_argument("--city",    required=True,    help="City name (from cities_config.csv)")
@@ -718,12 +1272,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--experiments", nargs="+", default=["historical", "ssp2_4_5"],
         help="CMIP6 CDS experiment names (default: historical ssp2_4_5)",
     )
+    p_dl.add_argument(
+        "--cmip6-var", nargs="+", default=None, choices=sorted(CMIP6_VAR_SHORT),
+        help="CMIP6 CDS variables to download (default: all supported variables)",
+    )
 
     # CORDEX
     p_dl.add_argument("--cordex-dir",        default="data/CORDEX_CMIP5")
     p_dl.add_argument("--cordex-gcm",        default="mpi_m_mpi_esm_lr")
     p_dl.add_argument("--cordex-rcm",        default="ncar_regcm4")
-    p_dl.add_argument("--cordex-ensemble",   default="r1i1p1")
+    p_dl.add_argument("--cordex-ensemble",   default=None, help="CORDEX ensemble member (default: auto-select first valid ensemble)")
     p_dl.add_argument(
         "--cordex-experiments", nargs="+",   default=["historical", "rcp_8_5"],
         help="CORDEX experiments (default: historical rcp_8_5)",
@@ -733,6 +1291,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dl.add_argument(
         "--years", nargs=2, type=int, metavar=("START", "END"), default=None,
         help="Year range for ISD / NSRDB (default: full available history)",
+    )
+
+    # CMIP6 year range
+    p_dl.add_argument(
+        "--cmip6-years", nargs=2, type=int, metavar=("START", "END"), default=None,
+        help="Year range for CMIP6 downloads (default: full experiment range)",
     )
 
     return parser
@@ -753,6 +1317,76 @@ def main() -> None:
         email   = input("  NSRDB email   : ").strip()
         _save_nsrdb_credentials(api_key, email)
         print("Done. Credentials saved.")
+        return
+
+    if args.command == "list-cmip6":
+        model_info = _list_cmip6_models(
+            experiment=args.experiment,
+            variable=args.var,
+            temporal_resolution=args.resolution,
+        )
+        models = model_info["model"]
+        if not models:
+            print("No CMIP6 models matched the requested CDS constraints.")
+            return
+
+        if not args.detail:
+            print("Model ID")
+            print("--------")
+            for model in models:
+                print(model)
+            print(f"\nTotal: {len(models)} models")
+            return
+
+        rows = _list_cmip6_model_rows(
+            experiment=args.experiment,
+            variable=args.var,
+            temporal_resolution=args.resolution,
+            show_progress=True,
+        )
+        header = f"{'Model ID':<25} {'Experiment':<14} {'Resolution':<10} Variable"
+        print(header)
+        print("-" * len(header))
+        for row in rows:
+            print(f"{row['model']:<25} {row['experiment']:<14} {row['resolution']:<10} {row['variable']}")
+        print(f"\nTotal: {len(rows)} rows")
+        return
+
+    if args.command == "list-cordex":
+        rows = _list_cordex_rows(
+            domain=args.domain,
+            experiment=args.experiment,
+            gcm=args.gcm,
+            rcm=args.rcm,
+            ensemble=args.ensemble,
+            resolution=args.resolution,
+            variable=args.var,
+            show_progress=True,
+            expand_ensemble=args.detail or args.ensemble is not None,
+        )
+        combos = sorted({(row["gcm_model"], row["rcm_model"]) for row in rows})
+        if not combos:
+            print("No CORDEX combinations matched the requested CDS constraints.")
+            return
+
+        if not args.detail:
+            header = f"{'GCM Model':<30} {'RCM Model':<20}"
+            print(header)
+            print("-" * len(header))
+            for gcm_id, rcm_id in combos:
+                print(f"{gcm_id:<30} {rcm_id:<20}")
+            print(f"\nTotal: {len(combos)} combinations")
+            return
+
+        header = f"{'Domain':<8} {'Experiment':<12} {'GCM Model':<30} {'RCM Model':<20} {'Ensemble':<10} {'Resolution':<28} Variable"
+        print(header)
+        print("-" * len(header))
+        for row in rows:
+            print(
+                f"{row['domain']:<8} {row['experiment']:<12} {row['gcm_model']:<30} "
+                f"{row['rcm_model']:<20} {row['ensemble_member']:<10} {row['resolution']:<28} {row['variable']}"
+            )
+        print(f"\nTotal: {len(rows)} rows")
         return
 
     if args.command == "list-stations":
@@ -795,6 +1429,8 @@ def main() -> None:
             lat=lat, lon=lon,
             models=args.models,
             experiments=args.experiments,
+            variables=args.cmip6_var,
+            year_range=tuple(args.cmip6_years) if args.cmip6_years else None,
             output_dir=args.cmip6_dir,
         )
 

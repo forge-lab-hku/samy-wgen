@@ -390,6 +390,7 @@ class TestCliParsing:
         parser = self._parser()
         args = parser.parse_args(["download", "--city", "Miami", "--data", "cordex"])
         assert args.data == ["cordex"]
+        assert args.cordex_ensemble is None
 
     def test_download_custom_experiments(self):
         parser = self._parser()
@@ -399,6 +400,667 @@ class TestCliParsing:
             "--experiments", "historical", "ssp5_8_5",
         ])
         assert "ssp5_8_5" in args.experiments
+
+    def test_download_cmip6_years(self):
+        parser = self._parser()
+        args = parser.parse_args([
+            "download", "--city", "Miami", "--data", "cmip6",
+            "--cmip6-years", "1990", "2010",
+        ])
+        assert args.cmip6_years == [1990, 2010]
+
+    def test_download_cmip6_years_default_none(self):
+        parser = self._parser()
+        args = parser.parse_args(["download", "--city", "Miami", "--data", "cmip6"])
+        assert args.cmip6_years is None
+        assert args.cmip6_var is None
+
+    def test_download_cmip6_vars(self):
+        parser = self._parser()
+        args = parser.parse_args([
+            "download", "--city", "Miami", "--data", "cmip6",
+            "--cmip6-var", "near_surface_air_temperature", "precipitation",
+        ])
+        assert args.cmip6_var == ["near_surface_air_temperature", "precipitation"]
+
+    def test_list_models_subcommand(self):
+        parser = self._parser()
+        args = parser.parse_args(["list-cmip6"])
+        assert args.command == "list-cmip6"
+        assert args.resolution is None
+        assert args.var is None
+        assert args.detail is False
+
+    def test_list_models_detail_flag(self):
+        parser = self._parser()
+        args = parser.parse_args(["list-cmip6", "--detail"])
+        assert args.detail is True
+
+    def test_list_models_filters(self):
+        parser = self._parser()
+        args = parser.parse_args(
+            [
+                "list-cmip6",
+                "--experiment", "ssp2_4_5",
+                "--var", "near_surface_air_temperature",
+                "--resolution", "monthly",
+            ]
+        )
+        assert args.experiment == "ssp2_4_5"
+        assert args.var == "near_surface_air_temperature"
+        assert args.resolution == "monthly"
+
+    def test_list_cordex_subcommand(self):
+        parser = self._parser()
+        args = parser.parse_args(["list-cordex"])
+        assert args.command == "list-cordex"
+        assert args.domain is None
+        assert args.detail is False
+
+    def test_list_cordex_filters(self):
+        parser = self._parser()
+        args = parser.parse_args(
+            [
+                "list-cordex",
+                "--detail",
+                "--domain", "NAM-22",
+                "--experiment", "historical",
+                "--gcm", "mpi_m_mpi_esm_lr",
+                "--rcm", "ncar_regcm4",
+                "--ensemble", "r1i1p1",
+                "--resolution", "0_22_degree_x_0_22_degree",
+                "--var", "2m_air_temperature",
+            ]
+        )
+        assert args.detail is True
+        assert args.domain == "NAM-22"
+        assert args.experiment == "historical"
+        assert args.gcm == "mpi_m_mpi_esm_lr"
+        assert args.rcm == "ncar_regcm4"
+        assert args.ensemble == "r1i1p1"
+        assert args.resolution == "0_22_degree_x_0_22_degree"
+        assert args.var == "2m_air_temperature"
+
+    def test_download_cordex_explicit_ensemble(self):
+        parser = self._parser()
+        args = parser.parse_args([
+            "download", "--city", "Miami", "--data", "cordex",
+            "--cordex-ensemble", "r1i1p1",
+        ])
+        assert args.cordex_ensemble == "r1i1p1"
+
+
+# ─── CDS constraint helpers ───────────────────────────────────────────────────
+
+class TestCdsConstraintHelpers:
+    def test_constraint_cache_key_stable(self):
+        from samy_wgen.pipeline.download_data import _constraint_cache_key
+
+        req1 = {"experiment": ["ssp2_4_5"], "temporal_resolution": ["daily"]}
+        req2 = {"temporal_resolution": ["daily"], "experiment": ["ssp2_4_5"]}
+        assert _constraint_cache_key("projections-cmip6", req1) == _constraint_cache_key("projections-cmip6", req2)
+
+    def test_requested_values_available(self):
+        from samy_wgen.pipeline.download_data import _requested_values_available
+
+        constrained = {
+            "model": ["mpi_esm1_2_lr"],
+            "experiment": ["historical", "ssp2_4_5"],
+        }
+        request = {"model": ["mpi_esm1_2_lr"], "experiment": ["ssp2_4_5"]}
+        assert _requested_values_available(constrained, request, ["model", "experiment"]) is True
+
+    def test_requested_values_missing(self):
+        from samy_wgen.pipeline.download_data import _requested_values_available
+
+        constrained = {"model": ["mpi_esm1_2_lr"], "experiment": []}
+        request = {"model": ["mpi_esm1_2_lr"], "experiment": ["ssp2_4_5"]}
+        assert _requested_values_available(constrained, request, ["model", "experiment"]) is False
+
+    def test_get_cmip6_variable_groups(self):
+        from samy_wgen.pipeline.download_data import _get_cmip6_variable_groups
+
+        def fake_constraints(collection_id, request):
+            assert collection_id == "projections-cmip6"
+            if request["temporal_resolution"] == ["daily"]:
+                return {
+                    "model": ["mpi_esm1_2_lr"],
+                    "experiment": ["ssp2_4_5"],
+                    "temporal_resolution": ["daily"],
+                    "variable": [
+                        "near_surface_air_temperature",
+                        "precipitation",
+                        "not_supported_here",
+                    ],
+                }
+            return {
+                "model": ["mpi_esm1_2_lr"],
+                "experiment": ["ssp2_4_5"],
+                "temporal_resolution": ["monthly"],
+                "variable": [
+                    "near_surface_air_temperature",
+                    "surface_downwelling_shortwave_radiation",
+                ],
+            }
+
+        with patch("samy_wgen.pipeline.download_data._apply_collection_constraints", side_effect=fake_constraints):
+            groups = _get_cmip6_variable_groups("mpi_esm1_2_lr", "ssp2_4_5")
+
+        assert groups == {
+            "daily": ["near_surface_air_temperature", "precipitation"],
+            "monthly": ["surface_downwelling_shortwave_radiation"],
+        }
+
+    def test_list_cmip6_models_invalid_filter_returns_empty(self):
+        from samy_wgen.pipeline.download_data import _list_cmip6_models
+
+        fake = {
+            "model": [],
+            "experiment": [],
+            "variable": [],
+            "temporal_resolution": [],
+        }
+        with patch("samy_wgen.pipeline.download_data._apply_collection_constraints", return_value=fake):
+            out = _list_cmip6_models(experiment="ssp2_4_5", temporal_resolution="daily")
+        assert out["model"] == []
+
+    def test_list_cmip6_model_rows(self):
+        from samy_wgen.pipeline.download_data import _list_cmip6_model_rows
+
+        def fake_list_models(experiment=None, variable=None, temporal_resolution=None):
+            assert experiment == "ssp2_4_5"
+            assert variable is None
+            assert temporal_resolution is None
+            return {
+                "model": ["mpi_esm1_2_lr"],
+                "experiment": ["ssp2_4_5"],
+                "variable": ["near_surface_air_temperature"],
+                "temporal_resolution": ["daily", "monthly"],
+            }
+
+        def fake_constraints(collection_id, request):
+            assert collection_id == "projections-cmip6"
+            if request == {"model": ["mpi_esm1_2_lr"], "experiment": ["ssp2_4_5"], "temporal_resolution": ["daily"]}:
+                return {"variable": ["near_surface_air_temperature", "precipitation"]}
+            if request == {"model": ["mpi_esm1_2_lr"], "experiment": ["ssp2_4_5"], "temporal_resolution": ["monthly"]}:
+                return {"variable": ["surface_downwelling_shortwave_radiation"]}
+            return {
+                "experiment": ["ssp2_4_5"],
+                "temporal_resolution": ["daily", "monthly"],
+            }
+
+        with (
+            patch("samy_wgen.pipeline.download_data._list_cmip6_models", side_effect=fake_list_models),
+            patch("samy_wgen.pipeline.download_data._apply_collection_constraints", side_effect=fake_constraints),
+        ):
+            rows = _list_cmip6_model_rows(experiment="ssp2_4_5", show_progress=False)
+
+        assert rows == [
+            {
+                "model": "mpi_esm1_2_lr",
+                "experiment": "ssp2_4_5",
+                "resolution": "daily",
+                "variable": "tas,pr",
+            },
+            {
+                "model": "mpi_esm1_2_lr",
+                "experiment": "ssp2_4_5",
+                "resolution": "monthly",
+                "variable": "rsds",
+            },
+        ]
+
+    def test_get_cmip6_variable_groups_prefers_highest_resolution(self):
+        from samy_wgen.pipeline.download_data import _get_cmip6_variable_groups
+
+        def fake_constraints(collection_id, request):
+            assert collection_id == "projections-cmip6"
+            if request["temporal_resolution"] == ["daily"]:
+                return {
+                    "model": ["mpi_esm1_2_lr"],
+                    "experiment": ["ssp2_4_5"],
+                    "temporal_resolution": ["daily"],
+                    "variable": ["near_surface_air_temperature"],
+                }
+            if request["temporal_resolution"] == ["monthly"]:
+                return {
+                    "model": ["mpi_esm1_2_lr"],
+                    "experiment": ["ssp2_4_5"],
+                    "temporal_resolution": ["monthly"],
+                    "variable": ["near_surface_air_temperature", "near_surface_wind_speed"],
+                }
+            return {
+                "model": ["mpi_esm1_2_lr"],
+                "experiment": ["ssp2_4_5"],
+                "temporal_resolution": ["fixed"],
+                "variable": ["near_surface_air_temperature"],
+            }
+
+        with patch("samy_wgen.pipeline.download_data._apply_collection_constraints", side_effect=fake_constraints):
+            groups = _get_cmip6_variable_groups("mpi_esm1_2_lr", "ssp2_4_5")
+
+        assert groups == {"daily": ["near_surface_air_temperature"], "monthly": ["near_surface_wind_speed"]}
+
+    def test_filter_cmip6_variable_groups(self):
+        from samy_wgen.pipeline.download_data import _filter_cmip6_variable_groups
+
+        groups = {
+            "daily": ["near_surface_air_temperature", "precipitation"],
+            "monthly": ["surface_downwelling_shortwave_radiation"],
+        }
+        filtered = _filter_cmip6_variable_groups(groups, ["precipitation"])
+        assert filtered == {"daily": ["precipitation"]}
+
+    def test_list_cordex_options_invalid_filter_returns_empty(self):
+        from samy_wgen.pipeline.download_data import _list_cordex_options
+
+        fake = {
+            "domain": [],
+            "experiment": [],
+            "gcm_model": [],
+            "rcm_model": [],
+            "ensemble_member": [],
+            "horizontal_resolution": [],
+            "variable": [],
+        }
+        with patch("samy_wgen.pipeline.download_data._apply_collection_constraints", return_value=fake):
+            out = _list_cordex_options(domain="NAM-22", gcm="missing_model")
+        assert out["gcm_model"] == []
+
+    def test_list_cordex_rows(self):
+        from samy_wgen.pipeline.download_data import _list_cordex_rows
+
+        def fake_constraints(collection_id, request):
+            assert collection_id == "projections-cordex-domains-single-levels"
+            if request == {
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+            }:
+                return {
+                    "domain": ["north_america"],
+                    "experiment": ["historical"],
+                    "gcm_model": ["mpi_m_mpi_esm_lr"],
+                    "rcm_model": ["ncar_regcm4"],
+                    "ensemble_member": ["r1i1p1", "r2i1p1"],
+                    "horizontal_resolution": ["0_22_degree_x_0_22_degree"],
+                }
+            if request == {
+                "domain": ["north_america"],
+                "experiment": ["historical"],
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+                "ensemble_member": ["r1i1p1"],
+                "horizontal_resolution": ["0_22_degree_x_0_22_degree"],
+            }:
+                return {
+                    "variable": [
+                        "2m_air_temperature",
+                        "mean_precipitation_flux",
+                        "not_supported",
+                    ]
+                }
+            raise AssertionError(f"Unexpected request: {request}")
+
+        with patch(
+            "samy_wgen.pipeline.download_data._list_cordex_options",
+            return_value={
+                "domain": ["NAM-22"],
+                "experiment": ["historical"],
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+                "ensemble_member": ["r1i1p1"],
+                "horizontal_resolution": ["0_22_degree_x_0_22_degree"],
+                "variable": ["2m_air_temperature", "mean_precipitation_flux"],
+            },
+        ), patch(
+            "samy_wgen.pipeline.download_data._apply_collection_constraints",
+            side_effect=fake_constraints,
+        ):
+            rows = _list_cordex_rows(show_progress=False)
+
+        assert rows == [
+            {
+                "domain": "NAM-22",
+                "experiment": "historical",
+                "gcm_model": "mpi_m_mpi_esm_lr",
+                "rcm_model": "ncar_regcm4",
+                "ensemble_member": "r1i1p1",
+                "resolution": "0_22_degree_x_0_22_degree",
+                "variable": "2m_air_temperature,mean_precipitation_flux",
+            }
+        ]
+
+    def test_list_cordex_rows_expand_ensemble(self):
+        from samy_wgen.pipeline.download_data import _list_cordex_rows
+
+        def fake_constraints(collection_id, request):
+            assert collection_id == "projections-cordex-domains-single-levels"
+            if request == {
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+                "ensemble_member": ["r1i1p1"],
+            }:
+                return {
+                    "domain": ["north_america"],
+                    "experiment": ["historical"],
+                    "gcm_model": ["mpi_m_mpi_esm_lr"],
+                    "rcm_model": ["ncar_regcm4"],
+                    "ensemble_member": ["r1i1p1"],
+                    "horizontal_resolution": ["0_22_degree_x_0_22_degree"],
+                }
+            if request == {
+                "domain": ["north_america"],
+                "experiment": ["historical"],
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+                "ensemble_member": ["r1i1p1"],
+                "horizontal_resolution": ["0_22_degree_x_0_22_degree"],
+            }:
+                return {"variable": ["2m_air_temperature"]}
+            raise AssertionError(f"Unexpected request: {request}")
+
+        with patch(
+            "samy_wgen.pipeline.download_data._list_cordex_options",
+            return_value={
+                "domain": ["NAM-22"],
+                "experiment": ["historical"],
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+                "ensemble_member": ["r1i1p1"],
+                "horizontal_resolution": ["0_22_degree_x_0_22_degree"],
+                "variable": ["2m_air_temperature"],
+            },
+        ), patch(
+            "samy_wgen.pipeline.download_data._apply_collection_constraints",
+            side_effect=fake_constraints,
+        ):
+            rows = _list_cordex_rows(show_progress=False, expand_ensemble=True)
+
+        assert rows[0]["ensemble_member"] == "r1i1p1"
+
+    def test_resolve_cordex_download_plan_prefers_domain_default_resolution(self):
+        from samy_wgen.pipeline.download_data import _resolve_cordex_download_plan
+
+        def fake_constraints(collection_id, request):
+            assert collection_id == "projections-cordex-domains-single-levels"
+            if request == {
+                "domain": ["north_america"],
+                "experiment": ["historical"],
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+                "ensemble_member": ["r1i1p1"],
+            }:
+                return {
+                    "domain": ["north_america"],
+                    "experiment": ["historical"],
+                    "gcm_model": ["mpi_m_mpi_esm_lr"],
+                    "rcm_model": ["ncar_regcm4"],
+                    "ensemble_member": ["r1i1p1"],
+                    "horizontal_resolution": [
+                        "0_11_degree_x_0_11_degree",
+                        "0_22_degree_x_0_22_degree",
+                    ],
+                }
+            if request == {
+                "domain": ["north_america"],
+                "experiment": ["historical"],
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+                "ensemble_member": ["r1i1p1"],
+                "horizontal_resolution": ["0_22_degree_x_0_22_degree"],
+            }:
+                return {
+                    "variable": ["2m_air_temperature", "surface_pressure"]
+                }
+            raise AssertionError(f"Unexpected request: {request}")
+
+        with patch("samy_wgen.pipeline.download_data._apply_collection_constraints", side_effect=fake_constraints):
+            plan = _resolve_cordex_download_plan(
+                cordex_domain="NAM-22",
+                gcm="mpi_m_mpi_esm_lr",
+                rcm="ncar_regcm4",
+                ensemble="r1i1p1",
+                experiments=["historical"],
+                variables=["2m_air_temperature", "surface_pressure"],
+            )
+
+        assert plan == [
+            {
+                "domain": "north_america",
+                "experiment": "historical",
+                "gcm_model": "mpi_m_mpi_esm_lr",
+                "rcm_model": "ncar_regcm4",
+                "ensemble_member": "r1i1p1",
+                "horizontal_resolution": "0_22_degree_x_0_22_degree",
+                "variable": ["2m_air_temperature", "surface_pressure"],
+            }
+        ]
+
+    def test_resolve_cordex_download_plan_auto_selects_first_ensemble(self):
+        from samy_wgen.pipeline.download_data import _resolve_cordex_download_plan
+
+        def fake_constraints(collection_id, request):
+            assert collection_id == "projections-cordex-domains-single-levels"
+            if request == {
+                "domain": ["north_america"],
+                "experiment": ["historical"],
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+            }:
+                return {
+                    "domain": ["north_america"],
+                    "experiment": ["historical"],
+                    "gcm_model": ["mpi_m_mpi_esm_lr"],
+                    "rcm_model": ["ncar_regcm4"],
+                    "ensemble_member": ["r1i1p1", "r2i1p1"],
+                    "horizontal_resolution": ["0_22_degree_x_0_22_degree"],
+                }
+            if request == {
+                "domain": ["north_america"],
+                "experiment": ["historical"],
+                "gcm_model": ["mpi_m_mpi_esm_lr"],
+                "rcm_model": ["ncar_regcm4"],
+                "ensemble_member": ["r1i1p1"],
+                "horizontal_resolution": ["0_22_degree_x_0_22_degree"],
+            }:
+                return {"variable": ["2m_air_temperature"]}
+            raise AssertionError(f"Unexpected request: {request}")
+
+        with patch("samy_wgen.pipeline.download_data._apply_collection_constraints", side_effect=fake_constraints):
+            plan = _resolve_cordex_download_plan(
+                cordex_domain="NAM-22",
+                gcm="mpi_m_mpi_esm_lr",
+                rcm="ncar_regcm4",
+                ensemble=None,
+                experiments=["historical"],
+                variables=["2m_air_temperature"],
+            )
+
+        assert plan[0]["ensemble_member"] == "r1i1p1"
+
+
+# ─── CMIP6 year_range filtering ───────────────────────────────────────────────
+
+class TestCmip6YearRange:
+    def test_year_range_filters_historical(self):
+        from samy_wgen.pipeline.download_data import CMIP6_EXP_YEARS
+        year_range = (1990, 2000)
+        years = [y for y in CMIP6_EXP_YEARS["historical"] if year_range[0] <= y <= year_range[1]]
+        assert years == list(range(1990, 2001))
+
+    def test_year_range_empty_returns_nothing(self):
+        from samy_wgen.pipeline.download_data import CMIP6_EXP_YEARS
+        year_range = (1800, 1850)
+        years = [y for y in CMIP6_EXP_YEARS["historical"] if year_range[0] <= y <= year_range[1]]
+        assert years == []
+
+    def test_download_cmip6_skips_unknown_model(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cmip6
+
+        with (
+            patch("cdsapi.Client"),
+            patch("samy_wgen.pipeline.download_data._get_cmip6_variable_groups", return_value={}),
+        ):
+            download_cmip6(
+                city="Miami", lat=25.76, lon=-80.19,
+                models=["nonexistent_model_xyz"],
+                output_dir=str(tmp_path),
+            )
+        assert list(tmp_path.iterdir()) == [tmp_path / "Miami"]
+        assert not any((tmp_path / "Miami").iterdir()), "Unknown model should not produce output files"
+
+    def test_download_cmip6_year_range_passed_to_request(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cmip6
+        captured_requests: list[dict] = []
+
+        def fake_retrieve(dataset, req, path):
+            captured_requests.append(req.copy())
+            Path(path).write_bytes(b"")
+
+        times = pd.date_range("1995-01-01", periods=3, freq="D")
+        mock_client = MagicMock()
+        mock_client.retrieve.side_effect = fake_retrieve
+
+        _call = [0]
+        def fake_nc_df(nc_bytes, lat, lon):
+            col = f"col_{_call[0]}"
+            _call[0] += 1
+            return pd.DataFrame({"time": times, col: [1.0, 2.0, 3.0]})
+
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch(
+                "samy_wgen.pipeline.download_data._get_cmip6_variable_groups",
+                return_value={"daily": ["near_surface_air_temperature"]},
+            ),
+            patch("samy_wgen.pipeline.download_data._nc_bytes_to_point_df",
+                  side_effect=fake_nc_df),
+        ):
+            download_cmip6(
+                city="Miami", lat=25.76, lon=-80.19,
+                models=["mpi_esm1_2_lr"],
+                experiments=["historical"],
+                year_range=(1990, 2000),
+                output_dir=str(tmp_path),
+            )
+
+        assert captured_requests, "Expected at least one CDS request"
+        years_in_req = [int(y) for y in captured_requests[0]["year"]]
+        assert min(years_in_req) >= 1990
+        assert max(years_in_req) <= 2000
+
+    def test_download_cmip6_respects_variable_filter(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cmip6
+        captured_requests: list[dict] = []
+
+        def fake_retrieve(dataset, req, path):
+            captured_requests.append(req.copy())
+            Path(path).write_bytes(b"")
+
+        mock_client = MagicMock()
+        mock_client.retrieve.side_effect = fake_retrieve
+
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch(
+                "samy_wgen.pipeline.download_data._get_cmip6_variable_groups",
+                return_value={
+                    "daily": ["near_surface_air_temperature", "precipitation"],
+                    "monthly": ["surface_downwelling_shortwave_radiation"],
+                },
+            ),
+            patch(
+                "samy_wgen.pipeline.download_data._nc_bytes_to_point_df",
+                return_value=pd.DataFrame({"time": pd.date_range("1995-01-01", periods=1), "tas": [1.0]}),
+            ),
+        ):
+            download_cmip6(
+                city="Miami",
+                lat=25.76,
+                lon=-80.19,
+                models=["mpi_esm1_2_lr"],
+                experiments=["historical"],
+                variables=["precipitation"],
+                year_range=(1995, 1995),
+                output_dir=str(tmp_path),
+            )
+
+        assert len(captured_requests) == 1
+        assert captured_requests[0]["variable"] == "precipitation"
+
+    def test_download_cordex_uses_constrained_plan(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cordex_cmip5
+
+        captured_requests: list[dict] = []
+
+        def fake_retrieve(dataset, req, path):
+            captured_requests.append(req.copy())
+            Path(path).write_bytes(b"fake nc bytes")
+
+        mock_client = MagicMock()
+        mock_client.retrieve.side_effect = fake_retrieve
+
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch(
+                "samy_wgen.pipeline.download_data._resolve_cordex_download_plan",
+                return_value=[
+                    {
+                        "domain": "north_america",
+                        "experiment": "historical",
+                        "gcm_model": "mpi_m_mpi_esm_lr",
+                        "rcm_model": "ncar_regcm4",
+                        "ensemble_member": "r1i1p1",
+                        "horizontal_resolution": "0_22_degree_x_0_22_degree",
+                        "variable": ["2m_air_temperature", "surface_pressure"],
+                    }
+                ],
+            ),
+            patch(
+                "samy_wgen.pipeline.download_data.CORDEX_EXP_YEARS",
+                {"historical": [2000]},
+            ),
+            patch(
+                "samy_wgen.pipeline.download_data._nc_bytes_to_point_df",
+                return_value=pd.DataFrame({"time": pd.date_range("2000-01-01", periods=1), "tas": [1.0]}),
+            ),
+            patch("samy_wgen.pipeline.download_data.time.sleep"),
+        ):
+            download_cordex_cmip5(
+                city="Miami",
+                lat=25.76,
+                lon=-80.19,
+                cordex_domain="NAM-22",
+                gcm="mpi_m_mpi_esm_lr",
+                rcm="ncar_regcm4",
+                ensemble="r1i1p1",
+                experiments=["historical"],
+                output_dir=str(tmp_path),
+            )
+
+        assert len(captured_requests) == 1
+        assert captured_requests[0]["domain"] == "north_america"
+        assert captured_requests[0]["horizontal_resolution"] == "0_22_degree_x_0_22_degree"
+        assert captured_requests[0]["variable"] == ["2m_air_temperature", "surface_pressure"]
+
+    def test_download_cordex_skips_when_plan_empty(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cordex_cmip5
+
+        mock_client = MagicMock()
+
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch("samy_wgen.pipeline.download_data._resolve_cordex_download_plan", return_value=[]),
+        ):
+            download_cordex_cmip5(
+                city="Miami",
+                lat=25.76,
+                lon=-80.19,
+                cordex_domain="NAM-22",
+                output_dir=str(tmp_path),
+            )
+
+        mock_client.retrieve.assert_not_called()
 
 
 # ─── Integration tests (slow, real network) ───────────────────────────────────
