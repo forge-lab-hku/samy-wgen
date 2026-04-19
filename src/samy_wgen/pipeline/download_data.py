@@ -97,10 +97,43 @@ CORDEX_EXP_YEARS = {
     "rcp_8_5":    list(range(2006, 2101)),
 }
 
-NSRDB_ENDPOINT = (
-    "https://developer.nlr.gov/api/nsrdb/v2/solar"
-    "/nsrdb-GOES-aggregated-v4-0-0-download"
-)
+NSRDB_SOURCES: dict[str, dict] = {
+    "goes_aggregated": {
+        "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download",
+        "year_range": (1998, 2023),
+    },
+    "goes_full_disc": {
+        "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-full-disc-v4-0-0-download",
+        "year_range": (2018, 2023),
+    },
+    "meteosat": {
+        "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-msg-v1-0-0-download",
+        "year_range": (2005, 2022),
+    },
+    # Himawari satellite covers East Asia, Southeast Asia, Australasia
+    "himawari7": {
+        "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/himawari7-download",
+        "year_range": (2011, 2015),
+    },
+    "himawari8": {
+        "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/himawari-download",
+        "year_range": (2016, 2020),
+    },
+}
+
+# CORDEX domain → ordered list of NSRDB source keys covering that region.
+# Regions with multiple entries (Himawari) are routed per-year automatically.
+CORDEX_TO_NSRDB_SOURCE: dict[str, list[str]] = {
+    "NAM-22": ["goes_aggregated"],
+    "SAM-22": ["goes_full_disc"],
+    "EUR-11": ["meteosat"],
+    "AFR-22": ["meteosat"],
+    "WAS-22": ["meteosat"],
+    "EAS-22": ["himawari7", "himawari8"],
+    "SEA-22": ["himawari7", "himawari8"],
+    "AUS-22": ["himawari7", "himawari8"],
+}
+
 NSRDB_ATTRS = [
     "air_temperature", "dew_point", "relative_humidity",
     "wind_speed", "wind_direction", "ghi", "dni", "dhi", "surface_pressure",
@@ -731,6 +764,29 @@ def _resolve_coords(
     return meta["lat"], meta["lon"]
 
 
+def _resolve_nsrdb_source(city: str) -> list[tuple[str, int, int]]:
+    """Return a list of (endpoint_url, min_year, max_year) for the city's NSRDB coverage.
+
+    Regions with a single satellite (Americas, Europe/Africa) return one entry.
+    Himawari regions (East Asia, SE Asia, Australasia) return two entries that
+    together span 2011–2020; callers should route each year to the matching entry.
+    Raises ValueError when the city's region has no NSRDB coverage.
+    """
+    meta = _city_meta(city)
+    cordex_domain = meta["cordex_domain"]
+    source_keys = CORDEX_TO_NSRDB_SOURCE.get(cordex_domain, [])
+    if not source_keys:
+        raise ValueError(
+            f"No NSRDB coverage for city '{city}' (CORDEX domain '{cordex_domain}'). "
+            "NSRDB is available for: "
+            + ", ".join(d for d, keys in CORDEX_TO_NSRDB_SOURCE.items() if keys)
+        )
+    return [
+        (NSRDB_SOURCES[key]["url"], *NSRDB_SOURCES[key]["year_range"])
+        for key in source_keys
+    ]
+
+
 def _load_isd_history(cache_path: Path) -> pd.DataFrame:
     """Download and cache isd-history.csv from NOAA."""
     if not cache_path.exists():
@@ -940,19 +996,38 @@ def download_nsrdb(
     import requests
 
     lat, lon = _resolve_coords(city, lat, lon)
+    sources = _resolve_nsrdb_source(city)
+    overall_min = min(mn for _, mn, _ in sources)
+    overall_max = max(mx for _, _, mx in sources)
     if years is None:
-        years = list(range(1998, 2025))
+        years = list(range(overall_min, overall_max + 1))
     api_key, email = _load_nsrdb_credentials()
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     city_lower = city.lower().replace(" ", "_")
-    valid_years = [y for y in sorted(years) if 1998 <= y <= 2024]
+    valid_years = [y for y in sorted(years) if overall_min <= y <= overall_max]
+    if not valid_years:
+        logger.error(
+            f"No valid NSRDB years for '{city}' in the requested range. "
+            f"Available: {overall_min}–{overall_max}."
+        )
+        return
+
+    def _url_for_year(yr: int) -> str | None:
+        for url, mn, mx in sources:
+            if mn <= yr <= mx:
+                return url
+        return None
 
     all_dfs: list[pd.DataFrame] = []
     for i, year in enumerate(tqdm(valid_years, desc=f"NSRDB {city}", unit="yr")):
         if i > 0:
             time.sleep(2)  # respect NREL rate limit
+        endpoint_url = _url_for_year(year)
+        if endpoint_url is None:
+            logger.warning(f"  {year}: no NSRDB source covers this year, skipping")
+            continue
         params = {
             "api_key":    api_key,
             "wkt":        f"POINT({lon} {lat})",
@@ -965,7 +1040,7 @@ def download_nsrdb(
         }
         logger.info(f"NSRDB {year} ...")
         try:
-            r = requests.get(f"{NSRDB_ENDPOINT}.csv", params=params, timeout=300)
+            r = requests.get(f"{endpoint_url}.csv", params=params, timeout=300)
             r.raise_for_status()
             lines = r.text.strip().split("\n")
             header = next((i for i, l in enumerate(lines) if l.startswith("Year,")), None)
