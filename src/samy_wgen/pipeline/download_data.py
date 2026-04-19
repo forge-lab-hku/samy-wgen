@@ -1249,7 +1249,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dl.add_argument("--city", required=True, help="City name (from cities_config.csv)")
     p_dl.add_argument(
         "--data", nargs="+",
-        choices=["isd", "nsrdb", "cmip6", "cordex"],
+        choices=["isd", "nsrdb", "cmip6"],
         default=["isd", "nsrdb", "cmip6"],
         help="Data sources to download (default: isd nsrdb cmip6)",
     )
@@ -1275,16 +1275,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dl.add_argument(
         "--cmip6-var", nargs="+", default=None, choices=sorted(CMIP6_VAR_SHORT),
         help="CMIP6 CDS variables to download (default: all supported variables)",
-    )
-
-    # CORDEX
-    p_dl.add_argument("--cordex-dir",        default="data/CORDEX_CMIP5")
-    p_dl.add_argument("--cordex-gcm",        default="mpi_m_mpi_esm_lr")
-    p_dl.add_argument("--cordex-rcm",        default="ncar_regcm4")
-    p_dl.add_argument("--cordex-ensemble",   default=None, help="CORDEX ensemble member (default: auto-select first valid ensemble)")
-    p_dl.add_argument(
-        "--cordex-experiments", nargs="+",   default=["historical", "rcp_8_5"],
-        help="CORDEX experiments (default: historical rcp_8_5)",
     )
 
     # ISD / NSRDB year range
@@ -1433,19 +1423,6 @@ def main() -> None:
             year_range=tuple(args.cmip6_years) if args.cmip6_years else None,
             output_dir=args.cmip6_dir,
         )
-
-    if "cordex" in sources:
-        download_cordex_cmip5(
-            city=args.city,
-            lat=lat, lon=lon,
-            cordex_domain=meta["cordex_domain"],
-            gcm=args.cordex_gcm,
-            rcm=args.cordex_rcm,
-            ensemble=args.cordex_ensemble,
-            experiments=args.cordex_experiments,
-            output_dir=args.cordex_dir,
-        )
-
 
 if __name__ == "__main__":
     main()

@@ -386,12 +386,6 @@ class TestCliParsing:
                                    "--isd-station", "722020-12839"])
         assert set(args.data) == {"isd", "nsrdb", "cmip6"}
 
-    def test_download_cordex_only(self):
-        parser = self._parser()
-        args = parser.parse_args(["download", "--city", "Miami", "--data", "cordex"])
-        assert args.data == ["cordex"]
-        assert args.cordex_ensemble is None
-
     def test_download_custom_experiments(self):
         parser = self._parser()
         args = parser.parse_args([
@@ -480,14 +474,6 @@ class TestCliParsing:
         assert args.ensemble == "r1i1p1"
         assert args.resolution == "0_22_degree_x_0_22_degree"
         assert args.var == "2m_air_temperature"
-
-    def test_download_cordex_explicit_ensemble(self):
-        parser = self._parser()
-        args = parser.parse_args([
-            "download", "--city", "Miami", "--data", "cordex",
-            "--cordex-ensemble", "r1i1p1",
-        ])
-        assert args.cordex_ensemble == "r1i1p1"
 
 
 # ─── CDS constraint helpers ───────────────────────────────────────────────────
