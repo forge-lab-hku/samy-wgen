@@ -45,7 +45,7 @@ Before running the pipeline, three data sources must be present for each city.
 
 **NREL NSRDB** (solar irradiance)
 
-1. Register for a free API key at <https://developer.nlr.gov/signup/>
+1. Register for a free API key at [developer.nlr.gov/signup](https://developer.nlr.gov/signup/)
 2. Save credentials once via the interactive prompt:
    ```bash
    samy-download config
@@ -53,10 +53,10 @@ Before running the pipeline, three data sources must be present for each city.
    #   NSRDB email   : your@email.com
    ```
 
-**Copernicus CDS** (CMIP6 and CORDEX-CMIP5 climate projections)
+**Copernicus CDS** (CMIP6 climate projections; CORDEX-CMIP5 catalogue queries)
 
-1. Register at <https://cds.climate.copernicus.eu>
-2. Accept the dataset licence for *CMIP6 climate projections* and *CORDEX regional climate projections* in your CDS profile
+1. Register at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu)
+2. Accept the dataset licence for *CMIP6 climate projections* and, if you plan to inspect CORDEX availability, *CORDEX regional climate projections* in your CDS profile
 3. Create `~/.cdsapirc`:
    ```ini
    # ~/.cdsapirc
@@ -72,18 +72,32 @@ ISD files are keyed by station ID. Run `list-stations` first to pick the best st
 samy-download list-stations --city Miami
 ```
 
-```
-ISD stations within 150 km of (25.7617, -80.1918):
-
-      USAF-WBAN          STATION NAME  dist_km  BEGIN    END
-  722020-12839    MIAMI INTL AIRPORT      3.2  1942  2024
-  722016-12841  MIAMI EXECUTIVE AP       18.4  1973  2024
-  ...
-
 Pass the USAF-WBAN value to --isd-station when running 'samy-download download'.
+
+### 3 · Inspect live CMIP6 availability
+
+CMIP6 downloads are backed by the live CDS catalogue. You can inspect which
+model / experiment / temporal-resolution / variable combinations are currently
+available before downloading:
+
+```bash
+# List currently available CMIP6 models
+samy-download list-cmip6
+
+# Expand to experiment / resolution / variable rows
+samy-download list-cmip6 --detail
+
+# Filter the live catalogue
+samy-download list-cmip6 \
+  --experiment ssp2_4_5 \
+  --resolution daily \
+  --var near_surface_air_temperature
 ```
 
-### 3 · Download all data for a city
+`samy-download download` uses the same CDS constraint checks before requesting
+CMIP6 data, so unavailable model / experiment combinations are skipped early.
+
+### 4 · Download all data for a city
 
 ```bash
 # ISD + NSRDB + CMIP6 (default set)
@@ -96,12 +110,6 @@ samy-download download \
   --city Miami \
   --isd-station 722020-12839 \
   --years 1991 2024
-
-# Also download CORDEX-CMIP5 (optional — needed for CORDEX scenarios)
-samy-download download \
-  --city Miami \
-  --isd-station 722020-12839 \
-  --data isd nsrdb cmip6 cordex
 
 # Download additional CMIP6 models or scenarios
 samy-download download \
@@ -123,23 +131,41 @@ data/
 │   ├── mpi_esm1_2_lr_historical.csv
 │   ├── mpi_esm1_2_lr_ssp245.csv
 │   └── mpi_esm1_2_lr_ssp245_monthly.csv
-└── CORDEX_CMIP5/NAM-22_RegCM_historical_r1i1p1/
-    └── Miami_historical.csv
 ```
 
-CMIP6 and CORDEX data are downloaded as city-specific grid-point extractions (using the CDS `area` parameter) — no large global files are stored locally.
+CMIP6 data are downloaded as city-specific grid-point extractions using the CDS
+`area` parameter, so no large global files are stored locally.
+
+### CORDEX-CMIP5 note
+
+This repository does **not** currently provide a built-in CORDEX download path
+through `samy-download download`.
+
+You can still use externally prepared CORDEX-CMIP5 data as climate-delta input.
+Recommended sources:
+
+- CORDEX official access guide:
+  [How to access CORDEX-CMIP5 data](https://cordex.org/data-access/cordex-cmip5-data/how-to-access-cordex-cmip5-data/)
+- Copernicus CDS CORDEX dataset page:
+  [projections-cordex-domains-single-levels](https://cds.climate.copernicus.eu/datasets/projections-cordex-domains-single-levels?tab=download)
+
+`samy-download list-cordex` remains available to inspect the live CDS CORDEX
+catalogue, but actual CORDEX files must currently be downloaded outside the
+package and then placed under your chosen data directory for downstream climate
+delta workflows.
 
 ### `samy-download` reference
 
 | Subcommand | Purpose |
 |------------|---------|
 | `config` | Save NSRDB credentials to `~/.config/samy_wgen/credentials.yaml` |
+| `list-cmip6 [--detail]` | List available CMIP6 model / experiment / resolution / variable combinations from the live CDS catalogue |
+| `list-cmip6 --experiment <exp> --resolution <res> --var <var>` | Filter live CMIP6 catalogue rows before download |
+| `list-cordex [--detail]` | Inspect live CORDEX catalogue combinations from CDS |
 | `list-stations --city <name> [--radius 150]` | Print nearby ISD stations sorted by distance |
 | `download --city <name> --isd-station <USAF-WBAN>` | Download ISD + NSRDB + CMIP6 |
-| `download --data cordex` | Also download CORDEX-CMIP5 |
 | `download --models mpi_esm1_2_lr cnrm_esm2_1` | Specify CMIP6 models |
 | `download --experiments historical ssp2_4_5 ssp5_8_5` | Specify CMIP6 CDS experiment names |
-| `download --cordex-gcm <gcm> --cordex-rcm <rcm>` | Override CORDEX GCM/RCM |
 
 ---
 
@@ -303,8 +329,10 @@ for year in [2030, 2050, 2080]:
 | Command | Description |
 |---------|-------------|
 | `samy-download config` | Save NSRDB credentials to `~/.config/samy_wgen/credentials.yaml` |
+| `samy-download list-cmip6 [--detail]` | Inspect live CMIP6 CDS catalogue entries |
+| `samy-download list-cordex [--detail]` | Inspect live CORDEX CDS catalogue entries |
 | `samy-download list-stations --city <name>` | List nearby ISD stations |
-| `samy-download download --city <name> --isd-station <id>` | Download ISD / NSRDB / CMIP6 / CORDEX |
+| `samy-download download --city <name> --isd-station <id>` | Download ISD / NSRDB / CMIP6 |
 | `samy-run --city <name>` | Full pipeline — ISD parse → RS-VAR → delta → EPW |
 | `samy-run --city <name> --mode ensemble` | Full pipeline in ensemble mode |
 | `samy-rsvar --isd <csv> --city <name> --output <xlsx>` | Train RS-VAR + forecast only |
