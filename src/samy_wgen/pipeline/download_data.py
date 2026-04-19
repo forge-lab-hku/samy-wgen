@@ -149,6 +149,8 @@ CMIP6_SUPPORTED_VARIABLES = set(CMIP6_VAR_SHORT.keys())
 CMIP6_TEMPORAL_PRIORITY = ("daily", "monthly", "fixed")
 CORDEX_SUPPORTED_VARIABLES = set(CORDEX_VARS)
 CORDEX_DOMAIN_BY_CDS = {value: key for key, value in CORDEX_DOMAIN_MAP.items()}
+DEFAULT_ISD_YEAR_RANGE = (1970, 2024)
+DEFAULT_NSRDB_YEAR_RANGE = (1998, 2024)
 
 
 def _credentials_path() -> Path:
@@ -799,6 +801,57 @@ def _load_isd_history(cache_path: Path) -> pd.DataFrame:
     return pd.read_csv(cache_path, low_memory=False)
 
 
+def _isd_year(value: object) -> int | None:
+    """Extract a 4-digit year from NOAA ISD history BEGIN/END values."""
+    try:
+        text = str(int(float(value)))
+    except Exception:
+        text = str(value).strip()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if len(digits) < 4:
+        return None
+    return int(digits[:4])
+
+
+def _candidate_isd_stations(
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    radius_km: float = 150.0,
+    cache_dir: str = "data/ISD",
+    city: Optional[str] = None,
+) -> pd.DataFrame:
+    """Return nearby ISD stations enriched with distance and coverage metadata."""
+    from geopy.distance import geodesic
+
+    if city is not None:
+        lat, lon = _resolve_coords(city, lat, lon)
+    if lat is None or lon is None:
+        raise ValueError("Provide either city or both lat and lon.")
+
+    cache_path = Path(cache_dir) / "isd-history.csv"
+    stations = _load_isd_history(cache_path)
+
+    valid = stations.dropna(subset=["LAT", "LON"]).copy()
+    valid["distance_km"] = valid.apply(
+        lambda r: geodesic((lat, lon), (r["LAT"], r["LON"])).km, axis=1
+    )
+    nearby = valid[valid["distance_km"] <= radius_km].copy()
+    if nearby.empty:
+        return nearby
+
+    nearby["begin_year"] = nearby["BEGIN"].apply(_isd_year)
+    nearby["end_year"] = nearby["END"].apply(_isd_year)
+    nearby["coverage_years"] = (
+        nearby["end_year"].fillna(-1) - nearby["begin_year"].fillna(-1) + 1
+    ).clip(lower=0)
+    nearby["USAF-WBAN"] = (
+        nearby["USAF"].astype(str).str.zfill(6)
+        + "-"
+        + nearby["WBAN"].astype(str).str.zfill(5)
+    )
+    return nearby
+
+
 def _nc_bytes_to_point_df(nc_bytes: bytes, lat: float, lon: float) -> pd.DataFrame:
     """Extract a time-series DataFrame at the nearest grid point from NetCDF bytes.
 
@@ -880,21 +933,17 @@ def list_isd_stations(
     Returns a DataFrame with columns: USAF-WBAN, STATION NAME, dist_km, BEGIN, END.
     Use the USAF-WBAN value as --isd-station when downloading.
     """
-    from geopy.distance import geodesic
-
     if city is not None:
         lat, lon = _resolve_coords(city, lat, lon)
     if lat is None or lon is None:
         raise ValueError("Provide either city or both lat and lon.")
 
-    cache_path = Path(cache_dir) / "isd-history.csv"
-    stations = _load_isd_history(cache_path)
-
-    valid = stations.dropna(subset=["LAT", "LON"]).copy()
-    valid["distance_km"] = valid.apply(
-        lambda r: geodesic((lat, lon), (r["LAT"], r["LON"])).km, axis=1
-    )
-    nearby = valid[valid["distance_km"] <= radius_km].sort_values("distance_km").copy()
+    nearby = _candidate_isd_stations(
+        lat=lat,
+        lon=lon,
+        radius_km=radius_km,
+        cache_dir=cache_dir,
+    ).sort_values("distance_km")
 
     if nearby.empty:
         print(f"No stations found within {radius_km} km of ({lat:.4f}, {lon:.4f})")
@@ -921,6 +970,33 @@ def list_isd_stations(
     print(f"\nTotal: {len(out)} station(s)")
     print("\nPass the USAF-WBAN value to --isd-station when running 'samy-download download'.\n")
     return out
+
+
+def select_best_isd_station(
+    city: str,
+    radius_km: float = 50.0,
+    cache_dir: str = "data/ISD",
+) -> str:
+    """Return the station ID with the best temporal coverage inside ``radius_km``."""
+    nearby = _candidate_isd_stations(
+        city=city,
+        radius_km=radius_km,
+        cache_dir=cache_dir,
+    )
+    if nearby.empty:
+        raise ValueError(f"No ISD stations found within {radius_km} km of '{city}'.")
+
+    ranked = nearby.sort_values("coverage_years", ascending=False, kind="mergesort")
+    best = ranked.iloc[0]
+    station_id = str(best["USAF-WBAN"])
+    logger.info(
+        "Selected ISD station %s for %s (coverage=%s years, distance=%.1f km)",
+        station_id,
+        city,
+        int(best["coverage_years"]),
+        float(best["distance_km"]),
+    )
+    return station_id
 
 
 def download_isd(
@@ -987,11 +1063,13 @@ def download_nsrdb(
     years: Optional[List[int]] = None,
     output_dir: str = "data/NSRDB",
     interval: int = 60,
+    max_retries: int = 3,
+    retry_backoff_sec: float = 2.0,
 ) -> None:
     """Download NSRDB solar irradiance for a point location.
 
     Coordinates are looked up from cities_config.csv when *lat*/*lon* are omitted.
-    Reads credentials from the ``NSRDB_API_KEY`` and ``NSRDB_EMAIL`` env vars.
+    Retries transient per-year HTTP/TLS failures before skipping the year.
     """
     import requests
 
@@ -1021,6 +1099,7 @@ def download_nsrdb(
         return None
 
     all_dfs: list[pd.DataFrame] = []
+    session = requests.Session()
     for i, year in enumerate(tqdm(valid_years, desc=f"NSRDB {city}", unit="yr")):
         if i > 0:
             time.sleep(2)  # respect NREL rate limit
@@ -1039,19 +1118,29 @@ def download_nsrdb(
             "email":      email,
         }
         logger.info(f"NSRDB {year} ...")
-        try:
-            r = requests.get(f"{endpoint_url}.csv", params=params, timeout=300)
-            r.raise_for_status()
-            lines = r.text.strip().split("\n")
-            header = next((i for i, l in enumerate(lines) if l.startswith("Year,")), None)
-            if header is None:
-                logger.warning(f"  {year}: unexpected response, skipping")
-                continue
-            df = pd.read_csv(StringIO("\n".join(lines[header:])))
-            all_dfs.append(df)
-            logger.info(f"  {year} ✓ ({len(df)} rows)")
-        except Exception as exc:
-            logger.warning(f"  {year} failed: {exc}")
+        for attempt in range(1, max_retries + 1):
+            try:
+                r = session.get(f"{endpoint_url}.csv", params=params, timeout=300)
+                r.raise_for_status()
+                lines = r.text.strip().split("\n")
+                header = next((i for i, l in enumerate(lines) if l.startswith("Year,")), None)
+                if header is None:
+                    logger.warning(f"  {year}: unexpected response, skipping")
+                    break
+                df = pd.read_csv(StringIO("\n".join(lines[header:])))
+                all_dfs.append(df)
+                logger.info(f"  {year} ✓ ({len(df)} rows)")
+                break
+            except Exception as exc:
+                if attempt >= max_retries:
+                    logger.warning(f"  {year} failed after {attempt} attempt(s): {exc}")
+                    break
+                wait_s = retry_backoff_sec * attempt
+                logger.warning(
+                    f"  {year} attempt {attempt}/{max_retries} failed: {exc}. "
+                    f"Retrying in {wait_s:.1f}s."
+                )
+                time.sleep(wait_s)
 
     if not all_dfs:
         logger.error("No NSRDB data downloaded.")
@@ -1331,7 +1420,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ISD
     p_dl.add_argument("--isd-station", metavar="USAF-WBAN",
-                      help="ISD station ID, e.g. 722020-12839 (required when --data includes isd)")
+                      help="ISD station ID, e.g. 722020-12839 (default: auto-select best coverage within --isd-radius)")
+    p_dl.add_argument(
+        "--isd-radius", type=float, default=50.0,
+        help="Radius in km for automatic ISD station selection (default: 50)",
+    )
     p_dl.add_argument("--isd-dir",  default="data/ISD")
 
     # NSRDB
@@ -1466,21 +1559,21 @@ def main() -> None:
     sources = set(args.data)
 
     if "isd" in sources:
-        if not args.isd_station:
-            parser.error(
-                "--isd-station USAF-WBAN is required when downloading ISD data. "
-                "Run 'samy-download list-stations --city <city>' to see available stations."
-            )
-        yr_start, yr_end = args.years if args.years else (1940, 2024)
+        station_id = args.isd_station or select_best_isd_station(
+            city=args.city,
+            radius_km=args.isd_radius,
+            cache_dir=args.isd_dir,
+        )
+        yr_start, yr_end = args.years if args.years else DEFAULT_ISD_YEAR_RANGE
         download_isd(
-            station_id=args.isd_station,
+            station_id=station_id,
             city=args.city,
             years=list(range(yr_start, yr_end + 1)),
             output_dir=args.isd_dir,
         )
 
     if "nsrdb" in sources:
-        yr_start, yr_end = args.years if args.years else (1998, 2024)
+        yr_start, yr_end = args.years if args.years else DEFAULT_NSRDB_YEAR_RANGE
         download_nsrdb(
             city=args.city,
             lat=lat, lon=lon,

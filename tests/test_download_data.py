@@ -360,6 +360,48 @@ class TestDownloadNsrdbUnit:
             )
             mock_get.assert_not_called()
 
+    def test_retries_transient_failure_then_succeeds(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_nsrdb
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.text = self._mock_nsrdb_csv(2000)
+
+        session = MagicMock()
+        session.get.side_effect = [Exception("tls eof"), mock_resp]
+
+        with (
+            patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
+            patch("requests.Session", return_value=session),
+            patch("time.sleep"),
+        ):
+            download_nsrdb(
+                "Miami", 25.76, -80.19, [2000], output_dir=str(tmp_path), max_retries=2
+            )
+
+        output_files = list(tmp_path.glob("nsrdb_miami_*.csv"))
+        assert len(output_files) == 1
+        assert session.get.call_count == 2
+
+    def test_retries_exhausted_skips_year(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_nsrdb
+
+        session = MagicMock()
+        session.get.side_effect = Exception("tls eof")
+
+        with (
+            patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
+            patch("requests.Session", return_value=session),
+            patch("time.sleep"),
+        ):
+            download_nsrdb(
+                "Miami", 25.76, -80.19, [2000], output_dir=str(tmp_path), max_retries=3
+            )
+
+        output_files = list(tmp_path.glob("nsrdb_miami_*.csv"))
+        assert output_files == []
+        assert session.get.call_count == 3
+
 
 # ─── CLI argument parsing ─────────────────────────────────────────────────────
 
@@ -382,9 +424,10 @@ class TestCliParsing:
 
     def test_download_default_sources(self):
         parser = self._parser()
-        args = parser.parse_args(["download", "--city", "Miami",
-                                   "--isd-station", "722020-12839"])
+        args = parser.parse_args(["download", "--city", "Miami"])
         assert set(args.data) == {"isd", "nsrdb", "cmip6"}
+        assert args.isd_station is None
+        assert args.isd_radius == 50.0
 
     def test_download_custom_experiments(self):
         parser = self._parser()
@@ -416,6 +459,50 @@ class TestCliParsing:
             "--cmip6-var", "near_surface_air_temperature", "precipitation",
         ])
         assert args.cmip6_var == ["near_surface_air_temperature", "precipitation"]
+
+
+class TestIsdStationSelection:
+    def _parser(self):
+        from samy_wgen.pipeline.download_data import _build_parser
+        return _build_parser()
+
+    def test_select_best_isd_station_prefers_best_coverage(self):
+        from samy_wgen.pipeline.download_data import select_best_isd_station
+
+        history = pd.read_csv(
+            io.StringIO(
+                _make_isd_history_csv(
+                    [
+                        {
+                            "USAF": "111111",
+                            "WBAN": "11111",
+                            "name": "NEAR_SHORT",
+                            "lat": 25.77,
+                            "lon": -80.19,
+                            "begin": 19900101,
+                            "end": 20101231,
+                        },
+                        {
+                            "USAF": "222222",
+                            "WBAN": "22222",
+                            "name": "FAR_LONG",
+                            "lat": 26.05,
+                            "lon": -80.19,
+                            "begin": 19700101,
+                            "end": 20241231,
+                        },
+                    ]
+                )
+            )
+        )
+
+        with (
+            patch("samy_wgen.pipeline.download_data._resolve_coords", return_value=(25.7617, -80.1918)),
+            patch("samy_wgen.pipeline.download_data._load_isd_history", return_value=history),
+        ):
+            station_id = select_best_isd_station("Miami", radius_km=50.0, cache_dir="data/ISD")
+
+        assert station_id == "222222-22222"
 
     def test_list_models_subcommand(self):
         parser = self._parser()
