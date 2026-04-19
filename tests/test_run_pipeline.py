@@ -20,6 +20,28 @@ class TestDownloadDefaults:
         with pytest.raises(SystemExit, match="unsupported SSP"):
             _cmip6_download_experiments("ssp999")
 
+    def test_find_nsrdb_csv_matches_underscored_city_slug(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _find_nsrdb_csv
+
+        nsrdb_dir = tmp_path / "NSRDB"
+        nsrdb_dir.mkdir(parents=True, exist_ok=True)
+        target = nsrdb_dir / "nsrdb_los_angeles_1998-2024.csv"
+        target.write_text("Year,Month,Day,Hour,GHI\n")
+
+        found = _find_nsrdb_csv("Los Angeles", tmp_path)
+
+        assert found == target
+
+    def test_has_required_cmip6_data_accepts_underscored_city_dir(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _has_required_cmip6_data
+
+        city_dir = tmp_path / "CMIP6" / "Los_Angeles"
+        city_dir.mkdir(parents=True, exist_ok=True)
+        (city_dir / "mpi_esm1_2_lr_historical.csv").write_text("time,tas\n")
+        (city_dir / "mpi_esm1_2_lr_ssp245.csv").write_text("time,tas\n")
+
+        assert _has_required_cmip6_data("Los Angeles", tmp_path / "CMIP6", "ssp245", ["mpi_esm1_2_lr"])
+
 
 class TestEnsurePipelineInputs:
     def test_downloads_missing_inputs_with_defaults(self, tmp_path):

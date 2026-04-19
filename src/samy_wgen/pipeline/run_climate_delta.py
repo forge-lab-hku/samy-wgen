@@ -134,6 +134,16 @@ def _slug_city(city: str) -> str:
     return city.replace(' ', '_')
 
 
+def _resolve_city_dir(base_path: Path, city: str) -> Path:
+    """Resolve a city data directory, accepting both spaced and underscored names."""
+    city_slug = _slug_city(city)
+    candidates = [Path(base_path) / city_slug, Path(base_path) / city]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def _load_isd_baseline_mean(isd_path: Path, baseline_start: int, baseline_end: int) -> float:
     """
     Load ISD baseline mean temperature using same preprocessing as RS-VAR pipeline.
@@ -548,7 +558,7 @@ def load_cmip6_or_cordex6(base_path: Path, city: str, ssp: str, scenario_id: str
         (daily_df, monthly_df, meta_dict)
     """
     city_slug = _slug_city(city)
-    city_dir = Path(base_path) / city_slug
+    city_dir = _resolve_city_dir(base_path, city)
 
     # Determine future scenario file suffix based on SSP
     # For CMIP5: rcp85 -> rcp_8_5

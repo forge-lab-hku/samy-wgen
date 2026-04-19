@@ -62,6 +62,10 @@ SSP_TO_CMIP6_EXPERIMENT = {
 }
 
 
+def _print_title(title: str) -> None:
+    print(f"\n{'-' * 12} {title} {'-' * 12}")
+
+
 # ==========================================================================
 # CITY METADATA
 # ==========================================================================
@@ -105,12 +109,14 @@ def _find_nsrdb_csv(city: str, base: Path) -> Path:
     nsrdb_dir = base / "NSRDB"
     if not nsrdb_dir.exists():
         raise SystemExit(f"ERROR: NSRDB directory not found: {nsrdb_dir}")
-    pattern = f"nsrdb_{city.lower()}*.csv"
+    city_slug = city.lower().replace(" ", "_")
+    pattern = f"nsrdb_{city_slug}*.csv"
     matches = list(nsrdb_dir.glob(pattern))
     if not matches:
-        # Try case-insensitive fallback
+        # Try case-insensitive fallback with normalized separators.
+        normalized_city = city.lower().replace("_", "").replace(" ", "")
         matches = [f for f in nsrdb_dir.glob("*.csv")
-                   if city.lower() in f.stem.lower()]
+                   if normalized_city in f.stem.lower().replace("_", "").replace(" ", "")]
     if not matches:
         raise SystemExit(
             f"ERROR: No NSRDB CSV found for '{city}' in {nsrdb_dir}.\n"
@@ -207,14 +213,18 @@ def _cmip6_download_experiments(ssp: str, requested: Iterable[str] | None = None
 
 
 def _has_required_cmip6_data(city: str, cmip6_dir: Path, ssp: str, models: Iterable[str]) -> bool:
-    city_dir = cmip6_dir / city
-    if not city_dir.exists():
-        return False
-    required = []
-    for model in models:
-        required.append(city_dir / f"{model}_historical.csv")
-        required.append(city_dir / f"{model}_{ssp}.csv")
-    return all(path.exists() for path in required)
+    city_slug = city.replace(" ", "_")
+    candidate_dirs = [cmip6_dir / city, cmip6_dir / city_slug]
+    for city_dir in candidate_dirs:
+        if not city_dir.exists():
+            continue
+        required = []
+        for model in models:
+            required.append(city_dir / f"{model}_historical.csv")
+            required.append(city_dir / f"{model}_{ssp}.csv")
+        if all(path.exists() for path in required):
+            return True
+    return False
 
 
 def _ensure_pipeline_inputs(args, data_dir: Path) -> tuple[Path, Path, Path]:
@@ -234,6 +244,7 @@ def _ensure_pipeline_inputs(args, data_dir: Path) -> tuple[Path, Path, Path]:
         except SystemExit:
             if args.skip_download or "isd" not in set(args.download_data):
                 raise
+            _print_title("Download ISD")
             yr_start, yr_end = args.download_years if args.download_years else DEFAULT_ISD_YEAR_RANGE
             station_id = args.isd_station or select_best_isd_station(
                 city=args.city,
@@ -256,6 +267,7 @@ def _ensure_pipeline_inputs(args, data_dir: Path) -> tuple[Path, Path, Path]:
         except SystemExit:
             if args.skip_download or "nsrdb" not in set(args.download_data):
                 raise
+            _print_title("Download NSRDB")
             meta = _city_meta(args.city)
             yr_start, yr_end = args.download_years if args.download_years else DEFAULT_NSRDB_YEAR_RANGE
             download_nsrdb(
@@ -275,6 +287,7 @@ def _ensure_pipeline_inputs(args, data_dir: Path) -> tuple[Path, Path, Path]:
                 f"ERROR: Required CMIP6 files not found under {missing_city_dir}. "
                 "Provide --cmip6-dir, pre-download the files, or allow auto-download."
             )
+        _print_title("Download CMIP6")
         meta = _city_meta(args.city)
         download_cmip6(
             city=args.city,
@@ -297,7 +310,8 @@ def _stage0_parse_isd(isd_station_dir: Path) -> pd.DataFrame:
     """Parse ISD .gz files → raw UTC DataFrame (not written to disk)."""
     from samy_wgen.utils.parse_ISD import process_station_directory
 
-    print(f"\n[stage 0] Parsing ISD .gz from: {isd_station_dir.name}")
+    _print_title("Stage 0 Parse ISD")
+    print(f"[stage 0] Parsing ISD .gz from: {isd_station_dir.name}")
     with tempfile.TemporaryDirectory() as tmp:
         result_path = process_station_directory(str(isd_station_dir), tmp)
         assert result_path is not None, "process_station_directory returned None"
@@ -314,10 +328,12 @@ def _stage1_remap_to_lst(isd_raw: pd.DataFrame, city: str,
 
     csv_path = out_dir / "1_isd_lst.csv"
     if csv_path.exists() and not overwrite:
-        print(f"\n[stage 1] Cache hit: {csv_path.name}")
+        _print_title("Stage 1 Remap To LST")
+        print(f"[stage 1] Cache hit: {csv_path.name}")
         return pd.read_csv(csv_path, parse_dates=["DATE"]).set_index("DATE")
 
-    print(f"\n[stage 1] Remapping ISD columns + UTC→LST")
+    _print_title("Stage 1 Remap To LST")
+    print(f"[stage 1] Remapping ISD columns + UTC→LST")
     raw = isd_raw.dropna(subset=["datestamp"]).set_index("datestamp").sort_index()
     df = remap_isd_columns(raw)
 
@@ -339,10 +355,12 @@ def _stage2_merge_nsrdb(isd_lst: pd.DataFrame, nsrdb_csv: Path,
     """Merge ISD LST + NSRDB solar (GHI/DNI/DHI) → 2_isd_solar_lst.csv."""
     csv_path = out_dir / "2_isd_solar_lst.csv"
     if csv_path.exists() and not overwrite:
-        print(f"\n[stage 2] Cache hit: {csv_path.name}")
+        _print_title("Stage 2 Merge NSRDB")
+        print(f"[stage 2] Cache hit: {csv_path.name}")
         return csv_path
 
-    print(f"\n[stage 2] Merging NSRDB solar: {nsrdb_csv.name}")
+    _print_title("Stage 2 Merge NSRDB")
+    print(f"[stage 2] Merging NSRDB solar: {nsrdb_csv.name}")
     nsrdb = pd.read_csv(nsrdb_csv)
     nsrdb["DATE"] = pd.to_datetime(
         nsrdb[["Year", "Month", "Day", "Hour"]].rename(
@@ -376,10 +394,12 @@ def _stage3_rsvar(merged_csv: Path, lat: float, city: str,
 
     xlsx_path = out_dir / "3_rsvar.xlsx"
     if xlsx_path.exists() and not overwrite:
-        print(f"\n[stage 3] Cache hit: {xlsx_path.name}")
+        _print_title("Stage 3 Run RS-VAR")
+        print(f"[stage 3] Cache hit: {xlsx_path.name}")
         return xlsx_path
 
-    print(f"\n[stage 3] Training RS-VAR ({city}, lat={lat:.2f}°N)")
+    _print_title("Stage 3 Run RS-VAR")
+    print(f"[stage 3] Training RS-VAR ({city}, lat={lat:.2f}°N)")
     # Temporarily patch the module-level constants so run_and_save_rsvar uses our periods
     import samy_wgen.pipeline.run_rsvar as _rsvar_mod
     _orig_start = _rsvar_mod.BASELINE_START
@@ -416,10 +436,12 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
 
     csv_path = out_dir / "4_delta_corrected.csv"
     if csv_path.exists() and not overwrite:
-        print(f"\n[stage 4] Cache hit: {csv_path.name}")
+        _print_title("Stage 4 Apply Climate Delta")
+        print(f"[stage 4] Cache hit: {csv_path.name}")
         return pd.read_csv(csv_path, parse_dates=["datetime"]).set_index("datetime")
 
-    print(f"\n[stage 4] Applying CMIP6 climate delta ({ssp})")
+    _print_title("Stage 4 Apply Climate Delta")
+    print(f"[stage 4] Applying CMIP6 climate delta ({ssp})")
     daily_df, _monthly_df, meta = load_cmip6_or_cordex6(
         base_path=cmip6_dir, city=city, ssp=ssp
     )
@@ -452,6 +474,7 @@ def _output_epw(output_df: pd.DataFrame, epw_years: list[int],
     """Write one EPW per requested year → EPW/<city>_<ssp>_<year>.epw."""
     from samy_wgen.pipeline.gen_samy import _write_epw_for_year
 
+    _print_title("Write EPW")
     epw_dir = out_dir / "EPW"
     epw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -488,7 +511,8 @@ def _stage3_ensemble(merged_csv: Path, lat: float,
     """Generate stochastic ensemble members (ensemble mode)."""
     from samy_wgen.pipeline.run_ensemble import run_and_save_ensemble
 
-    print(f"\n[stage 3] Generating {n_members} ensemble members")
+    _print_title("Stage 3 Run Ensemble")
+    print(f"[stage 3] Generating {n_members} ensemble members")
     print(f"  regime_mode={regime_mode!r}  residual_mode={residual_mode!r}")
 
     run_and_save_ensemble(
@@ -536,7 +560,8 @@ def main():
     # --- Stage 0: parse ISD (no cache) ---
     isd_lst_cache = out_dir / "1_isd_lst.csv"
     if isd_lst_cache.exists() and not ow:
-        print(f"\n[stage 1] Cache hit: 1_isd_lst.csv  (skipping ISD parse)")
+        _print_title("Stage 0 Parse ISD")
+        print("[stage 1] Cache hit: 1_isd_lst.csv  (skipping ISD parse)")
         isd_lst = pd.read_csv(isd_lst_cache, parse_dates=["DATE"]).set_index("DATE")
     else:
         isd_raw = _stage0_parse_isd(isd_station_dir)
