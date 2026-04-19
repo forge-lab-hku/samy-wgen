@@ -32,6 +32,7 @@ import argparse
 import importlib.resources
 import tempfile
 from pathlib import Path
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -47,6 +48,18 @@ FORECAST_START = "2025-01-01"
 FORECAST_END   = "2100-12-31"
 DEFAULT_EPW_YEARS = "2030,2050,2080"
 DEFAULT_SSP    = "ssp245"
+DEFAULT_DOWNLOAD_DATA = ["isd", "nsrdb", "cmip6"]
+DEFAULT_CMIP6_MODEL = "mpi_esm1_2_lr"
+DEFAULT_ISD_RADIUS_KM = 50.0
+DEFAULT_ISD_YEAR_RANGE = (1970, 2024)
+DEFAULT_NSRDB_YEAR_RANGE = (1998, 2024)
+
+SSP_TO_CMIP6_EXPERIMENT = {
+    "ssp126": "ssp1_2_6",
+    "ssp245": "ssp2_4_5",
+    "ssp370": "ssp3_7_0",
+    "ssp585": "ssp5_8_5",
+}
 
 
 # ==========================================================================
@@ -106,6 +119,174 @@ def _find_nsrdb_csv(city: str, base: Path) -> Path:
     if len(matches) > 1:
         print(f"  [info] Multiple NSRDB files found, using: {matches[0].name}")
     return matches[0]
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="One-click SAMY weather generation pipeline",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument("--city", required=True,
+                        help="City name (must match cities_config.csv, e.g. 'Miami')")
+
+    parser.add_argument("--data-dir", default="data",
+                        help="Root data directory (ISD/, NSRDB/, CMIP6/ live here)")
+    parser.add_argument("--isd-dir", default=None,
+                        help="ISD station directory (overrides auto-detect under data-dir/ISD/<city>/)")
+    parser.add_argument("--nsrdb", default=None,
+                        help="NSRDB solar CSV path (overrides auto-detect under data-dir/NSRDB/)")
+    parser.add_argument("--cmip6-dir", default=None,
+                        help="CMIP6 root directory (overrides data-dir/CMIP6)")
+    parser.add_argument("--out-dir", default=None,
+                        help="Output directory (default: output/<city>)")
+    parser.add_argument("--elevation", type=float, default=0.0,
+                        help="Station elevation in metres (used for EPW header)")
+
+    parser.add_argument("--baseline-start", type=int, default=BASELINE_START,
+                        help="Baseline period start year")
+    parser.add_argument("--baseline-end", type=int, default=BASELINE_END,
+                        help="Baseline period end year")
+
+    parser.add_argument("--start", default=FORECAST_START, help="Forecast start date")
+    parser.add_argument("--end",   default=FORECAST_END,   help="Forecast end date")
+
+    parser.add_argument("--ssp", default=DEFAULT_SSP,
+                        help="CMIP6 SSP scenario (e.g. ssp245, ssp585)")
+
+    parser.add_argument("--mode", default="deterministic",
+                        choices=["deterministic", "ensemble"],
+                        help="Output mode")
+    parser.add_argument("--epw-years", default=DEFAULT_EPW_YEARS,
+                        help="Comma-separated years for EPW output (deterministic mode)")
+
+    parser.add_argument("--members", type=int, default=50,
+                        help="Number of ensemble members (ensemble mode)")
+    parser.add_argument("--regime-mode", default="ensemble",
+                        choices=["soft", "hard", "ensemble"],
+                        help="Regime sampling mode (ensemble mode)")
+    parser.add_argument("--residual-mode", default="block",
+                        choices=["deterministic", "iid", "block", "parametric"],
+                        help="Residual sampling mode (ensemble mode)")
+    parser.add_argument("--seed", type=int, default=0, help="Base random seed")
+
+    parser.add_argument("--download-data", nargs="+",
+                        choices=["isd", "nsrdb", "cmip6"],
+                        default=DEFAULT_DOWNLOAD_DATA,
+                        help="Auto-download these datasets when required inputs are missing")
+    parser.add_argument("--skip-download", action="store_true",
+                        help="Disable automatic download of missing input data")
+    parser.add_argument("--isd-station", default=None,
+                        help="Override automatic ISD station selection with a USAF-WBAN station ID")
+    parser.add_argument("--isd-radius", type=float, default=DEFAULT_ISD_RADIUS_KM,
+                        help="Radius in km for automatic ISD station selection")
+    parser.add_argument("--download-years", nargs=2, type=int, metavar=("START", "END"), default=None,
+                        help="Year range for automatic ISD/NSRDB downloads")
+    parser.add_argument("--cmip6-models", nargs="+", default=[DEFAULT_CMIP6_MODEL],
+                        help="CMIP6 models used for automatic downloads")
+    parser.add_argument("--cmip6-experiments", nargs="+", default=None,
+                        help="CMIP6 CDS experiments for automatic downloads (default: historical + selected SSP)")
+    parser.add_argument("--cmip6-years", nargs=2, type=int, metavar=("START", "END"), default=None,
+                        help="Year range for automatic CMIP6 downloads")
+
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Ignore cached intermediate files and rerun all stages")
+    return parser
+
+
+def _cmip6_download_experiments(ssp: str, requested: Iterable[str] | None = None) -> list[str]:
+    if requested:
+        return list(requested)
+    cds_experiment = SSP_TO_CMIP6_EXPERIMENT.get(ssp)
+    if cds_experiment is None:
+        raise SystemExit(
+            f"ERROR: unsupported SSP '{ssp}' for auto-download. "
+            f"Expected one of: {sorted(SSP_TO_CMIP6_EXPERIMENT)}"
+        )
+    return ["historical", cds_experiment]
+
+
+def _has_required_cmip6_data(city: str, cmip6_dir: Path, ssp: str, models: Iterable[str]) -> bool:
+    city_dir = cmip6_dir / city
+    if not city_dir.exists():
+        return False
+    required = []
+    for model in models:
+        required.append(city_dir / f"{model}_historical.csv")
+        required.append(city_dir / f"{model}_{ssp}.csv")
+    return all(path.exists() for path in required)
+
+
+def _ensure_pipeline_inputs(args, data_dir: Path) -> tuple[Path, Path, Path]:
+    from samy_wgen.pipeline.download_data import (
+        _city_meta,
+        download_cmip6,
+        download_isd,
+        download_nsrdb,
+        select_best_isd_station,
+    )
+
+    if args.isd_dir:
+        isd_station_dir = Path(args.isd_dir)
+    else:
+        try:
+            isd_station_dir = _find_isd_dir(args.city, data_dir)
+        except SystemExit:
+            if args.skip_download or "isd" not in set(args.download_data):
+                raise
+            yr_start, yr_end = args.download_years if args.download_years else DEFAULT_ISD_YEAR_RANGE
+            station_id = args.isd_station or select_best_isd_station(
+                city=args.city,
+                radius_km=args.isd_radius,
+                cache_dir=str(data_dir / "ISD"),
+            )
+            download_isd(
+                station_id=station_id,
+                city=args.city,
+                years=list(range(yr_start, yr_end + 1)),
+                output_dir=str(data_dir / "ISD"),
+            )
+            isd_station_dir = _find_isd_dir(args.city, data_dir)
+
+    if args.nsrdb:
+        nsrdb_csv = Path(args.nsrdb)
+    else:
+        try:
+            nsrdb_csv = _find_nsrdb_csv(args.city, data_dir)
+        except SystemExit:
+            if args.skip_download or "nsrdb" not in set(args.download_data):
+                raise
+            meta = _city_meta(args.city)
+            yr_start, yr_end = args.download_years if args.download_years else DEFAULT_NSRDB_YEAR_RANGE
+            download_nsrdb(
+                city=args.city,
+                lat=meta["lat"],
+                lon=meta["lon"],
+                years=list(range(yr_start, yr_end + 1)),
+                output_dir=str(data_dir / "NSRDB"),
+            )
+            nsrdb_csv = _find_nsrdb_csv(args.city, data_dir)
+
+    cmip6_dir = Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6"
+    if not _has_required_cmip6_data(args.city, cmip6_dir, args.ssp, args.cmip6_models):
+        if args.skip_download or "cmip6" not in set(args.download_data):
+            missing_city_dir = cmip6_dir / args.city
+            raise SystemExit(
+                f"ERROR: Required CMIP6 files not found under {missing_city_dir}. "
+                "Provide --cmip6-dir, pre-download the files, or allow auto-download."
+            )
+        meta = _city_meta(args.city)
+        download_cmip6(
+            city=args.city,
+            lat=meta["lat"],
+            lon=meta["lon"],
+            models=args.cmip6_models,
+            experiments=_cmip6_download_experiments(args.ssp, args.cmip6_experiments),
+            year_range=tuple(args.cmip6_years) if args.cmip6_years else None,
+            output_dir=str(cmip6_dir),
+        )
+
+    return isd_station_dir, nsrdb_csv, cmip6_dir
 
 
 # ==========================================================================
@@ -329,65 +510,7 @@ def _stage3_ensemble(merged_csv: Path, lat: float,
 # ==========================================================================
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="One-click SAMY weather generation pipeline",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    # --- Required ---
-    parser.add_argument("--city", required=True,
-                        help="City name (must match cities_config.csv, e.g. 'Miami')")
-
-    # --- Data paths (auto-detected from --data-dir if not given) ---
-    parser.add_argument("--data-dir", default="data",
-                        help="Root data directory (ISD/, NSRDB/, CMIP6/ live here)")
-    parser.add_argument("--isd-dir", default=None,
-                        help="ISD station directory (overrides auto-detect under data-dir/ISD/<city>/)")
-    parser.add_argument("--nsrdb", default=None,
-                        help="NSRDB solar CSV path (overrides auto-detect under data-dir/NSRDB/)")
-    parser.add_argument("--cmip6-dir", default=None,
-                        help="CMIP6 root directory (overrides data-dir/CMIP6)")
-    parser.add_argument("--out-dir", default=None,
-                        help="Output directory (default: output/<city>)")
-    parser.add_argument("--elevation", type=float, default=0.0,
-                        help="Station elevation in metres (used for EPW header)")
-
-    # --- Training / baseline period ---
-    parser.add_argument("--baseline-start", type=int, default=BASELINE_START,
-                        help="Baseline period start year")
-    parser.add_argument("--baseline-end", type=int, default=BASELINE_END,
-                        help="Baseline period end year")
-
-    # --- Inference / forecast period ---
-    parser.add_argument("--start", default=FORECAST_START, help="Forecast start date")
-    parser.add_argument("--end",   default=FORECAST_END,   help="Forecast end date")
-
-    # --- Climate scenario ---
-    parser.add_argument("--ssp", default=DEFAULT_SSP,
-                        help="CMIP6 SSP scenario (e.g. ssp245, ssp585)")
-
-    # --- Output mode ---
-    parser.add_argument("--mode", default="deterministic",
-                        choices=["deterministic", "ensemble"],
-                        help="Output mode")
-    parser.add_argument("--epw-years", default=DEFAULT_EPW_YEARS,
-                        help="Comma-separated years for EPW output (deterministic mode)")
-
-    # --- Ensemble-specific ---
-    parser.add_argument("--members", type=int, default=50,
-                        help="Number of ensemble members (ensemble mode)")
-    parser.add_argument("--regime-mode", default="ensemble",
-                        choices=["soft", "hard", "ensemble"],
-                        help="Regime sampling mode (ensemble mode)")
-    parser.add_argument("--residual-mode", default="block",
-                        choices=["deterministic", "iid", "block", "parametric"],
-                        help="Residual sampling mode (ensemble mode)")
-    parser.add_argument("--seed", type=int, default=0, help="Base random seed")
-
-    # --- Cache control ---
-    parser.add_argument("--overwrite", action="store_true",
-                        help="Ignore cached intermediate files and rerun all stages")
-
+    parser = _build_parser()
     args = parser.parse_args()
 
     # --- Resolve paths ---
@@ -395,9 +518,7 @@ def main():
     out_dir  = Path(args.out_dir) if args.out_dir else Path("output") / args.city
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    isd_station_dir = Path(args.isd_dir) if args.isd_dir else _find_isd_dir(args.city, data_dir)
-    nsrdb_csv       = Path(args.nsrdb)   if args.nsrdb   else _find_nsrdb_csv(args.city, data_dir)
-    cmip6_dir       = Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6"
+    isd_station_dir, nsrdb_csv, cmip6_dir = _ensure_pipeline_inputs(args, data_dir)
 
     meta = _load_city_meta(args.city)
     meta["elevation_m"] = args.elevation
