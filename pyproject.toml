@@ -49,7 +49,6 @@ packages = ["src/samy_wgen"]
 include = [
     "src/samy_wgen/config/config.yaml",
     "src/samy_wgen/config/cities_config.csv",
-    "src/samy_wgen/config/cmip6_catalog.json",
 ]
 
 [tool.pytest.ini_options]
