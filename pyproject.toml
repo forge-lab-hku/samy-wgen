@@ -19,6 +19,12 @@ dependencies = [
     "pytz>=2023.3",
     "matplotlib>=3.7",
     "seaborn>=0.12",
+    "cdsapi>=0.7",
+    "geopy>=2.4",
+    "requests>=2.31",
+    "tqdm>=4.65",
+    "xarray>=2023.1",
+    "netCDF4>=1.6",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +38,7 @@ samy-run = "samy_wgen.pipeline.run_pipeline:main"
 samy-rsvar = "samy_wgen.pipeline.run_rsvar:main"
 samy-delta = "samy_wgen.pipeline.run_climate_delta:main"
 samy-ensemble = "samy_wgen.pipeline.run_ensemble:main"
+samy-download = "samy_wgen.pipeline.download_data:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/samy_wgen"]
