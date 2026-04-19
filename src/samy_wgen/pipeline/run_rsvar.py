@@ -82,7 +82,7 @@ def _load_cities_config(path: Path) -> pd.DataFrame:
     """Load cities_config.csv and return a DataFrame with at least city + latitude.
 
     Expected header includes:
-    continent,kg_label,ashrae_label,city,country,latitude,longitude,cordex_domain
+    continent,city,country,latitude,longitude,cordex_domain
     """
     if not path.exists():
         raise SystemExit(f"ERROR: cities config not found: {path}")

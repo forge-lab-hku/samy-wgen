@@ -1,5 +1,1539 @@
-continent,kg_label,ashrae_label,city,country,latitude,longitude,cordex_domain
-North America,Csb,3B,Los Angeles,USA,34.0522,-118.2437,NAM-22
-North America,Am,1A,Miami,USA,25.7617,-80.1918,NAM-22
-North America,Dfa,5A,Toronto,Canada,43.6532,-79.3832,NAM-22
-North America,Dfb,6A,Montreal,Canada,45.5017,-73.5673,NAM-22
+continent,city,city_ascii,country,latitude,longitude,cordex_domain
+Africa,Algiers,Algiers,Algeria,36.7325,3.0872,AFR-22
+Africa,Oran,Oran,Algeria,35.6969,-0.6331,AFR-22
+Africa,Belas,Belas,Angola,-8.9983,13.265,AFR-22
+Africa,Benguela,Benguela,Angola,-12.55,13.4167,AFR-22
+Africa,Cabinda,Cabinda,Angola,-5.56,12.19,AFR-22
+Africa,Cacuaco,Cacuaco,Angola,-8.8053,13.2444,AFR-22
+Africa,Cazenga,Cazenga,Angola,-8.8214,13.2911,AFR-22
+Africa,Cuito,Cuito,Angola,-12.3833,16.9333,AFR-22
+Africa,Huambo,Huambo,Angola,-12.7767,15.7347,AFR-22
+Africa,Luanda,Luanda,Angola,-8.8383,13.2344,AFR-22
+Africa,Lubango,Lubango,Angola,-14.9167,13.5,AFR-22
+Africa,Malanje,Malanje,Angola,-9.5333,16.35,AFR-22
+Africa,Talatona,Talatona,Angola,-8.9167,13.1833,AFR-22
+Africa,Abomey-Calavi,Abomey-Calavi,Benin,6.4486,2.3556,AFR-22
+Africa,Cotonou,Cotonou,Benin,6.3667,2.4333,AFR-22
+Africa,Porto-Novo,Porto-Novo,Benin,6.4972,2.605,AFR-22
+Africa,Gaborone,Gaborone,Botswana,-24.6569,25.9086,AFR-22
+Africa,Bobo-Dioulasso,Bobo-Dioulasso,Burkina Faso,11.1833,-4.2833,AFR-22
+Africa,Ouagadougou,Ouagadougou,Burkina Faso,12.3686,-1.5275,AFR-22
+Africa,Bujumbura,Bujumbura,Burundi,-3.3833,29.3667,AFR-22
+Africa,Gitega,Gitega,Burundi,-3.4283,29.925,AFR-22
+Africa,Praia,Praia,Cabo Verde,14.9177,-23.5092,AFR-22
+Africa,Bafoussam,Bafoussam,Cameroon,5.4667,10.4167,AFR-22
+Africa,Bamenda,Bamenda,Cameroon,5.9614,10.1517,AFR-22
+Africa,Douala,Douala,Cameroon,4.05,9.7,AFR-22
+Africa,Garoua,Garoua,Cameroon,9.3,13.4,AFR-22
+Africa,Yaoundé,Yaounde,Cameroon,3.8667,11.5167,AFR-22
+Africa,Bangui,Bangui,Central African Republic,4.3733,18.5628,AFR-22
+Africa,N’Djamena,N'Djamena,Chad,12.1053,15.0447,AFR-22
+Africa,Moroni,Moroni,Comoros,-11.699,43.256,AFR-22
+Africa,Brazzaville,Brazzaville,Congo (Brazzaville),-4.2667,15.2667,AFR-22
+Africa,Pointe-Noire,Pointe-Noire,Congo (Brazzaville),-4.7975,11.8503,AFR-22
+Africa,Bukavu,Bukavu,Congo (Kinshasa),-2.5061,28.8608,AFR-22
+Africa,Bunia,Bunia,Congo (Kinshasa),1.5667,30.25,AFR-22
+Africa,Kabinda,Kabinda,Congo (Kinshasa),-6.13,24.48,AFR-22
+Africa,Kananga,Kananga,Congo (Kinshasa),-5.897,22.4488,AFR-22
+Africa,Kibanseke Première,Kibanseke Premiere,Congo (Kinshasa),-4.4419,15.395,AFR-22
+Africa,Kinshasa,Kinshasa,Congo (Kinshasa),-4.3219,15.3119,AFR-22
+Africa,Kisangani,Kisangani,Congo (Kinshasa),0.5167,25.2,AFR-22
+Africa,Lubumbashi,Lubumbashi,Congo (Kinshasa),-11.6647,27.4794,AFR-22
+Africa,Mbandaka,Mbandaka,Congo (Kinshasa),0.0478,18.2558,AFR-22
+Africa,Mbuji-Mayi,Mbuji-Mayi,Congo (Kinshasa),-6.15,23.6,AFR-22
+Africa,Tshikapa,Tshikapa,Congo (Kinshasa),-6.4167,20.8,AFR-22
+Africa,Uvira,Uvira,Congo (Kinshasa),-3.4,29.15,AFR-22
+Africa,Abidjan,Abidjan,Côte d’Ivoire,5.3364,-4.0267,AFR-22
+Africa,Bouaké,Bouake,Côte d’Ivoire,7.6833,-5.0331,AFR-22
+Africa,Cocody,Cocody,Côte d’Ivoire,5.3351,-4.0039,AFR-22
+Africa,Port-Bouët,Port-Bouet,Côte d’Ivoire,5.2568,-3.963,AFR-22
+Africa,Yamoussoukro,Yamoussoukro,Côte d’Ivoire,6.8161,-5.2742,AFR-22
+Africa,Yopougon,Yopougon,Côte d’Ivoire,5.3748,-4.0867,AFR-22
+Africa,Djibouti,Djibouti,Djibouti,11.5944,43.1481,AFR-22
+Africa,Abū Ţisht,Abu Tisht,Egypt,26.1204,32.0954,AFR-22
+Africa,Abū Ḩummuş,Abu Hummus,Egypt,31.0931,30.3142,AFR-22
+Africa,Al Fashn,Al Fashn,Egypt,28.8231,30.899,AFR-22
+Africa,Al Fayyūm,Al Fayyum,Egypt,29.3,30.8333,AFR-22
+Africa,Al Manşūrah,Al Mansurah,Egypt,31.05,31.3833,AFR-22
+Africa,Al Maḩallah al Kubrá,Al Mahallah al Kubra,Egypt,30.9667,31.1667,AFR-22
+Africa,Alexandria,Alexandria,Egypt,31.1975,29.8925,AFR-22
+Africa,Ashmūn,Ashmun,Egypt,30.2974,30.9764,AFR-22
+Africa,Cairo,Cairo,Egypt,30.0444,31.2358,AFR-22
+Africa,Dayrūţ,Dayrut,Egypt,27.5564,30.8106,AFR-22
+Africa,Giza,Giza,Egypt,29.987,31.2118,AFR-22
+Africa,Port Said,Port Said,Egypt,31.2625,32.3061,AFR-22
+Africa,Shibīn al Qanāţir,Shibin al Qanatir,Egypt,30.3127,31.3202,AFR-22
+Africa,Shubrā al Khaymah,Shubra al Khaymah,Egypt,30.1286,31.2422,AFR-22
+Africa,Sinnūris,Sinnuris,Egypt,29.4072,30.8667,AFR-22
+Africa,Suez,Suez,Egypt,29.9667,32.5333,AFR-22
+Africa,Ţūkh,Tukh,Egypt,30.3549,31.2011,AFR-22
+Africa,Ḩalwān,Halwan,Egypt,29.8493,31.3327,AFR-22
+Africa,Malabo,Malabo,Equatorial Guinea,3.7456,8.7744,AFR-22
+Africa,Asmara,Asmara,Eritrea,15.3358,38.9411,AFR-22
+Africa,Lobamba,Lobamba,Eswatini,-26.4667,31.2,AFR-22
+Africa,Mbabane,Mbabane,Eswatini,-26.3167,31.1333,AFR-22
+Africa,Addis Ababa,Addis Ababa,Ethiopia,9.03,38.74,AFR-22
+Africa,K’ebrī Beyah,K'ebri Beyah,Ethiopia,9.0833,43.0833,AFR-22
+Africa,Libreville,Libreville,Gabon,0.3901,9.4544,AFR-22
+Africa,Banjul,Banjul,"Gambia, The",13.4581,-16.5786,AFR-22
+Africa,Accra,Accra,Ghana,5.5461,-0.2067,AFR-22
+Africa,Boankra,Boankra,Ghana,6.6919,-1.4051,AFR-22
+Africa,Domaa-Ahenkro,Domaa-Ahenkro,Ghana,7.2739,-2.8735,AFR-22
+Africa,Kumasi,Kumasi,Ghana,6.7,-1.625,AFR-22
+Africa,Tamale,Tamale,Ghana,9.4075,-0.8533,AFR-22
+Africa,Conakry,Conakry,Guinea,9.5092,-13.7122,AFR-22
+Africa,Bissau,Bissau,Guinea-Bissau,11.85,-15.5667,AFR-22
+Africa,Mombasa,Mombasa,Kenya,-4.05,39.6667,AFR-22
+Africa,Nairobi,Nairobi,Kenya,-1.2864,36.8172,AFR-22
+Africa,Maseru,Maseru,Lesotho,-29.31,27.48,AFR-22
+Africa,Monrovia,Monrovia,Liberia,6.3133,-10.8014,AFR-22
+Africa,Benghazi,Benghazi,Libya,32.1167,20.0667,AFR-22
+Africa,Tripoli,Tripoli,Libya,32.8872,13.1914,AFR-22
+Africa,Antananarivo,Antananarivo,Madagascar,-18.91,47.525,AFR-22
+Africa,Blantyre,Blantyre,Malawi,-15.7861,35.0058,AFR-22
+Africa,Lilongwe,Lilongwe,Malawi,-13.9669,33.7873,AFR-22
+Africa,Bamako,Bamako,Mali,12.6458,-7.9922,AFR-22
+Africa,Nouakchott,Nouakchott,Mauritania,18.0858,-15.9785,AFR-22
+Africa,Port Louis,Port Louis,Mauritius,-20.1644,57.5042,AFR-22
+Africa,Mamoudzou,Mamoudzou,Mayotte,-12.7806,45.2278,AFR-22
+Africa,Agadir,Agadir,Morocco,30.4214,-9.5831,AFR-22
+Africa,Casablanca,Casablanca,Morocco,33.5333,-7.5833,AFR-22
+Africa,Fès,Fes,Morocco,34.0433,-5.0033,AFR-22
+Africa,Kenitra,Kenitra,Morocco,34.25,-6.5833,AFR-22
+Africa,Marrakech,Marrakech,Morocco,31.63,-8.0089,AFR-22
+Africa,Meknès,Meknes,Morocco,33.895,-5.5547,AFR-22
+Africa,Oujda-Angad,Oujda-Angad,Morocco,34.6867,-1.9114,AFR-22
+Africa,Rabat,Rabat,Morocco,34.0209,-6.8416,AFR-22
+Africa,Sale,Sale,Morocco,34.0333,-6.8,AFR-22
+Africa,Tangier,Tangier,Morocco,35.7767,-5.8039,AFR-22
+Africa,Tifariti,Tifariti,Morocco,26.158,-10.567,AFR-22
+Africa,Beira,Beira,Mozambique,-19.8333,34.85,AFR-22
+Africa,Maputo,Maputo,Mozambique,-25.9153,32.5764,AFR-22
+Africa,Matola,Matola,Mozambique,-25.9667,32.4667,AFR-22
+Africa,Nampula,Nampula,Mozambique,-15.1167,39.2667,AFR-22
+Africa,Niamey,Niamey,Niger,13.515,2.1175,AFR-22
+Africa,Aba,Aba,Nigeria,5.1167,7.3667,AFR-22
+Africa,Abeokuta,Abeokuta,Nigeria,7.1608,3.3483,AFR-22
+Africa,Abuja,Abuja,Nigeria,9.0667,7.4833,AFR-22
+Africa,Agege,Agege,Nigeria,6.6219,3.3258,AFR-22
+Africa,Akure,Akure,Nigeria,7.25,5.195,AFR-22
+Africa,Asaba,Asaba,Nigeria,6.1833,6.7333,AFR-22
+Africa,Awka,Awka,Nigeria,6.2069,7.0678,AFR-22
+Africa,Bauchi,Bauchi,Nigeria,10.5,10.0,AFR-22
+Africa,Benin City,Benin City,Nigeria,6.3333,5.6222,AFR-22
+Africa,Enugu,Enugu,Nigeria,6.5,7.5,AFR-22
+Africa,Ibadan,Ibadan,Nigeria,7.3964,3.9167,AFR-22
+Africa,Ikare,Ikare,Nigeria,7.5167,5.75,AFR-22
+Africa,Ikeja,Ikeja,Nigeria,6.6,3.35,AFR-22
+Africa,Ile-Ife,Ile-Ife,Nigeria,7.4833,4.5592,AFR-22
+Africa,Ilorin,Ilorin,Nigeria,8.5,4.55,AFR-22
+Africa,Jalingo,Jalingo,Nigeria,8.9,11.3667,AFR-22
+Africa,Jos,Jos,Nigeria,9.9167,8.8903,AFR-22
+Africa,Kaduna,Kaduna,Nigeria,10.5167,7.4333,AFR-22
+Africa,Kano,Kano,Nigeria,12.0,8.5167,AFR-22
+Africa,Lagos,Lagos,Nigeria,6.455,3.3841,AFR-22
+Africa,Lokoja,Lokoja,Nigeria,7.8019,6.7442,AFR-22
+Africa,Maiduguri,Maiduguri,Nigeria,11.8372,13.1542,AFR-22
+Africa,Mushin,Mushin,Nigeria,6.5333,3.35,AFR-22
+Africa,Nneyi-Umuleri,Nneyi-Umuleri,Nigeria,6.3333,6.8333,AFR-22
+Africa,Ogbomoso,Ogbomoso,Nigeria,8.1333,4.25,AFR-22
+Africa,Onitsha,Onitsha,Nigeria,6.1667,6.7833,AFR-22
+Africa,Osogbo,Osogbo,Nigeria,7.7667,4.5667,AFR-22
+Africa,Owerri,Owerri,Nigeria,5.485,7.035,AFR-22
+Africa,Port Harcourt,Port Harcourt,Nigeria,4.8242,7.0336,AFR-22
+Africa,Shagamu,Shagamu,Nigeria,6.8333,3.65,AFR-22
+Africa,Somolu,Somolu,Nigeria,6.5408,3.3872,AFR-22
+Africa,Uyo,Uyo,Nigeria,5.0333,7.9275,AFR-22
+Africa,Saint-Denis,Saint-Denis,Reunion,-20.8789,55.4481,AFR-22
+Africa,Kigali,Kigali,Rwanda,-1.9536,30.0606,AFR-22
+Africa,Jamestown,Jamestown,"Saint Helena, Ascension, and Tristan da Cunha",-15.9251,-5.7179,AFR-22
+Africa,São Tomé,Sao Tome,Sao Tome and Principe,0.3361,6.7306,AFR-22
+Africa,Dakar,Dakar,Senegal,14.6726,-17.432,AFR-22
+Africa,Pikine,Pikine,Senegal,14.744,-17.4021,AFR-22
+Africa,Touba,Touba,Senegal,14.8667,-15.8833,AFR-22
+Africa,Victoria,Victoria,Seychelles,-4.6231,55.4525,AFR-22
+Africa,Freetown,Freetown,Sierra Leone,8.4833,-13.2331,AFR-22
+Africa,Baardheere,Baardheere,Somalia,2.3447,42.2764,AFR-22
+Africa,Baidoa,Baidoa,Somalia,3.1167,43.65,AFR-22
+Africa,Boosaaso,Boosaaso,Somalia,11.28,49.18,AFR-22
+Africa,Cadaado,Cadaado,Somalia,6.1393,46.6241,AFR-22
+Africa,Gaalkacyo,Gaalkacyo,Somalia,6.7697,47.4308,AFR-22
+Africa,Hargeysa,Hargeysa,Somalia,9.56,44.065,AFR-22
+Africa,Mogadishu,Mogadishu,Somalia,2.0392,45.3419,AFR-22
+Africa,Bloemfontein,Bloemfontein,South Africa,-29.1167,26.2167,AFR-22
+Africa,Cape Town,Cape Town,South Africa,-33.9253,18.4239,AFR-22
+Africa,Durban,Durban,South Africa,-29.8833,31.05,AFR-22
+Africa,Gqeberha,Gqeberha,South Africa,-33.9581,25.6,AFR-22
+Africa,Johannesburg,Johannesburg,South Africa,-26.2044,28.0456,AFR-22
+Africa,Newcastle,Newcastle,South Africa,-27.7464,29.9328,AFR-22
+Africa,Pietermaritzburg,Pietermaritzburg,South Africa,-29.6167,30.3833,AFR-22
+Africa,Pretoria,Pretoria,South Africa,-25.7461,28.1881,AFR-22
+Africa,Rustenburg,Rustenburg,South Africa,-25.6667,27.2428,AFR-22
+Africa,Soweto,Soweto,South Africa,-26.2678,27.8585,AFR-22
+Africa,Juba,Juba,South Sudan,4.83,31.58,AFR-22
+Africa,El Fasher,El Fasher,Sudan,13.63,25.35,AFR-22
+Africa,El Geneina,El Geneina,Sudan,13.45,22.44,AFR-22
+Africa,Kassala,Kassala,Sudan,15.45,36.4,AFR-22
+Africa,Khartoum,Khartoum,Sudan,15.6031,32.5265,AFR-22
+Africa,Khartoum North,Khartoum North,Sudan,15.6333,32.6333,AFR-22
+Africa,Omdurman,Omdurman,Sudan,15.6835,32.4629,AFR-22
+Africa,Port Sudan,Port Sudan,Sudan,19.6158,37.2164,AFR-22
+Africa,Arusha,Arusha,Tanzania,-3.3667,36.6833,AFR-22
+Africa,Dar es Salaam,Dar es Salaam,Tanzania,-6.8161,39.2803,AFR-22
+Africa,Dodoma,Dodoma,Tanzania,-6.1731,35.7419,AFR-22
+Africa,Mbeya,Mbeya,Tanzania,-8.9,33.45,AFR-22
+Africa,Mwanza,Mwanza,Tanzania,-2.5167,32.9,AFR-22
+Africa,Ubungo,Ubungo,Tanzania,-6.7889,39.2056,AFR-22
+Africa,Lomé,Lome,Togo,6.1308,1.2153,AFR-22
+Africa,Tunis,Tunis,Tunisia,36.8064,10.1817,AFR-22
+Africa,Kampala,Kampala,Uganda,0.3136,32.5811,AFR-22
+Africa,Nansana,Nansana,Uganda,0.3639,32.5286,AFR-22
+Africa,Kitwe,Kitwe,Zambia,-12.8167,28.2,AFR-22
+Africa,Lusaka,Lusaka,Zambia,-15.4167,28.2833,AFR-22
+Africa,Ndola,Ndola,Zambia,-12.9689,28.6325,AFR-22
+Africa,Bulawayo,Bulawayo,Zimbabwe,-20.17,28.58,AFR-22
+Africa,Harare,Harare,Zimbabwe,-17.8292,31.0522,AFR-22
+Asia,Farāh,Farah,Afghanistan,32.3436,62.1194,WAS-22
+Asia,Herāt,Herat,Afghanistan,34.3419,62.2031,WAS-22
+Asia,Kabul,Kabul,Afghanistan,34.5253,69.1783,WAS-22
+Asia,Kandahār,Kandahar,Afghanistan,31.62,65.7158,WAS-22
+Asia,Āqchah,Aqchah,Afghanistan,36.9114,66.1858,WAS-22
+Asia,Yerevan,Yerevan,Armenia,40.1814,44.5144,WAS-22
+Asia,Baku,Baku,Azerbaijan,40.3667,49.8352,WAS-22
+Asia,Manama,Manama,Bahrain,26.2233,50.5875,WAS-22
+Asia,Chattogram,Chattogram,Bangladesh,22.335,91.8325,SEA-22
+Asia,Dhaka,Dhaka,Bangladesh,23.7289,90.3944,SEA-22
+Asia,Gāzipura,Gazipura,Bangladesh,23.9234,90.3959,SEA-22
+Asia,Khulna,Khulna,Bangladesh,22.8167,89.55,SEA-22
+Asia,Mymensingh,Mymensingh,Bangladesh,24.7504,90.38,SEA-22
+Asia,Nārāyanganj,Narayanganj,Bangladesh,23.6167,90.5,SEA-22
+Asia,Rangapukur,Rangapukur,Bangladesh,25.5206,89.2147,SEA-22
+Asia,Thimphu,Thimphu,Bhutan,27.4722,89.6361,SEA-22
+Asia,Bandar Seri Begawan,Bandar Seri Begawan,Brunei,4.8903,114.9422,SEA-22
+Asia,Kyaukse,Kyaukse,Burma,21.6131,96.1303,SEA-22
+Asia,Mandalay,Mandalay,Burma,21.9831,96.0844,SEA-22
+Asia,Nay Pyi Taw,Nay Pyi Taw,Burma,19.7475,96.115,SEA-22
+Asia,Rangoon,Rangoon,Burma,16.795,96.16,SEA-22
+Asia,Phnom Penh,Phnom Penh,Cambodia,11.5696,104.921,SEA-22
+Asia,Ailan Mubage,Ailan Mubage,China,43.908,81.2777,EAS-22
+Asia,Aksu,Aksu,China,41.185,80.2904,EAS-22
+Asia,Ankang,Ankang,China,32.6854,109.029,EAS-22
+Asia,Anqing,Anqing,China,30.5318,117.1153,EAS-22
+Asia,Anqiu,Anqiu,China,36.478,119.219,EAS-22
+Asia,Anshan,Anshan,China,41.108,122.994,EAS-22
+Asia,Anshun,Anshun,China,26.2531,105.9476,EAS-22
+Asia,Baicheng,Baicheng,China,23.903,106.619,EAS-22
+Asia,Baicheng,Baicheng,China,45.62,122.838,EAS-22
+Asia,Baishan,Baishan,China,41.944,126.4147,EAS-22
+Asia,Baiyin,Baiyin,China,36.5451,104.1389,EAS-22
+Asia,Baoding,Baoding,China,38.874,115.464,EAS-22
+Asia,Baojishi,Baojishi,China,34.363,107.238,EAS-22
+Asia,Baoshan,Baoshan,China,25.112,99.161,EAS-22
+Asia,Baotou,Baotou,China,40.6213,109.9532,EAS-22
+Asia,Bazhou,Bazhou,China,31.868,106.748,EAS-22
+Asia,Bazhou,Bazhou,China,39.1333,116.3833,EAS-22
+Asia,Beihai,Beihai,China,21.481,109.12,EAS-22
+Asia,Beijing,Beijing,China,39.9067,116.3975,EAS-22
+Asia,Bengbu,Bengbu,China,32.917,117.389,EAS-22
+Asia,Benxi,Benxi,China,41.3039,123.7649,EAS-22
+Asia,Bijie,Bijie,China,27.284,105.292,EAS-22
+Asia,Binzhou,Binzhou,China,37.383,117.971,EAS-22
+Asia,Botou,Botou,China,38.0833,116.5833,EAS-22
+Asia,Bozhou,Bozhou,China,33.8463,115.7786,EAS-22
+Asia,Cangzhou,Cangzhou,China,38.3047,116.8387,EAS-22
+Asia,Cencheng,Cencheng,China,22.9167,111.0,EAS-22
+Asia,Changchun,Changchun,China,43.897,125.326,EAS-22
+Asia,Changde,Changde,China,29.031,111.699,EAS-22
+Asia,Changping,Changping,China,40.2248,116.1944,EAS-22
+Asia,Changsha,Changsha,China,28.228,112.939,EAS-22
+Asia,Changsha,Changsha,China,22.3773,112.6982,EAS-22
+Asia,Changshu,Changshu,China,31.656,120.753,EAS-22
+Asia,Changzhi,Changzhi,China,36.195,113.117,EAS-22
+Asia,Changzhou,Changzhou,China,31.811,119.974,EAS-22
+Asia,Chaohucun,Chaohucun,China,31.6244,117.8902,EAS-22
+Asia,Chaoyang,Chaoyang,China,41.571,120.453,EAS-22
+Asia,Chaozhou,Chaozhou,China,23.658,116.622,EAS-22
+Asia,Chengdu,Chengdu,China,30.66,104.0633,EAS-22
+Asia,Chengguan,Chengguan,China,35.4623,113.8054,EAS-22
+Asia,Chengtangcun,Chengtangcun,China,35.0833,117.15,EAS-22
+Asia,Chengxiang,Chengxiang,China,31.564,121.174,EAS-22
+Asia,Chenzhou,Chenzhou,China,25.77,113.016,EAS-22
+Asia,Chifeng,Chifeng,China,42.255,118.8825,EAS-22
+Asia,Chizhou,Chizhou,China,30.6654,117.4916,EAS-22
+Asia,Chongqing,Chongqing,China,29.5637,106.5504,EAS-22
+Asia,Chongzuo,Chongzuo,China,22.377,107.365,EAS-22
+Asia,Chuxiong,Chuxiong,China,25.033,101.5459,EAS-22
+Asia,Chuzhou,Chuzhou,China,32.256,118.333,EAS-22
+Asia,Dadukou,Dadukou,China,26.5824,101.7184,EAS-22
+Asia,Dali,Dali,China,25.6811,100.3003,EAS-22
+Asia,Dalian,Dalian,China,38.9,121.6,EAS-22
+Asia,Dandong,Dandong,China,40.1167,124.3833,EAS-22
+Asia,Danyang,Danyang,China,32.0,119.586,EAS-22
+Asia,Daqing,Daqing,China,46.589,125.104,EAS-22
+Asia,Dashiqiao,Dashiqiao,China,40.6167,122.5167,EAS-22
+Asia,Dayan,Dayan,China,26.8552,100.2259,EAS-22
+Asia,Daye,Daye,China,30.0961,114.9804,EAS-22
+Asia,Dazhou,Dazhou,China,31.2093,107.4678,EAS-22
+Asia,Dehui,Dehui,China,44.535,125.703,EAS-22
+Asia,Deyang,Deyang,China,31.127,104.398,EAS-22
+Asia,Dezhou,Dezhou,China,37.436,116.359,EAS-22
+Asia,Dingxi,Dingxi,China,35.608,104.592,EAS-22
+Asia,Dingzhou,Dingzhou,China,38.516,114.99,EAS-22
+Asia,Dongguan,Dongguan,China,23.021,113.752,EAS-22
+Asia,Dongtai,Dongtai,China,32.795,120.519,EAS-22
+Asia,Dongyang,Dongyang,China,29.2667,120.2167,EAS-22
+Asia,Ezhou,Ezhou,China,30.3914,114.8949,EAS-22
+Asia,Fangchenggang,Fangchenggang,China,21.6867,108.3547,EAS-22
+Asia,Feicheng,Feicheng,China,36.1861,116.7719,EAS-22
+Asia,Foshan,Foshan,China,23.0214,113.1216,EAS-22
+Asia,Fuding,Fuding,China,27.2,120.2,EAS-22
+Asia,Fuqing,Fuqing,China,25.7167,119.3833,EAS-22
+Asia,Fushun,Fushun,China,41.881,123.957,EAS-22
+Asia,Fuxin,Fuxin,China,42.022,121.67,EAS-22
+Asia,Fuyang,Fuyang,China,32.89,115.814,EAS-22
+Asia,Fuyang,Fuyang,China,30.0553,119.95,EAS-22
+Asia,Fuzhou,Fuzhou,China,26.0743,119.2964,EAS-22
+Asia,Fuzhou,Fuzhou,China,27.949,116.358,EAS-22
+Asia,Fu’an,Fu'an,China,27.1,119.6333,EAS-22
+Asia,Gaizhou,Gaizhou,China,40.4,122.35,EAS-22
+Asia,Ganzhou,Ganzhou,China,25.831,114.933,EAS-22
+Asia,Gaobeidian,Gaobeidian,China,39.327,115.874,EAS-22
+Asia,Gaomi,Gaomi,China,36.3833,119.75,EAS-22
+Asia,Gaoping,Gaoping,China,30.7824,106.1281,EAS-22
+Asia,Gaoyou,Gaoyou,China,32.845,119.508,EAS-22
+Asia,Gaozhou,Gaozhou,China,21.9244,110.8422,EAS-22
+Asia,Ghulja,Ghulja,China,43.9,81.35,EAS-22
+Asia,Gongzhuling,Gongzhuling,China,43.5053,124.8224,EAS-22
+Asia,Guangshui,Guangshui,China,31.617,113.826,EAS-22
+Asia,Guangyuan,Guangyuan,China,32.436,105.844,EAS-22
+Asia,Guangzhou,Guangzhou,China,23.13,113.26,EAS-22
+Asia,Guang’an,Guang'an,China,30.4564,106.6326,EAS-22
+Asia,Guankou,Guankou,China,28.1637,113.6433,EAS-22
+Asia,Guankou,Guankou,China,30.988,103.647,EAS-22
+Asia,Guigang,Guigang,China,23.112,109.599,EAS-22
+Asia,Guilin,Guilin,China,25.275,110.296,EAS-22
+Asia,Guiping,Guiping,China,23.4,110.0833,EAS-22
+Asia,Guixi,Guixi,China,28.2925,117.2454,EAS-22
+Asia,Guiyang,Guiyang,China,26.647,106.63,EAS-22
+Asia,Guli,Guli,China,28.9,120.0333,EAS-22
+Asia,Gulou,Gulou,China,26.0865,119.298,EAS-22
+Asia,Guozhen,Guozhen,China,34.3609,107.1751,EAS-22
+Asia,Guyuan,Guyuan,China,36.01,106.257,EAS-22
+Asia,Haicheng,Haicheng,China,40.8824,122.6852,EAS-22
+Asia,Haikou,Haikou,China,20.0186,110.3488,EAS-22
+Asia,Hai’an,Hai'an,China,32.535,120.563,EAS-22
+Asia,Hanchuan,Hanchuan,China,30.6667,113.8333,EAS-22
+Asia,Handan,Handan,China,36.601,114.487,EAS-22
+Asia,Hangzhou,Hangzhou,China,30.267,120.153,EAS-22
+Asia,Hanzhong,Hanzhong,China,33.0664,107.0232,EAS-22
+Asia,Harbin,Harbin,China,45.7576,126.6409,EAS-22
+Asia,Hebi,Hebi,China,35.748,114.297,EAS-22
+Asia,Hechi,Hechi,China,24.693,108.085,EAS-22
+Asia,Hefei,Hefei,China,31.8206,117.2273,EAS-22
+Asia,Hegang,Hegang,China,47.3501,130.298,EAS-22
+Asia,Hejian,Hejian,China,38.4466,116.0995,EAS-22
+Asia,Hengshui,Hengshui,China,37.739,115.669,EAS-22
+Asia,Hengyang,Hengyang,China,26.894,112.572,EAS-22
+Asia,Hengzhou,Hengzhou,China,22.6799,109.2614,EAS-22
+Asia,Heshan,Heshan,China,22.7667,112.95,EAS-22
+Asia,Heyuan,Heyuan,China,23.7443,114.7002,EAS-22
+Asia,Heze,Heze,China,35.2343,115.4796,EAS-22
+Asia,Hezhou,Hezhou,China,24.4042,111.5672,EAS-22
+Asia,Hohhot,Hohhot,China,40.842,111.749,EAS-22
+Asia,Huaibei,Huaibei,China,33.956,116.798,EAS-22
+Asia,Huaihua,Huaihua,China,27.5698,110.0016,EAS-22
+Asia,Huainan,Huainan,China,32.6314,117.0194,EAS-22
+Asia,Huaiyin,Huaiyin,China,33.5819,119.028,EAS-22
+Asia,Huai’an,Huai'an,China,33.551,119.113,EAS-22
+Asia,Huanggang,Huanggang,China,30.4537,114.8724,EAS-22
+Asia,Huanglongsi,Huanglongsi,China,34.795,114.345,EAS-22
+Asia,Huangshan,Huangshan,China,29.7149,118.3376,EAS-22
+Asia,Huangshi,Huangshi,China,30.2011,115.039,EAS-22
+Asia,Huazhou,Huazhou,China,21.664,110.6396,EAS-22
+Asia,Huazhou,Huazhou,China,32.688,112.087,EAS-22
+Asia,Huilong,Huilong,China,31.87,121.703,EAS-22
+Asia,Huizhou,Huizhou,China,23.112,114.416,EAS-22
+Asia,Huludao,Huludao,China,40.711,120.837,EAS-22
+Asia,Huzhou,Huzhou,China,30.8925,120.0875,EAS-22
+Asia,Jiaji,Jiaji,China,19.2431,110.4642,EAS-22
+Asia,Jiamusi,Jiamusi,China,46.8,130.319,EAS-22
+Asia,Jiancheng,Jiancheng,China,30.38,104.53,EAS-22
+Asia,Jiangguanchi,Jiangguanchi,China,34.037,113.852,EAS-22
+Asia,Jiangmen,Jiangmen,China,22.5789,113.0815,EAS-22
+Asia,Jianguang,Jianguang,China,28.1958,115.7833,EAS-22
+Asia,Jiangyin,Jiangyin,China,31.839,120.295,EAS-22
+Asia,Jianshe,Jianshe,China,34.2137,113.7629,EAS-22
+Asia,Jiaozhou,Jiaozhou,China,36.2647,120.0334,EAS-22
+Asia,Jiaozuo,Jiaozuo,China,35.2157,113.2419,EAS-22
+Asia,Jiaxing,Jiaxing,China,30.747,120.756,EAS-22
+Asia,Jieshou,Jieshou,China,33.257,115.3746,EAS-22
+Asia,Jieyang,Jieyang,China,23.551,116.3727,EAS-22
+Asia,Jinan,Jinan,China,36.6702,117.0207,EAS-22
+Asia,Jincheng,Jincheng,China,35.491,112.852,EAS-22
+Asia,Jingcheng,Jingcheng,China,32.009,120.263,EAS-22
+Asia,Jingdezhen,Jingdezhen,China,29.2917,117.1986,EAS-22
+Asia,Jinghong,Jinghong,China,22.009,100.797,EAS-22
+Asia,Jingling,Jingling,China,30.664,113.167,EAS-22
+Asia,Jinhua,Jinhua,China,29.079,119.647,EAS-22
+Asia,Jining,Jining,China,35.4151,116.5871,EAS-22
+Asia,Jinzhou,Jinzhou,China,41.129,121.148,EAS-22
+Asia,Jin’e,Jin'e,China,29.3394,105.2875,EAS-22
+Asia,Jiujiang,Jiujiang,China,29.661,115.954,EAS-22
+Asia,Jixi,Jixi,China,45.295,130.969,EAS-22
+Asia,Ji’an,Ji'an,China,27.0912,114.9668,EAS-22
+Asia,Jurong,Jurong,China,31.946,119.164,EAS-22
+Asia,Kaihua,Kaihua,China,23.387,104.233,EAS-22
+Asia,Kaiyuan,Kaiyuan,China,36.0193,113.86,EAS-22
+Asia,Kashgar,Kashgar,China,39.4681,75.9938,EAS-22
+Asia,Korla,Korla,China,41.7259,86.1746,EAS-22
+Asia,Kuaidamao,Kuaidamao,China,41.7283,125.9397,EAS-22
+Asia,Kuiju,Kuiju,China,36.8667,119.4,EAS-22
+Asia,Kunming,Kunming,China,25.0464,102.7094,EAS-22
+Asia,Laibin,Laibin,China,23.7501,109.2212,EAS-22
+Asia,Laiwu,Laiwu,China,36.1833,117.6667,EAS-22
+Asia,Laixi,Laixi,China,36.8667,120.5333,EAS-22
+Asia,Laiyang,Laiyang,China,36.9758,120.7136,EAS-22
+Asia,Langfang,Langfang,China,39.5383,116.6835,EAS-22
+Asia,Langzhong,Langzhong,China,31.558,106.005,EAS-22
+Asia,Lanxi,Lanxi,China,29.208,119.458,EAS-22
+Asia,Lanzhou,Lanzhou,China,36.0606,103.8268,EAS-22
+Asia,Leiyang,Leiyang,China,26.4223,112.8598,EAS-22
+Asia,Leizhou,Leizhou,China,20.9143,110.0967,EAS-22
+Asia,Leling,Leling,China,37.73,117.232,EAS-22
+Asia,Leping,Leping,China,28.978,117.152,EAS-22
+Asia,Leshan,Leshan,China,29.552,103.766,EAS-22
+Asia,Lhasa,Lhasa,China,29.6534,91.1719,EAS-22
+Asia,Liangshi,Liangshi,China,27.26,111.7442,EAS-22
+Asia,Lianjiang,Lianjiang,China,21.7333,110.2833,EAS-22
+Asia,Lianshan,Lianshan,China,40.7523,120.828,EAS-22
+Asia,Lianyuan,Lianyuan,China,27.692,111.664,EAS-22
+Asia,Liaocheng,Liaocheng,China,36.4559,115.9852,EAS-22
+Asia,Liaoyang,Liaoyang,China,41.279,123.176,EAS-22
+Asia,Liaoyuan,Liaoyuan,China,42.888,125.1447,EAS-22
+Asia,Licheng,Licheng,China,31.4306,119.4788,EAS-22
+Asia,Lichuan,Lichuan,China,30.291,108.9364,EAS-22
+Asia,Lincang,Lincang,China,23.884,100.089,EAS-22
+Asia,Linfen,Linfen,China,36.088,111.519,EAS-22
+Asia,Lingbao Chengguanzhen,Lingbao Chengguanzhen,China,34.5176,110.8942,EAS-22
+Asia,Lingcheng,Lingcheng,China,22.708,110.354,EAS-22
+Asia,Lingyuan,Lingyuan,China,41.25,119.4,EAS-22
+Asia,Linhai,Linhai,China,28.85,121.1167,EAS-22
+Asia,Linyi,Linyi,China,35.1038,118.3564,EAS-22
+Asia,Lishui,Lishui,China,28.468,119.923,EAS-22
+Asia,Liuzhou,Liuzhou,China,24.3278,109.4278,EAS-22
+Asia,Longba,Longba,China,33.3702,104.9603,EAS-22
+Asia,Longyan,Longyan,China,25.076,117.017,EAS-22
+Asia,Loudi,Loudi,China,27.6998,111.9944,EAS-22
+Asia,Luanzhou,Luanzhou,China,39.741,118.704,EAS-22
+Asia,Luocheng,Luocheng,China,22.7689,111.5697,EAS-22
+Asia,Luocheng,Luocheng,China,30.99,104.25,EAS-22
+Asia,Luofeng,Luofeng,China,37.359,120.396,EAS-22
+Asia,Luohe,Luohe,China,33.5804,114.0166,EAS-22
+Asia,Luoyang,Luoyang,China,34.6197,112.4539,EAS-22
+Asia,Luzhou,Luzhou,China,28.871,105.442,EAS-22
+Asia,Lu’an,Lu'an,China,31.736,116.52,EAS-22
+Asia,Macheng,Macheng,China,31.173,115.008,EAS-22
+Asia,Maoming,Maoming,China,21.6627,110.9255,EAS-22
+Asia,Ma’anshan,Ma'anshan,China,31.669,118.507,EAS-22
+Asia,Meihekou,Meihekou,China,42.5407,125.7107,EAS-22
+Asia,Meilan,Meilan,China,19.999,110.403,EAS-22
+Asia,Meishan,Meishan,China,30.0771,103.8484,EAS-22
+Asia,Meishan,Meishan,China,34.167,112.844,EAS-22
+Asia,Meizhou,Meizhou,China,24.289,116.122,EAS-22
+Asia,Mianyang,Mianyang,China,31.468,104.679,EAS-22
+Asia,Miluo Chengguanzhen,Miluo Chengguanzhen,China,28.761,113.16,EAS-22
+Asia,Mudanjiang,Mudanjiang,China,44.5514,129.6329,EAS-22
+Asia,Nada,Nada,China,19.5209,109.5808,EAS-22
+Asia,Nanchang,Nanchang,China,28.683,115.858,EAS-22
+Asia,Nanchong,Nanchong,China,30.8372,106.1106,EAS-22
+Asia,Nangandao,Nangandao,China,35.3036,113.9268,EAS-22
+Asia,Nanjing,Nanjing,China,32.0608,118.7789,EAS-22
+Asia,Nanning,Nanning,China,22.8167,108.3275,EAS-22
+Asia,Nanping,Nanping,China,26.6418,118.1774,EAS-22
+Asia,Nantong,Nantong,China,31.981,120.894,EAS-22
+Asia,Nanyang,Nanyang,China,32.9902,112.5285,EAS-22
+Asia,Neijiang,Neijiang,China,29.5802,105.058,EAS-22
+Asia,Nenjiang,Nenjiang,China,49.11,125.13,EAS-22
+Asia,Ningbo,Ningbo,China,29.8603,121.6245,EAS-22
+Asia,Ningde,Ningde,China,26.6662,119.5477,EAS-22
+Asia,Pingdingshan,Pingdingshan,China,33.7666,113.1926,EAS-22
+Asia,Pingdu,Pingdu,China,36.7769,119.9884,EAS-22
+Asia,Pinghu,Pinghu,China,30.7,121.0167,EAS-22
+Asia,Pingliang,Pingliang,China,35.5424,106.6649,EAS-22
+Asia,Pingxiang,Pingxiang,China,27.659,113.887,EAS-22
+Asia,Pizhou,Pizhou,China,34.398,117.89,EAS-22
+Asia,Pudong,Pudong,China,31.2347,121.5064,EAS-22
+Asia,Puning,Puning,China,23.298,116.166,EAS-22
+Asia,Putian,Putian,China,25.4526,119.0078,EAS-22
+Asia,Puxi,Puxi,China,35.2125,114.735,EAS-22
+Asia,Puyang,Puyang,China,35.7627,115.0292,EAS-22
+Asia,Puyang Chengguanzhen,Puyang Chengguanzhen,China,35.7004,114.98,EAS-22
+Asia,Qamdo,Qamdo,China,31.143,97.17,EAS-22
+Asia,Qianxi,Qianxi,China,27.0087,106.0323,EAS-22
+Asia,Qian’an,Qian'an,China,39.999,118.701,EAS-22
+Asia,Qinbaling,Qinbaling,China,35.7091,107.6436,EAS-22
+Asia,Qincheng,Qincheng,China,34.5815,105.7248,EAS-22
+Asia,Qingdao,Qingdao,China,36.0669,120.3827,EAS-22
+Asia,Qingnian,Qingnian,China,36.8494,115.7061,EAS-22
+Asia,Qingping,Qingping,China,34.539,113.391,EAS-22
+Asia,Qingyang,Qingyang,China,24.7816,118.5517,EAS-22
+Asia,Qingyuan,Qingyuan,China,23.682,113.056,EAS-22
+Asia,Qingzhou,Qingzhou,China,36.6853,118.4796,EAS-22
+Asia,Qinhuangdao,Qinhuangdao,China,39.8882,119.5202,EAS-22
+Asia,Qinzhou,Qinzhou,China,21.981,108.654,EAS-22
+Asia,Qionghu,Qionghu,China,28.945,112.598,EAS-22
+Asia,Qiqihar,Qiqihar,China,47.3549,123.9182,EAS-22
+Asia,Quanzhou,Quanzhou,China,24.8744,118.6757,EAS-22
+Asia,Qufu,Qufu,China,35.5819,116.9862,EAS-22
+Asia,Qujing,Qujing,China,25.491,103.796,EAS-22
+Asia,Quzhou,Quzhou,China,28.9702,118.8593,EAS-22
+Asia,Renqiu,Renqiu,China,38.686,116.084,EAS-22
+Asia,Rizhao,Rizhao,China,35.417,119.527,EAS-22
+Asia,Rongcheng,Rongcheng,China,26.218,104.103,EAS-22
+Asia,Rongcheng,Rongcheng,China,29.8402,112.9048,EAS-22
+Asia,Rongjiawan,Rongjiawan,China,29.15,113.1024,EAS-22
+Asia,Rucheng,Rucheng,China,32.246,120.591,EAS-22
+Asia,Ruiming,Ruiming,China,25.886,116.027,EAS-22
+Asia,Rui’an,Rui'an,China,27.7833,120.625,EAS-22
+Asia,Sanhe,Sanhe,China,40.0167,117.0833,EAS-22
+Asia,Sanmenxia,Sanmenxia,China,34.7732,111.2004,EAS-22
+Asia,Sanming,Sanming,China,26.2634,117.6389,EAS-22
+Asia,Sanya,Sanya,China,18.2533,109.5036,EAS-22
+Asia,Sanzhou,Sanzhou,China,30.82,108.4,EAS-22
+Asia,Shache,Shache,China,38.4261,77.25,EAS-22
+Asia,Shanghai,Shanghai,China,31.2286,121.4747,EAS-22
+Asia,Shangqiu,Shangqiu,China,34.415,115.656,EAS-22
+Asia,Shangrao,Shangrao,China,28.4551,117.9431,EAS-22
+Asia,Shangzhou,Shangzhou,China,33.8734,109.9186,EAS-22
+Asia,Shanhu,Shanhu,China,29.6,120.8167,EAS-22
+Asia,Shantou,Shantou,China,23.354,116.682,EAS-22
+Asia,Shanwei,Shanwei,China,22.7872,115.3756,EAS-22
+Asia,Shaoguan,Shaoguan,China,24.811,113.597,EAS-22
+Asia,Shaoxing,Shaoxing,China,30.0511,120.5833,EAS-22
+Asia,Shaoyang,Shaoyang,China,27.2395,111.4679,EAS-22
+Asia,Shaoyang,Shaoyang,China,32.912,119.8526,EAS-22
+Asia,Shengli,Shengli,China,37.434,118.6746,EAS-22
+Asia,Shenyang,Shenyang,China,41.8025,123.4281,EAS-22
+Asia,Shenzhen,Shenzhen,China,22.5415,114.0596,EAS-22
+Asia,Shenzhou,Shenzhou,China,38.002,115.56,EAS-22
+Asia,Shihezi,Shihezi,China,44.3054,86.0804,EAS-22
+Asia,Shijiazhuang,Shijiazhuang,China,38.0425,114.51,EAS-22
+Asia,Shishi,Shishi,China,24.7167,118.7,EAS-22
+Asia,Shiyan,Shiyan,China,32.629,110.7987,EAS-22
+Asia,Shouguang,Shouguang,China,36.857,118.791,EAS-22
+Asia,Shuangqiao,Shuangqiao,China,35.067,112.602,EAS-22
+Asia,Shuangyashan,Shuangyashan,China,46.6762,131.1416,EAS-22
+Asia,Shuizhai,Shuizhai,China,33.4658,114.8753,EAS-22
+Asia,Shuozhou,Shuozhou,China,39.3317,112.4329,EAS-22
+Asia,Shuyangzha,Shuyangzha,China,34.1299,118.7734,EAS-22
+Asia,Sihui,Sihui,China,23.3265,112.7338,EAS-22
+Asia,Siping,Siping,China,43.1668,124.3506,EAS-22
+Asia,Sizhan,Sizhan,China,38.9846,106.3828,EAS-22
+Asia,Songjiang,Songjiang,China,31.0058,121.2333,EAS-22
+Asia,Songyang,Songyang,China,34.4553,113.0253,EAS-22
+Asia,Songzi,Songzi,China,30.174,111.757,EAS-22
+Asia,Suihua,Suihua,China,46.654,126.969,EAS-22
+Asia,Suining,Suining,China,30.533,105.593,EAS-22
+Asia,Suohe,Suohe,China,34.7833,113.35,EAS-22
+Asia,Suqian,Suqian,China,33.963,118.275,EAS-22
+Asia,Suzhou,Suzhou,China,33.648,116.964,EAS-22
+Asia,Suzhou,Suzhou,China,31.3,120.6194,EAS-22
+Asia,Taihe,Taihe,China,30.871,105.388,EAS-22
+Asia,Taihecun,Taihecun,China,45.771,131.003,EAS-22
+Asia,Taishan,Taishan,China,22.252,112.794,EAS-22
+Asia,Taixing,Taixing,China,32.159,120.029,EAS-22
+Asia,Taiyuan,Taiyuan,China,37.8704,112.5497,EAS-22
+Asia,Taizhou,Taizhou,China,32.4567,119.9229,EAS-22
+Asia,Taizhou,Taizhou,China,28.6557,121.4208,EAS-22
+Asia,Tai’an,Tai'an,China,36.202,117.087,EAS-22
+Asia,Tangshan,Tangshan,China,39.6294,118.1739,EAS-22
+Asia,Tengyue,Tengyue,China,25.0167,98.4833,EAS-22
+Asia,Tianchang,Tianchang,China,32.6811,119.0137,EAS-22
+Asia,Tianjin,Tianjin,China,39.1336,117.2054,EAS-22
+Asia,Tieling,Tieling,China,42.2237,123.726,EAS-22
+Asia,Tongchuan,Tongchuan,China,34.897,108.945,EAS-22
+Asia,Tongliao,Tongliao,China,43.654,122.243,EAS-22
+Asia,Tongling,Tongling,China,30.9456,117.8114,EAS-22
+Asia,Tongren,Tongren,China,27.7316,109.1895,EAS-22
+Asia,Tongshan,Tongshan,China,34.261,117.1859,EAS-22
+Asia,Turpan,Turpan,China,42.9512,89.1895,EAS-22
+Asia,Wafangdian,Wafangdian,China,39.6271,121.9796,EAS-22
+Asia,Wancheng,Wancheng,China,18.8,110.4,EAS-22
+Asia,Weichanglu,Weichanglu,China,37.1792,119.9333,EAS-22
+Asia,Weifang,Weifang,China,36.708,119.162,EAS-22
+Asia,Weihai,Weihai,China,37.5133,122.1205,EAS-22
+Asia,Weinan,Weinan,China,34.5206,109.471,EAS-22
+Asia,Wenchang,Wenchang,China,31.0358,116.9367,EAS-22
+Asia,Wencheng,Wencheng,China,19.617,110.7551,EAS-22
+Asia,Wenlan,Wenlan,China,23.3961,103.3649,EAS-22
+Asia,Wenling,Wenling,China,28.3667,121.3667,EAS-22
+Asia,Wenzhou,Wenzhou,China,27.9938,120.6993,EAS-22
+Asia,Wuchang,Wuchang,China,44.924,127.158,EAS-22
+Asia,Wuchuan,Wuchuan,China,21.441,110.779,EAS-22
+Asia,Wugang,Wugang,China,26.7266,110.6319,EAS-22
+Asia,Wuhai,Wuhai,China,39.655,106.794,EAS-22
+Asia,Wuhan,Wuhan,China,30.5934,114.3046,EAS-22
+Asia,Wuhu,Wuhu,China,31.3526,118.4331,EAS-22
+Asia,Wusong,Wusong,China,30.945,117.811,EAS-22
+Asia,Wutong,Wutong,China,30.6333,120.5333,EAS-22
+Asia,Wuwei,Wuwei,China,37.929,102.638,EAS-22
+Asia,Wuxi,Wuxi,China,31.5667,120.2833,EAS-22
+Asia,Wuxi,Wuxi,China,26.58,111.841,EAS-22
+Asia,Wuxue,Wuxue,China,29.844,115.561,EAS-22
+Asia,Wuzhong,Wuzhong,China,37.9978,106.1986,EAS-22
+Asia,Wuzhou,Wuzhou,China,23.4767,111.279,EAS-22
+Asia,Wu’an,Wu'an,China,36.697,114.204,EAS-22
+Asia,Xiamen,Xiamen,China,24.4796,118.0889,EAS-22
+Asia,Xiangtan,Xiangtan,China,27.8313,112.9454,EAS-22
+Asia,Xiangxiang,Xiangxiang,China,27.7186,112.5502,EAS-22
+Asia,Xiangyang,Xiangyang,China,32.01,112.122,EAS-22
+Asia,Xiantao,Xiantao,China,30.328,113.443,EAS-22
+Asia,Xianyang,Xianyang,China,34.3299,108.7088,EAS-22
+Asia,Xiaoganzhan,Xiaoganzhan,China,30.918,113.957,EAS-22
+Asia,Xiaoxita,Xiaoxita,China,30.692,111.287,EAS-22
+Asia,Xiashi,Xiashi,China,30.5333,120.6833,EAS-22
+Asia,Xibeijie,Xibeijie,China,39.7334,98.4943,EAS-22
+Asia,Xichang,Xichang,China,27.8944,102.2644,EAS-22
+Asia,Xigazê,Xigaze,China,29.25,88.8833,EAS-22
+Asia,Ximeicun,Ximeicun,China,24.9612,118.3849,EAS-22
+Asia,Xindi,Xindi,China,29.827,113.476,EAS-22
+Asia,Xingcheng,Xingcheng,China,24.1347,115.73,EAS-22
+Asia,Xingtai,Xingtai,China,37.0717,114.5048,EAS-22
+Asia,Xingyi,Xingyi,China,25.092,104.8955,EAS-22
+Asia,Xinhualu,Xinhualu,China,34.3964,113.7402,EAS-22
+Asia,Xining,Xining,China,36.6224,101.7804,EAS-22
+Asia,Xinji,Xinji,China,37.943,115.218,EAS-22
+Asia,Xinmin,Xinmin,China,41.997,122.823,EAS-22
+Asia,Xinpu,Xinpu,China,34.5966,119.2214,EAS-22
+Asia,Xinshi,Xinshi,China,31.1333,113.1167,EAS-22
+Asia,Xintai,Xintai,China,35.909,117.768,EAS-22
+Asia,Xinxing,Xinxing,China,39.8667,124.15,EAS-22
+Asia,Xinyang,Xinyang,China,32.149,114.091,EAS-22
+Asia,Xinyi,Xinyi,China,22.3549,110.9468,EAS-22
+Asia,Xinyu,Xinyu,China,27.8186,114.9167,EAS-22
+Asia,Xinzhou,Xinzhou,China,38.416,112.734,EAS-22
+Asia,Xin’an,Xin'an,China,34.286,118.355,EAS-22
+Asia,Xiping,Xiping,China,25.6005,103.8166,EAS-22
+Asia,Xishan,Xishan,China,27.6461,113.497,EAS-22
+Asia,Xi’an,Xi'an,China,34.2611,108.9422,EAS-22
+Asia,Xuanzhou,Xuanzhou,China,30.939,118.759,EAS-22
+Asia,Xushan,Xushan,China,30.1667,121.2333,EAS-22
+Asia,Yancheng,Yancheng,China,33.35,120.1569,EAS-22
+Asia,Yangchun,Yangchun,China,22.1704,111.7916,EAS-22
+Asia,Yangjiang,Yangjiang,China,21.857,111.983,EAS-22
+Asia,Yangquan,Yangquan,China,37.8571,113.5804,EAS-22
+Asia,Yangshe,Yangshe,China,31.8767,120.556,EAS-22
+Asia,Yangzhou,Yangzhou,China,32.3944,119.4128,EAS-22
+Asia,Yanji,Yanji,China,42.9,129.5,EAS-22
+Asia,Yanjiang,Yanjiang,China,30.129,104.627,EAS-22
+Asia,Yantai,Yantai,China,37.4646,121.4478,EAS-22
+Asia,Yan’an,Yan'an,China,36.65,109.494,EAS-22
+Asia,Yatou,Yatou,China,37.1653,122.4867,EAS-22
+Asia,Yibin,Yibin,China,28.752,104.643,EAS-22
+Asia,Yicheng,Yicheng,China,31.36,119.815,EAS-22
+Asia,Yichun,Yichun,China,27.816,114.417,EAS-22
+Asia,Yichun,Yichun,China,47.728,128.841,EAS-22
+Asia,Yinchuan,Yinchuan,China,38.485,106.225,EAS-22
+Asia,Yingcheng,Yingcheng,China,24.21,113.401,EAS-22
+Asia,Yingchuan,Yingchuan,China,34.142,113.489,EAS-22
+Asia,Yingkou,Yingkou,China,40.625,122.219,EAS-22
+Asia,Yingtan,Yingtan,China,28.2721,117.0395,EAS-22
+Asia,Yiwu,Yiwu,China,29.3069,120.0753,EAS-22
+Asia,Yiyang,Yiyang,China,28.5549,112.356,EAS-22
+Asia,Yiyang,Yiyang,China,26.4221,112.3999,EAS-22
+Asia,Yongcheng,Yongcheng,China,33.9299,116.45,EAS-22
+Asia,Yongzhou,Yongzhou,China,26.42,111.613,EAS-22
+Asia,Yucheng,Yucheng,China,30.01,103.0415,EAS-22
+Asia,Yuci,Yuci,China,37.6823,112.7281,EAS-22
+Asia,Yueyang,Yueyang,China,29.3647,113.1309,EAS-22
+Asia,Yuhuan,Yuhuan,China,28.1277,121.2288,EAS-22
+Asia,Yulin,Yulin,China,22.654,110.181,EAS-22
+Asia,Yulinshi,Yulinshi,China,38.2858,109.7341,EAS-22
+Asia,Yuncheng,Yuncheng,China,35.0267,111.007,EAS-22
+Asia,Yunfu,Yunfu,China,22.9152,112.0445,EAS-22
+Asia,Yushan,Yushan,China,31.322,120.985,EAS-22
+Asia,Yushu,Yushu,China,44.826,126.55,EAS-22
+Asia,Yutan,Yutan,China,28.278,112.552,EAS-22
+Asia,Yuxi,Yuxi,China,24.347,102.527,EAS-22
+Asia,Yuyao,Yuyao,China,30.05,121.15,EAS-22
+Asia,Zaoyang,Zaoyang,China,32.129,112.772,EAS-22
+Asia,Zaozhuang,Zaozhuang,China,34.8109,117.3238,EAS-22
+Asia,Zhangjiajie,Zhangjiajie,China,29.117,110.479,EAS-22
+Asia,Zhangjiakou,Zhangjiakou,China,40.769,114.886,EAS-22
+Asia,Zhangye,Zhangye,China,38.9248,100.4499,EAS-22
+Asia,Zhangzhou,Zhangzhou,China,24.513,117.647,EAS-22
+Asia,Zhanjiang,Zhanjiang,China,21.2701,110.3575,EAS-22
+Asia,Zhaodong,Zhaodong,China,46.051,125.962,EAS-22
+Asia,Zhaoqing,Zhaoqing,China,23.05,112.4667,EAS-22
+Asia,Zhaotong,Zhaotong,China,27.338,103.717,EAS-22
+Asia,Zhengzhou,Zhengzhou,China,34.764,113.684,EAS-22
+Asia,Zhenjiang,Zhenjiang,China,32.188,119.424,EAS-22
+Asia,Zhenzhou,Zhenzhou,China,32.2723,119.1848,EAS-22
+Asia,Zhongba,Zhongba,China,31.771,104.755,EAS-22
+Asia,Zhongshan,Zhongshan,China,22.517,113.3925,EAS-22
+Asia,Zhongshu,Zhongshu,China,27.7919,106.4013,EAS-22
+Asia,Zhongwei,Zhongwei,China,37.5002,105.1968,EAS-22
+Asia,Zhongxiang,Zhongxiang,China,31.168,112.588,EAS-22
+Asia,Zhoukou,Zhoukou,China,33.6367,114.7014,EAS-22
+Asia,Zhoushan,Zhoushan,China,29.9856,122.2074,EAS-22
+Asia,Zhuanghe,Zhuanghe,China,39.681,122.967,EAS-22
+Asia,Zhufeng,Zhufeng,China,36.0,119.4167,EAS-22
+Asia,Zhuhai,Zhuhai,China,22.2742,113.5719,EAS-22
+Asia,Zhuji,Zhuji,China,29.7167,120.2333,EAS-22
+Asia,Zhumadian,Zhumadian,China,33.014,114.022,EAS-22
+Asia,Zhuozhou,Zhuozhou,China,39.485,115.974,EAS-22
+Asia,Zhuzhou,Zhuzhou,China,27.829,113.133,EAS-22
+Asia,Zibo,Zibo,China,36.8138,118.055,EAS-22
+Asia,Zigong,Zigong,China,29.339,104.779,EAS-22
+Asia,Zijinglu,Zijinglu,China,34.7667,112.9667,EAS-22
+Asia,Zouping,Zouping,China,36.863,117.743,EAS-22
+Asia,Zunhua,Zunhua,China,40.189,117.966,EAS-22
+Asia,Zunyi,Zunyi,China,27.722,107.031,EAS-22
+Asia,Ürümqi,Urumqi,China,43.8225,87.6125,EAS-22
+Asia,Tbilisi,Tbilisi,Georgia,41.7225,44.7925,WAS-22
+Asia,Hong Kong,Hong Kong,Hong Kong,22.3,114.2,EAS-22
+Asia,Kowloon,Kowloon,Hong Kong,22.3167,114.1833,EAS-22
+Asia,Sha Tin,Sha Tin,Hong Kong,22.3802,114.1898,EAS-22
+Asia,Abhepur,Abhepur,India,39.41,116.38,SEA-22
+Asia,Agartala,Agartala,India,23.8314,91.2869,SEA-22
+Asia,Ahmedabad,Ahmedabad,India,23.0225,72.5714,SEA-22
+Asia,Ajmer,Ajmer,India,26.4499,74.6399,SEA-22
+Asia,Alīgarh,Aligarh,India,27.88,78.08,SEA-22
+Asia,Amritsar,Amritsar,India,31.64,74.86,SEA-22
+Asia,Amrāvati,Amravati,India,20.9258,77.7647,SEA-22
+Asia,Attadappa,Attadappa,India,11.8689,75.3555,SEA-22
+Asia,Aurangābād,Aurangabad,India,19.88,75.32,SEA-22
+Asia,Bangalore,Bangalore,India,12.9789,77.5917,SEA-22
+Asia,Bareilly,Bareilly,India,28.3667,79.4306,SEA-22
+Asia,Barmhān Kalān,Barmhan Kalan,India,19.1972,72.9722,SEA-22
+Asia,Belāhi,Belahi,India,26.4,86.25,SEA-22
+Asia,Bhayandar,Bhayandar,India,19.29,72.85,SEA-22
+Asia,Bhilai,Bhilai,India,21.21,81.38,SEA-22
+Asia,Bhiwandi,Bhiwandi,India,19.2967,73.0631,SEA-22
+Asia,Bhopāl,Bhopal,India,23.2599,77.4126,SEA-22
+Asia,Bhubaneshwar,Bhubaneshwar,India,20.27,85.84,SEA-22
+Asia,Bhāngar,Bhangar,India,22.58,88.42,SEA-22
+Asia,Bhāvnagar,Bhavnagar,India,21.76,72.15,SEA-22
+Asia,Bhīlwāra,Bhilwara,India,25.35,74.63,SEA-22
+Asia,Bihtā,Bihta,India,25.5619,84.87,SEA-22
+Asia,Bilāspur,Bilaspur,India,22.09,82.15,SEA-22
+Asia,Bokaro Steel City,Bokaro Steel City,India,23.67,86.15,SEA-22
+Asia,Bīkaner,Bikaner,India,28.0167,73.3119,SEA-22
+Asia,Chandīgarh,Chandigarh,India,30.75,76.78,SEA-22
+Asia,Chennai,Chennai,India,13.0825,80.275,SEA-22
+Asia,Chānda,Chanda,India,19.95,79.297,SEA-22
+Asia,Coimbatore,Coimbatore,India,11.0008,76.9633,SEA-22
+Asia,Cuttack,Cuttack,India,20.5236,85.7881,SEA-22
+Asia,Dehra Dūn,Dehra Dun,India,30.345,78.029,SEA-22
+Asia,Delhi,Delhi,India,28.61,77.23,SEA-22
+Asia,Dhanbād,Dhanbad,India,23.7998,86.4305,SEA-22
+Asia,Dhūlia,Dhulia,India,20.8997,74.7697,SEA-22
+Asia,Dispur,Dispur,India,26.1397,91.7925,SEA-22
+Asia,Durgāpur,Durgapur,India,23.55,87.32,SEA-22
+Asia,Farīdābād,Faridabad,India,28.4211,77.3078,SEA-22
+Asia,Ghāziābād,Ghaziabad,India,28.67,77.42,SEA-22
+Asia,Gorakhpur,Gorakhpur,India,26.7637,83.4039,SEA-22
+Asia,Gulbarga,Gulbarga,India,17.329,76.825,SEA-22
+Asia,Guntūr,Guntur,India,16.3008,80.4428,SEA-22
+Asia,Gurgaon,Gurgaon,India,28.456,77.029,SEA-22
+Asia,Guwāhāti,Guwahati,India,26.1722,91.7458,SEA-22
+Asia,Gwalior,Gwalior,India,26.2125,78.1775,SEA-22
+Asia,Haldwāni,Haldwani,India,29.22,79.52,SEA-22
+Asia,Hasanpur,Hasanpur,India,28.72,78.28,SEA-22
+Asia,Hubli,Hubli,India,15.3502,75.1376,SEA-22
+Asia,Hyderābād,Hyderabad,India,17.3617,78.4747,SEA-22
+Asia,Hāora,Haora,India,22.58,88.3294,SEA-22
+Asia,Indore,Indore,India,22.7167,75.8472,SEA-22
+Asia,Jabalpur,Jabalpur,India,23.1667,79.9333,SEA-22
+Asia,Jaipur,Jaipur,India,26.9,75.8,SEA-22
+Asia,Jalandhar,Jalandhar,India,31.326,75.5762,SEA-22
+Asia,Jammu,Jammu,India,32.73,74.87,SEA-22
+Asia,Jamshedpur,Jamshedpur,India,22.7925,86.1842,SEA-22
+Asia,Jhānsi,Jhansi,India,25.4486,78.5696,SEA-22
+Asia,Jodhpur,Jodhpur,India,26.28,73.02,SEA-22
+Asia,Kalleli,Kalleli,India,9.2807,76.8697,SEA-22
+Asia,Kalyān,Kalyan,India,19.24,73.13,SEA-22
+Asia,Kannankulam,Kannankulam,India,10.52,76.21,SEA-22
+Asia,Karaikandi,Karaikandi,India,24.8309,92.6143,SEA-22
+Asia,Karīmnagar,Karimnagar,India,18.4386,79.1288,SEA-22
+Asia,Kochi,Kochi,India,9.9312,76.2673,SEA-22
+Asia,Kolhāpur,Kolhapur,India,16.6917,74.2333,SEA-22
+Asia,Kolkāta,Kolkata,India,22.5675,88.37,SEA-22
+Asia,Kota,Kota,India,25.18,75.83,SEA-22
+Asia,Kottayam,Kottayam,India,9.5916,76.5222,SEA-22
+Asia,Kottārasshēri,Kottarassheri,India,10.775,76.651,SEA-22
+Asia,Loni,Loni,India,28.75,77.28,SEA-22
+Asia,Lucknow,Lucknow,India,26.85,80.95,SEA-22
+Asia,Ludhiāna,Ludhiana,India,30.91,75.85,SEA-22
+Asia,Madurai,Madurai,India,9.9252,78.1198,SEA-22
+Asia,Mangalore,Mangalore,India,12.8717,74.8425,SEA-22
+Asia,Meerut,Meerut,India,28.98,77.71,SEA-22
+Asia,Mirzāpur,Mirzapur,India,25.146,82.569,SEA-22
+Asia,Morādābād,Moradabad,India,28.8319,78.7764,SEA-22
+Asia,Mumbai,Mumbai,India,19.0761,72.8775,SEA-22
+Asia,Mysore,Mysore,India,12.3086,76.6531,SEA-22
+Asia,Najafgarh,Najafgarh,India,28.6125,76.9847,SEA-22
+Asia,Narela,Narela,India,28.85,77.1,SEA-22
+Asia,Nava Raipur,Nava Raipur,India,21.161,81.787,SEA-22
+Asia,Nellore,Nellore,India,14.4431,79.9861,SEA-22
+Asia,New Delhi,New Delhi,India,28.6139,77.2089,SEA-22
+Asia,Noida,Noida,India,28.57,77.32,SEA-22
+Asia,Nādampālaiyam,Nadampalaiyam,India,11.0125,76.9714,SEA-22
+Asia,Nāgpur,Nagpur,India,21.1497,79.0806,SEA-22
+Asia,Nānded,Nanded,India,19.15,77.3,SEA-22
+Asia,Nāsik,Nasik,India,19.9975,73.7898,SEA-22
+Asia,Patiāla,Patiala,India,30.34,76.38,SEA-22
+Asia,Patna,Patna,India,25.594,85.1376,SEA-22
+Asia,Peyanvilai,Peyanvilai,India,8.9,77.9833,SEA-22
+Asia,Pimpri-Chinchwad,Pimpri-Chinchwad,India,18.6186,73.8037,SEA-22
+Asia,Prayagraj,Prayagraj,India,25.4358,81.8464,SEA-22
+Asia,Pune,Pune,India,18.5203,73.8567,SEA-22
+Asia,Pānīpat,Panipat,India,29.3875,76.97,SEA-22
+Asia,Raipur,Raipur,India,21.2444,81.6306,SEA-22
+Asia,Raurkela,Raurkela,India,22.2492,84.8828,SEA-22
+Asia,Rājkot,Rajkot,India,22.3,70.7833,SEA-22
+Asia,Rānchi,Ranchi,India,23.36,85.33,SEA-22
+Asia,Sahāranpur,Saharanpur,India,29.9639,77.5458,SEA-22
+Asia,Salem,Salem,India,11.65,78.15,SEA-22
+Asia,Salīmpur,Salimpur,India,26.3,83.9167,SEA-22
+Asia,Shiliguri,Shiliguri,India,26.71,88.43,SEA-22
+Asia,Shīshgarh,Shishgarh,India,28.72,79.32,SEA-22
+Asia,Solāpur,Solapur,India,17.68,75.92,SEA-22
+Asia,Srīnagar,Srinagar,India,34.09,74.79,SEA-22
+Asia,Supaul,Supaul,India,26.126,86.605,SEA-22
+Asia,Sūrat,Surat,India,21.205,72.84,SEA-22
+Asia,Thiruvananthapuram,Thiruvananthapuram,India,8.5241,76.9366,SEA-22
+Asia,Thāne,Thane,India,19.1972,72.9722,SEA-22
+Asia,Tiruppūr,Tiruppur,India,11.1085,77.3411,SEA-22
+Asia,Trichinopoly,Trichinopoly,India,10.7903,78.7047,SEA-22
+Asia,Tumkūr,Tumkur,India,13.34,77.1,SEA-22
+Asia,Tuticorin,Tuticorin,India,8.8056,78.145,SEA-22
+Asia,Ujjain,Ujjain,India,23.17,75.79,SEA-22
+Asia,Ulhāsnagar,Ulhasnagar,India,19.22,73.15,SEA-22
+Asia,Vadodara,Vadodara,India,22.3,73.2,SEA-22
+Asia,Vasai-Virar,Vasai-Virar,India,19.47,72.8,SEA-22
+Asia,Vijayavāda,Vijayawada,India,16.5193,80.6305,SEA-22
+Asia,Vishākhapatnam,Vishakhapatnam,India,17.7042,83.2978,SEA-22
+Asia,Vārānasi,Varanasi,India,25.3189,83.0128,SEA-22
+Asia,Warangal,Warangal,India,17.9689,79.5941,SEA-22
+Asia,Āgra,Agra,India,27.18,78.02,SEA-22
+Asia,Āsansol,Asansol,India,23.68,86.99,SEA-22
+Asia,Bagam,Bagam,Indonesia,1.13,104.0531,SEA-22
+Asia,Balikpapan,Balikpapan,Indonesia,-1.2768,116.8277,SEA-22
+Asia,Bandar Lampung,Bandar Lampung,Indonesia,-5.45,105.2667,SEA-22
+Asia,Banjarmasin,Banjarmasin,Indonesia,-3.32,114.5925,SEA-22
+Asia,Batam Centre,Batam Centre,Indonesia,1.1272,104.0556,SEA-22
+Asia,Bekasi,Bekasi,Indonesia,-6.2333,107.0,SEA-22
+Asia,Bogor,Bogor,Indonesia,-6.5966,106.7972,SEA-22
+Asia,Cilacap,Cilacap,Indonesia,-7.7167,109.017,SEA-22
+Asia,Cimahi,Cimahi,Indonesia,-6.8712,107.5548,SEA-22
+Asia,Denpasar,Denpasar,Indonesia,-8.6717,115.2339,SEA-22
+Asia,Depok,Depok,Indonesia,-6.394,106.8225,SEA-22
+Asia,Jakarta,Jakarta,Indonesia,-6.175,106.8275,SEA-22
+Asia,Jambi,Jambi,Indonesia,-1.59,103.61,SEA-22
+Asia,Makassar,Makassar,Indonesia,-5.1331,119.4136,SEA-22
+Asia,Malang,Malang,Indonesia,-7.98,112.62,SEA-22
+Asia,Medan,Medan,Indonesia,3.5894,98.6739,SEA-22
+Asia,Palembang,Palembang,Indonesia,-2.9861,104.7556,SEA-22
+Asia,Pekanbaru,Pekanbaru,Indonesia,0.5092,101.4453,SEA-22
+Asia,Pontianak,Pontianak,Indonesia,-0.0206,109.3414,SEA-22
+Asia,Samarinda,Samarinda,Indonesia,-0.5,117.1378,SEA-22
+Asia,Sangereng,Sangereng,Indonesia,-6.2889,106.7181,SEA-22
+Asia,Semarang,Semarang,Indonesia,-6.99,110.4225,SEA-22
+Asia,Serang,Serang,Indonesia,-6.12,106.1503,SEA-22
+Asia,Sumedang,Sumedang,Indonesia,-6.84,107.9208,SEA-22
+Asia,Surabaya,Surabaya,Indonesia,-7.2458,112.7378,SEA-22
+Asia,Surakarta,Surakarta,Indonesia,-7.5667,110.8167,SEA-22
+Asia,Tangerang,Tangerang,Indonesia,-6.1703,106.6403,SEA-22
+Asia,Tasikmalaya,Tasikmalaya,Indonesia,-7.3161,108.1975,SEA-22
+Asia,Ahvāz,Ahvaz,Iran,31.3047,48.6783,WAS-22
+Asia,Ardabīl,Ardabil,Iran,38.2517,48.2975,WAS-22
+Asia,Arāk,Arak,Iran,34.0914,49.6933,WAS-22
+Asia,Bahār,Bahar,Iran,34.9078,48.4394,WAS-22
+Asia,Bandar ‘Abbās,Bandar `Abbas,Iran,27.1961,56.2878,WAS-22
+Asia,Borvāyeh-ye Al Bū ‘Azīz,Borvayeh-ye Al Bu `Aziz,Iran,31.6283,48.6147,WAS-22
+Asia,Eşfahān,Esfahan,Iran,32.6653,51.6703,WAS-22
+Asia,Hamadān,Hamadan,Iran,34.8064,48.5161,WAS-22
+Asia,Karaj,Karaj,Iran,35.8292,50.9675,WAS-22
+Asia,Kermān,Kerman,Iran,30.2625,57.0575,WAS-22
+Asia,Kermānshāh,Kermanshah,Iran,34.3369,47.0911,WAS-22
+Asia,Mashhad,Mashhad,Iran,36.3264,59.5433,WAS-22
+Asia,Orūmīyeh,Orumiyeh,Iran,37.5439,45.0647,WAS-22
+Asia,Qom,Qom,Iran,34.64,50.8764,WAS-22
+Asia,Rasht,Rasht,Iran,37.2744,49.5889,WAS-22
+Asia,Shīrāz,Shiraz,Iran,29.61,52.5425,WAS-22
+Asia,Tabrīz,Tabriz,Iran,38.0817,46.2992,WAS-22
+Asia,Tehran,Tehran,Iran,35.6889,51.3897,WAS-22
+Asia,Yazd,Yazd,Iran,31.8822,54.3397,WAS-22
+Asia,Zāhedān,Zahedan,Iran,29.5025,60.8558,WAS-22
+Asia,Al Başrah,Al Basrah,Iraq,30.515,47.81,WAS-22
+Asia,Al Ḩillah,Al Hillah,Iraq,32.4833,44.4333,WAS-22
+Asia,Al ‘Amārah,Al `Amarah,Iraq,31.8333,47.15,WAS-22
+Asia,An Najaf,An Najaf,Iraq,32.029,44.3396,WAS-22
+Asia,An Nāşirīyah,An Nasiriyah,Iraq,31.0439,46.2575,WAS-22
+Asia,Ar Ramādī,Ar Ramadi,Iraq,33.4258,43.2992,WAS-22
+Asia,As Sulaymānīyah,As Sulaymaniyah,Iraq,35.55,45.4333,WAS-22
+Asia,Baghdad,Baghdad,Iraq,33.3153,44.3661,WAS-22
+Asia,Erbil,Erbil,Iraq,36.1911,44.0094,WAS-22
+Asia,Karbalā’,Karbala',Iraq,32.6167,44.0333,WAS-22
+Asia,Kirkuk,Kirkuk,Iraq,35.4667,44.4,WAS-22
+Asia,Mosul,Mosul,Iraq,36.3667,43.1167,WAS-22
+Asia,Haifa,Haifa,Israel,32.8192,34.9992,WAS-22
+Asia,Jerusalem,Jerusalem,Israel,31.7789,35.2256,WAS-22
+Asia,Adachi,Adachi,Japan,35.7833,139.8,EAS-22
+Asia,Chiba,Chiba,Japan,35.6073,140.1064,EAS-22
+Asia,Edogawa,Edogawa,Japan,35.7,139.8833,EAS-22
+Asia,Fukuoka,Fukuoka,Japan,33.59,130.4017,EAS-22
+Asia,Hachiōji,Hachioji,Japan,35.6664,139.316,EAS-22
+Asia,Hamamatsu,Hamamatsu,Japan,34.7108,137.7275,EAS-22
+Asia,Himeji,Himeji,Japan,34.8167,134.6833,EAS-22
+Asia,Hiroshima,Hiroshima,Japan,34.3914,132.4519,EAS-22
+Asia,Honchō,Honcho,Japan,35.6946,139.9826,EAS-22
+Asia,Itabashi,Itabashi,Japan,35.7667,139.6833,EAS-22
+Asia,Kagoshima,Kagoshima,Japan,31.5969,130.5572,EAS-22
+Asia,Kawaguchi,Kawaguchi,Japan,35.8077,139.7241,EAS-22
+Asia,Kawasaki,Kawasaki,Japan,35.5167,139.7,EAS-22
+Asia,Kitakyūshū,Kitakyushu,Japan,33.8833,130.8833,EAS-22
+Asia,Kumamoto,Kumamoto,Japan,32.8031,130.7078,EAS-22
+Asia,Kyōto,Kyoto,Japan,35.0117,135.7683,EAS-22
+Asia,Kōbe,Kobe,Japan,34.69,135.1956,EAS-22
+Asia,Kōtō-ku,Koto-ku,Japan,35.6667,139.8167,EAS-22
+Asia,Matsuyama,Matsuyama,Japan,33.8333,132.7667,EAS-22
+Asia,Nagoya,Nagoya,Japan,35.1833,136.9,EAS-22
+Asia,Nerima,Nerima,Japan,35.7356,139.6517,EAS-22
+Asia,Niigata,Niigata,Japan,37.9161,139.0364,EAS-22
+Asia,Okayama,Okayama,Japan,34.65,133.9167,EAS-22
+Asia,Sagamihara,Sagamihara,Japan,35.5667,139.3667,EAS-22
+Asia,Saitama,Saitama,Japan,35.8614,139.6456,EAS-22
+Asia,Sakai,Sakai,Japan,34.5733,135.4831,EAS-22
+Asia,Sapporo,Sapporo,Japan,43.0619,141.3544,EAS-22
+Asia,Sendai,Sendai,Japan,38.2682,140.8694,EAS-22
+Asia,Setagaya,Setagaya,Japan,35.6466,139.6532,EAS-22
+Asia,Shizuoka,Shizuoka,Japan,34.9756,138.3828,EAS-22
+Asia,Suginami-ku,Suginami-ku,Japan,35.6994,139.6364,EAS-22
+Asia,Tokyo,Tokyo,Japan,35.687,139.7495,EAS-22
+Asia,Utsunomiya,Utsunomiya,Japan,36.555,139.8825,EAS-22
+Asia,Yokohama,Yokohama,Japan,35.4442,139.6381,EAS-22
+Asia,Ōsaka,Osaka,Japan,34.6939,135.5022,EAS-22
+Asia,Ōta-ku,Ota-ku,Japan,35.5614,139.7161,EAS-22
+Asia,Al Mafraq,Al Mafraq,Jordan,32.3399,36.2052,WAS-22
+Asia,Amman,Amman,Jordan,31.9497,35.9328,WAS-22
+Asia,Irbid,Irbid,Jordan,32.55,35.85,WAS-22
+Asia,Almaty,Almaty,Kazakhstan,43.24,76.915,WAS-22
+Asia,Astana,Astana,Kazakhstan,51.1472,71.4222,WAS-22
+Asia,Qaraghandy,Qaraghandy,Kazakhstan,49.8028,73.1056,WAS-22
+Asia,Shymkent,Shymkent,Kazakhstan,42.3167,69.5958,WAS-22
+Asia,Ch’ŏngjin,Ch'ongjin,"Korea, North",41.7833,129.7667,EAS-22
+Asia,Hamhŭng,Hamhung,"Korea, North",39.9167,127.5333,EAS-22
+Asia,Nampo,Nampo,"Korea, North",38.7356,125.4089,EAS-22
+Asia,Pyongyang,Pyongyang,"Korea, North",39.0167,125.7475,EAS-22
+Asia,Ansan,Ansan,"Korea, South",37.3167,126.8333,EAS-22
+Asia,Bucheon,Bucheon,"Korea, South",37.5,126.7833,EAS-22
+Asia,Busan,Busan,"Korea, South",35.18,129.075,EAS-22
+Asia,Changwon,Changwon,"Korea, South",35.2708,128.6631,EAS-22
+Asia,Cheongju,Cheongju,"Korea, South",36.6333,127.4833,EAS-22
+Asia,Ch’ŏnan,Ch'onan,"Korea, South",36.81,127.1475,EAS-22
+Asia,Daegu,Daegu,"Korea, South",35.8717,128.6017,EAS-22
+Asia,Daejeon,Daejeon,"Korea, South",36.35,127.385,EAS-22
+Asia,Goyang,Goyang,"Korea, South",37.65,126.8,EAS-22
+Asia,Gwangju,Gwangju,"Korea, South",35.1653,126.8486,EAS-22
+Asia,Hwasu-dong,Hwasu-dong,"Korea, South",37.1997,126.8314,EAS-22
+Asia,Incheon,Incheon,"Korea, South",37.4833,126.6333,EAS-22
+Asia,Kimhae,Kimhae,"Korea, South",35.2342,128.8811,EAS-22
+Asia,Pohang,Pohang,"Korea, South",36.0322,129.365,EAS-22
+Asia,Seoul,Seoul,"Korea, South",37.5667,126.9833,EAS-22
+Asia,Suwon,Suwon,"Korea, South",37.2667,127.0167,EAS-22
+Asia,Sŏngnam,Songnam,"Korea, South",37.4333,127.15,EAS-22
+Asia,Tongjin,Tongjin,"Korea, South",37.2333,127.2,EAS-22
+Asia,Ulsan,Ulsan,"Korea, South",35.55,129.3167,EAS-22
+Asia,Yanggok,Yanggok,"Korea, South",37.6333,127.2167,EAS-22
+Asia,Kuwait City,Kuwait City,Kuwait,29.3697,47.9783,WAS-22
+Asia,Bishkek,Bishkek,Kyrgyzstan,42.8667,74.5667,WAS-22
+Asia,Vientiane,Vientiane,Laos,17.98,102.63,SEA-22
+Asia,Beirut,Beirut,Lebanon,33.8981,35.5058,WAS-22
+Asia,Macau,Macau,Macau,22.2006,113.5461,EAS-22
+Asia,George Town,George Town,Malaysia,5.4136,100.3294,SEA-22
+Asia,Ipoh,Ipoh,Malaysia,4.6,101.065,SEA-22
+Asia,Klang,Klang,Malaysia,3.0223,101.5481,SEA-22
+Asia,Kuala Lumpur,Kuala Lumpur,Malaysia,3.1686,101.698,SEA-22
+Asia,Kuantan,Kuantan,Malaysia,3.83,103.32,SEA-22
+Asia,Petaling Jaya,Petaling Jaya,Malaysia,3.0833,101.65,SEA-22
+Asia,Putrajaya,Putrajaya,Malaysia,2.914,101.7019,SEA-22
+Asia,Seberang Jaya,Seberang Jaya,Malaysia,5.3909,100.4104,SEA-22
+Asia,Shah Alam,Shah Alam,Malaysia,3.0667,101.55,SEA-22
+Asia,Sungai Petani,Sungai Petani,Malaysia,5.6497,100.4793,SEA-22
+Asia,Male,Male,Maldives,4.1753,73.5089,SEA-22
+Asia,Ulaanbaatar,Ulaanbaatar,Mongolia,47.9214,106.9055,EAS-22
+Asia,Kathmandu,Kathmandu,Nepal,27.71,85.32,SEA-22
+Asia,Masqaţ,Masqat,Oman,23.614,58.5911,WAS-22
+Asia,Muscat,Muscat,Oman,23.6139,58.5922,WAS-22
+Asia,Bahawalpur,Bahawalpur,Pakistan,29.3956,71.6836,WAS-22
+Asia,Faisalabad,Faisalabad,Pakistan,31.4167,73.0911,WAS-22
+Asia,Gujranwala,Gujranwala,Pakistan,32.1567,74.19,WAS-22
+Asia,Hyderabad City,Hyderabad City,Pakistan,25.3792,68.3683,WAS-22
+Asia,Islamabad,Islamabad,Pakistan,33.6931,73.0639,WAS-22
+Asia,Karachi,Karachi,Pakistan,24.86,67.01,WAS-22
+Asia,Kotla Qasim Khan,Kotla Qasim Khan,Pakistan,32.5833,73.75,WAS-22
+Asia,Kumila,Kumila,Pakistan,35.25,73.5,WAS-22
+Asia,Lahore,Lahore,Pakistan,31.5497,74.3436,WAS-22
+Asia,Multan,Multan,Pakistan,30.1978,71.4697,WAS-22
+Asia,Parachinar,Parachinar,Pakistan,33.9,70.1,WAS-22
+Asia,Peshawar,Peshawar,Pakistan,34.0144,71.5675,WAS-22
+Asia,Quetta,Quetta,Pakistan,30.1833,67.0,WAS-22
+Asia,Rawalpindi,Rawalpindi,Pakistan,33.6,73.0333,WAS-22
+Asia,Sargodha,Sargodha,Pakistan,32.0836,72.6711,WAS-22
+Asia,Sialkot City,Sialkot City,Pakistan,32.4925,74.5311,WAS-22
+Asia,Antipolo,Antipolo,Philippines,14.5842,121.1763,SEA-22
+Asia,Bacolod,Bacolod,Philippines,10.6765,122.9509,SEA-22
+Asia,Bacoor,Bacoor,Philippines,14.4624,120.9645,SEA-22
+Asia,Cagayan de Oro,Cagayan de Oro,Philippines,8.48,124.65,SEA-22
+Asia,Caloocan City,Caloocan City,Philippines,14.65,120.97,SEA-22
+Asia,Canagatan,Canagatan,Philippines,18.0,121.8,SEA-22
+Asia,Cebu City,Cebu City,Philippines,10.32,123.75,SEA-22
+Asia,City of Calamba,City of Calamba,Philippines,14.22,121.17,SEA-22
+Asia,City of Parañaque,City of Paranaque,Philippines,14.5008,120.9915,SEA-22
+Asia,Dasmariñas,Dasmarinas,Philippines,14.33,120.94,SEA-22
+Asia,Davao,Davao,Philippines,7.07,125.6,SEA-22
+Asia,General Santos,General Santos,Philippines,6.12,125.17,SEA-22
+Asia,Iloilo,Iloilo,Philippines,10.72,122.57,SEA-22
+Asia,Las Piñas City,Las Pinas City,Philippines,14.45,120.98,SEA-22
+Asia,Makati City,Makati City,Philippines,14.5567,121.0214,SEA-22
+Asia,Manila,Manila,Philippines,14.5958,120.9772,SEA-22
+Asia,Masbate,Masbate,Philippines,12.27,123.58,SEA-22
+Asia,Muntinlupa City,Muntinlupa City,Philippines,14.38,121.05,SEA-22
+Asia,Pasig City,Pasig City,Philippines,14.5605,121.0765,SEA-22
+Asia,Quezon City,Quezon City,Philippines,14.65,121.0475,SEA-22
+Asia,San Jose del Monte,San Jose del Monte,Philippines,14.8139,121.0453,SEA-22
+Asia,Taguig City,Taguig City,Philippines,14.52,121.05,SEA-22
+Asia,Tondo,Tondo,Philippines,14.617,120.967,SEA-22
+Asia,Valenzuela,Valenzuela,Philippines,14.7,120.98,SEA-22
+Asia,Zamboanga City,Zamboanga City,Philippines,6.9042,122.0761,SEA-22
+Asia,Ar Rayyān,Ar Rayyan,Qatar,25.25,51.4,WAS-22
+Asia,Doha,Doha,Qatar,25.2867,51.5333,WAS-22
+Asia,Ad Dammām,Ad Dammam,Saudi Arabia,26.4333,50.1,WAS-22
+Asia,Al Hufūf,Al Hufuf,Saudi Arabia,25.3608,49.5997,WAS-22
+Asia,Al Qaţīf,Al Qatif,Saudi Arabia,26.5196,50.0115,WAS-22
+Asia,Aţ Ţā’if,At Ta'if,Saudi Arabia,21.2667,40.4167,WAS-22
+Asia,Jeddah,Jeddah,Saudi Arabia,21.5428,39.1728,WAS-22
+Asia,Mecca,Mecca,Saudi Arabia,21.4225,39.8261,WAS-22
+Asia,Medina,Medina,Saudi Arabia,24.47,39.61,WAS-22
+Asia,Riyadh,Riyadh,Saudi Arabia,24.65,46.71,WAS-22
+Asia,Tabūk,Tabuk,Saudi Arabia,28.3972,36.5789,WAS-22
+Asia,Singapore,Singapore,Singapore,1.3,103.8,SEA-22
+Asia,Colombo,Colombo,Sri Lanka,6.9167,79.8333,SEA-22
+Asia,Sri Jayewardenepura Kotte,Sri Jayewardenepura Kotte,Sri Lanka,6.9,79.9164,SEA-22
+Asia,Aleppo,Aleppo,Syria,36.2319,37.1681,WAS-22
+Asia,Damascus,Damascus,Syria,33.502,36.2981,WAS-22
+Asia,Homs,Homs,Syria,34.7319,36.7181,WAS-22
+Asia,Latakia,Latakia,Syria,35.54,35.78,WAS-22
+Asia,Ḩamāh,Hamah,Syria,35.1503,36.73,WAS-22
+Asia,Kaohsiung,Kaohsiung,Taiwan,22.615,120.2975,EAS-22
+Asia,Taichung,Taichung,Taiwan,24.1439,120.6794,EAS-22
+Asia,Tainan,Tainan,Taiwan,22.9833,120.1833,EAS-22
+Asia,Taipei,Taipei,Taiwan,25.0375,121.5625,EAS-22
+Asia,Dushanbe,Dushanbe,Tajikistan,38.5367,68.78,WAS-22
+Asia,Khŭjand,Khujand,Tajikistan,40.2833,69.6333,WAS-22
+Asia,Bangkok,Bangkok,Thailand,13.7525,100.4942,SEA-22
+Asia,Chiang Mai,Chiang Mai,Thailand,18.7953,98.9986,SEA-22
+Asia,Dili,Dili,Timor-Leste,-8.5594,125.5795,SEA-22
+Asia,Ashgabat,Ashgabat,Turkmenistan,37.9375,58.38,WAS-22
+Asia,Abu Dhabi,Abu Dhabi,United Arab Emirates,24.4667,54.3667,WAS-22
+Asia,Al ‘Ayn,Al `Ayn,United Arab Emirates,24.2075,55.7447,WAS-22
+Asia,Dubai,Dubai,United Arab Emirates,25.2631,55.2972,WAS-22
+Asia,Sharjah,Sharjah,United Arab Emirates,25.3575,55.3908,WAS-22
+Asia,Andijon,Andijon,Uzbekistan,40.7833,72.3333,WAS-22
+Asia,Namangan,Namangan,Uzbekistan,41.0011,71.6683,WAS-22
+Asia,Samarkand,Samarkand,Uzbekistan,39.6547,66.9758,WAS-22
+Asia,Tashkent,Tashkent,Uzbekistan,41.3111,69.2797,WAS-22
+Asia,Biên Hòa,Bien Hoa,Vietnam,10.95,106.8167,SEA-22
+Asia,Cần Thơ,Can Tho,Vietnam,10.0333,105.7833,SEA-22
+Asia,Haiphong,Haiphong,Vietnam,20.8651,106.6838,SEA-22
+Asia,Hanoi,Hanoi,Vietnam,21.0,105.85,SEA-22
+Asia,Ho Chi Minh City,Ho Chi Minh City,Vietnam,10.7756,106.7019,SEA-22
+Asia,Huế,Hue,Vietnam,16.4619,107.5955,SEA-22
+Asia,Nha Trang,Nha Trang,Vietnam,12.245,109.1917,SEA-22
+Asia,Ninh Bình,Ninh Binh,Vietnam,20.25,105.8333,SEA-22
+Asia,Thanh Hóa,Thanh Hoa,Vietnam,19.8075,105.7764,SEA-22
+Asia,Thủ Đức,Thu Duc,Vietnam,10.8266,106.7609,SEA-22
+Asia,Tân An,Tan An,Vietnam,10.905,106.6994,SEA-22
+Asia,Vinh,Vinh,Vietnam,18.6667,105.6667,SEA-22
+Asia,Aden,Aden,Yemen,12.8,45.0333,WAS-22
+Asia,Al Mukallā,Al Mukalla,Yemen,14.5333,49.1333,WAS-22
+Asia,Sanaa,Sanaa,Yemen,15.3483,44.2064,WAS-22
+Europe,Tirana,Tirana,Albania,41.3272,19.8186,EUR-11
+Europe,Andorra la Vella,Andorra la Vella,Andorra,42.5,1.5,EUR-11
+Europe,Vienna,Vienna,Austria,48.2083,16.3725,EUR-11
+Europe,Homyel’,Homyel',Belarus,52.4453,30.9842,EUR-11
+Europe,Minsk,Minsk,Belarus,53.9006,27.5586,EUR-11
+Europe,Antwerp,Antwerp,Belgium,51.2178,4.4003,EUR-11
+Europe,Brussels,Brussels,Belgium,50.8467,4.3525,EUR-11
+Europe,Sarajevo,Sarajevo,Bosnia and Herzegovina,43.8564,18.4131,EUR-11
+Europe,Sofia,Sofia,Bulgaria,42.6979,23.3217,EUR-11
+Europe,Zagreb,Zagreb,Croatia,45.8131,15.9772,EUR-11
+Europe,Nicosia,Nicosia,Cyprus,35.1725,33.365,EUR-11
+Europe,Prague,Prague,Czechia,50.0875,14.4214,EUR-11
+Europe,Copenhagen,Copenhagen,Denmark,55.6805,12.5615,EUR-11
+Europe,Tallinn,Tallinn,Estonia,59.4372,24.7453,EUR-11
+Europe,Helsinki,Helsinki,Finland,60.1708,24.9375,EUR-11
+Europe,Bordeaux,Bordeaux,France,44.84,-0.58,EUR-11
+Europe,Lyon,Lyon,France,45.76,4.84,EUR-11
+Europe,Marseille,Marseille,France,43.2964,5.37,EUR-11
+Europe,Paris,Paris,France,48.8567,2.3522,EUR-11
+Europe,Toulouse,Toulouse,France,43.6045,1.444,EUR-11
+Europe,Berlin,Berlin,Germany,52.52,13.405,EUR-11
+Europe,Braunschweig,Braunschweig,Germany,52.2667,10.5167,EUR-11
+Europe,Bremen,Bremen,Germany,53.0758,8.8072,EUR-11
+Europe,Cologne,Cologne,Germany,50.9364,6.9528,EUR-11
+Europe,Dortmund,Dortmund,Germany,51.5139,7.4653,EUR-11
+Europe,Dresden,Dresden,Germany,51.05,13.74,EUR-11
+Europe,Duisburg,Duisburg,Germany,51.4347,6.7625,EUR-11
+Europe,Düsseldorf,Dusseldorf,Germany,51.2256,6.7767,EUR-11
+Europe,Essen,Essen,Germany,51.4508,7.0131,EUR-11
+Europe,Frankfurt,Frankfurt,Germany,50.1106,8.6822,EUR-11
+Europe,Hamburg,Hamburg,Germany,53.55,10.0,EUR-11
+Europe,Hannover,Hannover,Germany,52.3667,9.7167,EUR-11
+Europe,Leipzig,Leipzig,Germany,51.34,12.375,EUR-11
+Europe,Munich,Munich,Germany,48.1375,11.575,EUR-11
+Europe,Nuremberg,Nuremberg,Germany,49.4539,11.0775,EUR-11
+Europe,Stuttgart,Stuttgart,Germany,48.7775,9.18,EUR-11
+Europe,Gibraltar,Gibraltar,Gibraltar,36.14,-5.35,EUR-11
+Europe,Athens,Athens,Greece,37.9842,23.7281,EUR-11
+Europe,Thessaloníki,Thessaloniki,Greece,40.6403,22.9356,EUR-11
+Europe,Budapest,Budapest,Hungary,47.4983,19.0408,EUR-11
+Europe,Reykjavík,Reykjavik,Iceland,64.1458,-21.9425,EUR-11
+Europe,Dublin,Dublin,Ireland,53.3497,-6.2603,EUR-11
+Europe,Genoa,Genoa,Italy,44.4072,8.934,EUR-11
+Europe,Milan,Milan,Italy,45.4669,9.19,EUR-11
+Europe,Naples,Naples,Italy,40.8358,14.2486,EUR-11
+Europe,Palermo,Palermo,Italy,38.1157,13.3613,EUR-11
+Europe,Rome,Rome,Italy,41.8931,12.4828,EUR-11
+Europe,Turin,Turin,Italy,45.0792,7.6761,EUR-11
+Europe,Pristina,Pristina,Kosovo,42.6666,21.1724,EUR-11
+Europe,Riga,Riga,Latvia,56.9475,24.1069,EUR-11
+Europe,Vaduz,Vaduz,Liechtenstein,47.1406,9.5222,EUR-11
+Europe,Vilnius,Vilnius,Lithuania,54.6872,25.28,EUR-11
+Europe,Luxembourg,Luxembourg,Luxembourg,49.6117,6.1319,EUR-11
+Europe,Valletta,Valletta,Malta,35.8983,14.5125,EUR-11
+Europe,Chisinau,Chisinau,Moldova,47.0228,28.8353,EUR-11
+Europe,Monaco,Monaco,Monaco,43.7333,7.4167,EUR-11
+Europe,Podgorica,Podgorica,Montenegro,42.4414,19.2628,EUR-11
+Europe,Amsterdam,Amsterdam,Netherlands,52.3728,4.8936,EUR-11
+Europe,Rotterdam,Rotterdam,Netherlands,51.92,4.48,EUR-11
+Europe,The Hague,The Hague,Netherlands,52.08,4.31,EUR-11
+Europe,Tilburg,Tilburg,Netherlands,51.5572,5.0911,EUR-11
+Europe,Skopje,Skopje,North Macedonia,41.9961,21.4317,EUR-11
+Europe,Oslo,Oslo,Norway,59.9133,10.7389,EUR-11
+Europe,Gdańsk,Gdansk,Poland,54.3475,18.6453,EUR-11
+Europe,Kraków,Krakow,Poland,50.0614,19.9372,EUR-11
+Europe,Poznań,Poznan,Poland,52.4083,16.9336,EUR-11
+Europe,Warsaw,Warsaw,Poland,52.23,21.0111,EUR-11
+Europe,Wrocław,Wroclaw,Poland,51.11,17.0325,EUR-11
+Europe,Łódź,Lodz,Poland,51.7769,19.4547,EUR-11
+Europe,Lisbon,Lisbon,Portugal,38.7122,-9.134,EUR-11
+Europe,Bucharest,Bucharest,Romania,44.4325,26.1039,EUR-11
+Europe,Balashikha,Balashikha,Russia,55.8167,37.9667,EUR-11
+Europe,Barnaul,Barnaul,Russia,53.3486,83.7764,EUR-11
+Europe,Chelyabinsk,Chelyabinsk,Russia,55.1547,61.3758,EUR-11
+Europe,Irkutsk,Irkutsk,Russia,52.2892,104.28,EUR-11
+Europe,Izhevsk,Izhevsk,Russia,56.8333,53.1833,EUR-11
+Europe,Kazan,Kazan,Russia,55.7964,49.1089,EUR-11
+Europe,Kemerovo,Kemerovo,Russia,55.3667,86.0667,EUR-11
+Europe,Khabarovsk,Khabarovsk,Russia,48.4833,135.0833,EUR-11
+Europe,Krasnodar,Krasnodar,Russia,45.0333,38.9667,EUR-11
+Europe,Krasnoyarsk,Krasnoyarsk,Russia,56.0089,92.8719,EUR-11
+Europe,Makhachkala,Makhachkala,Russia,42.9825,47.505,EUR-11
+Europe,Moscow,Moscow,Russia,55.7506,37.6175,EUR-11
+Europe,Naberezhnyye Chelny,Naberezhnyye Chelny,Russia,55.6833,52.3167,EUR-11
+Europe,Nizhniy Novgorod,Nizhniy Novgorod,Russia,56.3269,44.0075,EUR-11
+Europe,Novokuznetsk,Novokuznetsk,Russia,53.7667,87.1333,EUR-11
+Europe,Novosibirsk,Novosibirsk,Russia,55.05,82.95,EUR-11
+Europe,Omsk,Omsk,Russia,54.9833,73.3667,EUR-11
+Europe,Orenburg,Orenburg,Russia,51.7833,55.1,EUR-11
+Europe,Perm,Perm,Russia,58.0,56.3167,EUR-11
+Europe,Rostov,Rostov,Russia,47.2225,39.71,EUR-11
+Europe,Ryazan,Ryazan,Russia,54.63,39.7425,EUR-11
+Europe,Saint Petersburg,Saint Petersburg,Russia,59.9375,30.3086,EUR-11
+Europe,Samara,Samara,Russia,53.2028,50.1408,EUR-11
+Europe,Saratov,Saratov,Russia,51.53,46.035,EUR-11
+Europe,Tolyatti,Tolyatti,Russia,53.5089,49.4222,EUR-11
+Europe,Tomsk,Tomsk,Russia,56.5,84.9667,EUR-11
+Europe,Tyumen,Tyumen,Russia,57.15,65.5333,EUR-11
+Europe,Ufa,Ufa,Russia,54.7261,55.9475,EUR-11
+Europe,Ulyanovsk,Ulyanovsk,Russia,54.3167,48.3667,EUR-11
+Europe,Vladivostok,Vladivostok,Russia,43.115,131.8853,EUR-11
+Europe,Volgograd,Volgograd,Russia,48.7086,44.5147,EUR-11
+Europe,Voronezh,Voronezh,Russia,51.6717,39.2106,EUR-11
+Europe,Yaroslavl,Yaroslavl,Russia,57.6167,39.85,EUR-11
+Europe,Yekaterinburg,Yekaterinburg,Russia,56.8356,60.6128,EUR-11
+Europe,San Marino,San Marino,San Marino,43.9346,12.4473,EUR-11
+Europe,Belgrade,Belgrade,Serbia,44.8178,20.4569,EUR-11
+Europe,Bratislava,Bratislava,Slovakia,48.1447,17.1128,EUR-11
+Europe,Ljubljana,Ljubljana,Slovenia,46.0514,14.5061,EUR-11
+Europe,Barcelona,Barcelona,Spain,41.3833,2.1833,EUR-11
+Europe,Bilbao,Bilbao,Spain,43.2569,-2.9236,EUR-11
+Europe,Las Palmas,Las Palmas,Spain,28.1258,-15.4353,EUR-11
+Europe,Madrid,Madrid,Spain,40.4169,-3.7033,EUR-11
+Europe,Murcia,Murcia,Spain,37.9861,-1.1303,EUR-11
+Europe,Málaga,Malaga,Spain,36.7194,-4.42,EUR-11
+Europe,Palma,Palma,Spain,39.5667,2.65,EUR-11
+Europe,Santa Cruz,Santa Cruz,Spain,28.4667,-16.25,EUR-11
+Europe,Sevilla,Sevilla,Spain,37.39,-5.99,EUR-11
+Europe,Valencia,Valencia,Spain,39.47,-0.3764,EUR-11
+Europe,Zaragoza,Zaragoza,Spain,41.65,-0.8833,EUR-11
+Europe,Gothenburg,Gothenburg,Sweden,57.7075,11.9675,EUR-11
+Europe,Stockholm,Stockholm,Sweden,59.3275,18.0547,EUR-11
+Europe,Bern,Bern,Switzerland,46.948,7.4474,EUR-11
+Europe,Adana,Adana,Turkey,37.0,35.3213,EUR-11
+Europe,Ankara,Ankara,Turkey,39.93,32.85,EUR-11
+Europe,Antalya,Antalya,Turkey,36.8874,30.7075,EUR-11
+Europe,Bağcılar,Bagcilar,Turkey,41.0344,28.8564,EUR-11
+Europe,Buca,Buca,Turkey,38.35,27.1667,EUR-11
+Europe,Bursa,Bursa,Turkey,40.1833,29.05,EUR-11
+Europe,Denizli,Denizli,Turkey,37.7833,29.0964,EUR-11
+Europe,Diyarbakır,Diyarbakir,Turkey,37.91,40.24,EUR-11
+Europe,Erzurum,Erzurum,Turkey,39.9086,41.2769,EUR-11
+Europe,Esenyurt,Esenyurt,Turkey,41.0342,28.68,EUR-11
+Europe,Eskişehir,Eskisehir,Turkey,39.7767,30.5206,EUR-11
+Europe,Etimesgut,Etimesgut,Turkey,39.9458,32.6694,EUR-11
+Europe,Gaziantep,Gaziantep,Turkey,37.0628,37.3792,EUR-11
+Europe,Istanbul,Istanbul,Turkey,41.0136,28.955,EUR-11
+Europe,Kahramanmaraş,Kahramanmaras,Turkey,37.5833,36.9333,EUR-11
+Europe,Kayseri,Kayseri,Turkey,38.7225,35.4875,EUR-11
+Europe,Keçiören,Kecioren,Turkey,40.0,32.8667,EUR-11
+Europe,Konya,Konya,Turkey,37.8667,32.4833,EUR-11
+Europe,Mamak,Mamak,Turkey,39.9422,32.9231,EUR-11
+Europe,Melikgazi,Melikgazi,Turkey,38.7167,35.5,EUR-11
+Europe,Mersin,Mersin,Turkey,36.8,34.6333,EUR-11
+Europe,Nilüfer,Nilufer,Turkey,40.2833,28.95,EUR-11
+Europe,Osmangazi,Osmangazi,Turkey,40.1983,29.06,EUR-11
+Europe,Pendik,Pendik,Turkey,40.8747,29.235,EUR-11
+Europe,Samsun,Samsun,Turkey,41.2903,36.3336,EUR-11
+Europe,Selçuklu,Selcuklu,Turkey,37.8814,32.4922,EUR-11
+Europe,Seyhan,Seyhan,Turkey,36.9831,35.3328,EUR-11
+Europe,Sincan,Sincan,Turkey,39.9594,32.5767,EUR-11
+Europe,Umraniye,Umraniye,Turkey,41.0311,29.1081,EUR-11
+Europe,Van,Van,Turkey,38.4942,43.38,EUR-11
+Europe,Yenimahalle,Yenimahalle,Turkey,39.9719,32.8119,EUR-11
+Europe,Yukarıkaraman,Yukarikaraman,Turkey,36.9167,30.6833,EUR-11
+Europe,Yıldırım,Yildirim,Turkey,40.11,29.0821,EUR-11
+Europe,Çankaya,Cankaya,Turkey,39.9244,32.8856,EUR-11
+Europe,İzmir,Izmir,Turkey,38.42,27.14,EUR-11
+Europe,Şanlıurfa,Sanliurfa,Turkey,37.1583,38.7917,EUR-11
+Europe,Bazal’tove,Bazal'tove,Ukraine,50.6765,26.16,EUR-11
+Europe,Dnipro,Dnipro,Ukraine,48.4675,35.04,EUR-11
+Europe,Donetsk,Donetsk,Ukraine,48.0028,37.8053,EUR-11
+Europe,Kharkiv,Kharkiv,Ukraine,49.9925,36.2311,EUR-11
+Europe,Kryvyi Rih,Kryvyi Rih,Ukraine,47.91,33.39,EUR-11
+Europe,Kyiv,Kyiv,Ukraine,50.45,30.5233,EUR-11
+Europe,Lviv,Lviv,Ukraine,49.8425,24.0322,EUR-11
+Europe,Odesa,Odesa,Ukraine,46.492,30.7081,EUR-11
+Europe,Sevastopol,Sevastopol,Ukraine,44.605,33.5225,EUR-11
+Europe,Zaporizhzhia,Zaporizhzhia,Ukraine,47.85,35.1175,EUR-11
+Europe,Birmingham,Birmingham,United Kingdom,52.48,-1.9025,EUR-11
+Europe,Bristol,Bristol,United Kingdom,51.4536,-2.5975,EUR-11
+Europe,Glasgow,Glasgow,United Kingdom,55.8611,-4.25,EUR-11
+Europe,Leeds,Leeds,United Kingdom,53.7975,-1.5436,EUR-11
+Europe,Liverpool,Liverpool,United Kingdom,53.4072,-2.9917,EUR-11
+Europe,London,London,United Kingdom,51.5072,-0.1275,EUR-11
+Europe,Manchester,Manchester,United Kingdom,53.479,-2.2452,EUR-11
+Europe,Portsmouth,Portsmouth,United Kingdom,50.8058,-1.0872,EUR-11
+Europe,Sheffield,Sheffield,United Kingdom,53.3808,-1.4703,EUR-11
+Europe,Southampton,Southampton,United Kingdom,50.9025,-1.4042,EUR-11
+Europe,Vatican City,Vatican City,Vatican City,41.904,12.453,EUR-11
+North America,The Valley,The Valley,Anguilla,18.2208,-63.0517,NAM-22
+North America,Saint John’s,Saint John's,Antigua and Barbuda,17.1167,-61.85,NAM-22
+North America,Oranjestad,Oranjestad,Aruba,12.5186,-70.0358,NAM-22
+North America,Nassau,Nassau,"Bahamas, The",25.0442,-77.3503,NAM-22
+North America,Bridgetown,Bridgetown,Barbados,13.0969,-59.6131,NAM-22
+North America,Belmopan,Belmopan,Belize,17.2522,-88.7639,NAM-22
+North America,Brampton,Brampton,Canada,43.6833,-79.7667,NAM-22
+North America,Calgary,Calgary,Canada,51.05,-114.0667,NAM-22
+North America,Edmonton,Edmonton,Canada,53.5344,-113.4903,NAM-22
+North America,Hamilton,Hamilton,Canada,43.2567,-79.8692,NAM-22
+North America,Kitchener,Kitchener,Canada,43.4186,-80.4728,NAM-22
+North America,Mississauga,Mississauga,Canada,43.6,-79.65,NAM-22
+North America,Montréal,Montreal,Canada,45.5089,-73.5617,NAM-22
+North America,Ottawa,Ottawa,Canada,45.4247,-75.695,NAM-22
+North America,Quebec City,Quebec City,Canada,46.8139,-71.2081,NAM-22
+North America,Surrey,Surrey,Canada,49.19,-122.8489,NAM-22
+North America,Toronto,Toronto,Canada,43.7417,-79.3733,NAM-22
+North America,Vancouver,Vancouver,Canada,49.25,-123.1,NAM-22
+North America,Winnipeg,Winnipeg,Canada,49.8844,-97.1464,NAM-22
+North America,George Town,George Town,Cayman Islands,19.295,-81.3811,NAM-22
+North America,San José,San Jose,Costa Rica,9.9325,-84.08,NAM-22
+North America,Havana,Havana,Cuba,23.1367,-82.3589,NAM-22
+North America,Willemstad,Willemstad,Curaçao,12.108,-68.935,NAM-22
+North America,Roseau,Roseau,Dominica,15.3014,-61.3883,NAM-22
+North America,Santiago,Santiago,Dominican Republic,19.4572,-70.6889,NAM-22
+North America,Santo Domingo,Santo Domingo,Dominican Republic,18.4764,-69.8933,NAM-22
+North America,Santo Domingo Este,Santo Domingo Este,Dominican Republic,18.4855,-69.8734,NAM-22
+North America,San Salvador,San Salvador,El Salvador,13.6989,-89.1914,NAM-22
+North America,Nuuk,Nuuk,Greenland,64.1767,-51.7361,NAM-22
+North America,Saint George’s,Saint George's,Grenada,12.05,-61.75,NAM-22
+North America,Basse-Terre,Basse-Terre,Guadeloupe,16.0104,-61.7055,NAM-22
+North America,Guatemala City,Guatemala City,Guatemala,14.6417,-90.5133,NAM-22
+North America,Mixco,Mixco,Guatemala,14.6331,-90.6064,NAM-22
+North America,Carrefour,Carrefour,Haiti,18.5333,-72.4,NAM-22
+North America,Port-au-Prince,Port-au-Prince,Haiti,18.5425,-72.3386,NAM-22
+North America,Comayagüela,Comayaguela,Honduras,14.098,-87.21,NAM-22
+North America,San Pedro Sula,San Pedro Sula,Honduras,15.5062,-88.0249,NAM-22
+North America,Tegucigalpa,Tegucigalpa,Honduras,14.1057,-87.204,NAM-22
+North America,Kingston,Kingston,Jamaica,17.9714,-76.7931,NAM-22
+North America,Fort-de-France,Fort-de-France,Martinique,14.6,-61.0667,NAM-22
+North America,Acapulco de Juárez,Acapulco de Juarez,Mexico,16.8636,-99.8825,NAM-22
+North America,Aguascalientes,Aguascalientes,Mexico,21.876,-102.296,NAM-22
+North America,Cancún,Cancun,Mexico,21.1606,-86.8475,NAM-22
+North America,Chihuahua,Chihuahua,Mexico,28.6369,-106.0769,NAM-22
+North America,Chimalhuacán,Chimalhuacan,Mexico,19.4131,-98.9839,NAM-22
+North America,Ciudad Apodaca,Ciudad Apodaca,Mexico,25.7817,-100.1886,NAM-22
+North America,Ciudad Nezahualcóyotl,Ciudad Nezahualcoyotl,Mexico,19.4006,-99.0148,NAM-22
+North America,Culiacán,Culiacan,Mexico,24.8069,-107.3939,NAM-22
+North America,Durango,Durango,Mexico,24.025,-104.6675,NAM-22
+North America,Ecatepec,Ecatepec,Mexico,19.6097,-99.06,NAM-22
+North America,Ensenada,Ensenada,Mexico,31.8578,-116.6058,NAM-22
+North America,Guadalajara,Guadalajara,Mexico,20.6767,-103.3475,NAM-22
+North America,Guadalupe,Guadalupe,Mexico,25.6775,-100.2597,NAM-22
+North America,Hermosillo,Hermosillo,Mexico,29.0989,-110.9542,NAM-22
+North America,Heroica Matamoros,Heroica Matamoros,Mexico,25.8797,-97.5042,NAM-22
+North America,Irapuato,Irapuato,Mexico,20.6667,-101.35,NAM-22
+North America,Ixtapaluca,Ixtapaluca,Mexico,19.3186,-98.8822,NAM-22
+North America,Juárez,Juarez,Mexico,31.745,-106.485,NAM-22
+North America,León de los Aldama,Leon de los Aldama,Mexico,21.1167,-101.6833,NAM-22
+North America,Mazatlán,Mazatlan,Mexico,23.2167,-106.4167,NAM-22
+North America,Mexicali,Mexicali,Mexico,32.6633,-115.4678,NAM-22
+North America,Mexico City,Mexico City,Mexico,19.4333,-99.1333,NAM-22
+North America,Monterrey,Monterrey,Mexico,25.6844,-100.3181,NAM-22
+North America,Morelia,Morelia,Mexico,19.7683,-101.1894,NAM-22
+North America,Mérida,Merida,Mexico,20.9667,-89.6167,NAM-22
+North America,Naucalpan de Juárez,Naucalpan de Juarez,Mexico,19.4753,-99.2378,NAM-22
+North America,Nezahualcóyotl,Nezahualcoyotl,Mexico,19.4081,-99.0186,NAM-22
+North America,Puebla,Puebla,Mexico,19.0333,-98.1833,NAM-22
+North America,Querétaro,Queretaro,Mexico,20.5875,-100.3928,NAM-22
+North America,Reynosa,Reynosa,Mexico,26.0922,-98.2778,NAM-22
+North America,Saltillo,Saltillo,Mexico,25.4231,-100.9919,NAM-22
+North America,San Luis Potosí,San Luis Potosi,Mexico,22.1511,-100.9761,NAM-22
+North America,Tijuana,Tijuana,Mexico,32.525,-117.0333,NAM-22
+North America,Tlalnepantla,Tlalnepantla,Mexico,19.5367,-99.1947,NAM-22
+North America,Tlaquepaque,Tlaquepaque,Mexico,20.6167,-103.3167,NAM-22
+North America,Toluca,Toluca,Mexico,19.2925,-99.6569,NAM-22
+North America,Tonalá,Tonala,Mexico,20.6167,-103.2333,NAM-22
+North America,Tultitlán de Mariano Escobedo,Tultitlan de Mariano Escobedo,Mexico,19.645,-99.1694,NAM-22
+North America,Tuxtla,Tuxtla,Mexico,16.7528,-93.1167,NAM-22
+North America,Zapopan,Zapopan,Mexico,20.7167,-103.4,NAM-22
+North America,Brades,Brades,Montserrat,16.7928,-62.2106,NAM-22
+North America,Plymouth,Plymouth,Montserrat,16.7064,-62.2158,NAM-22
+North America,Managua,Managua,Nicaragua,12.1364,-86.2514,NAM-22
+North America,Panama City,Panama City,Panama,8.9711,-79.5347,NAM-22
+North America,San Juan,San Juan,Puerto Rico,18.3985,-66.061,NAM-22
+North America,Gustavia,Gustavia,Saint Barthelemy,17.8979,-62.8506,NAM-22
+North America,Basseterre,Basseterre,Saint Kitts and Nevis,17.3,-62.7333,NAM-22
+North America,Castries,Castries,Saint Lucia,14.0108,-60.9894,NAM-22
+North America,Marigot,Marigot,Saint Martin,18.0706,-63.0847,NAM-22
+North America,Saint-Pierre,Saint-Pierre,Saint Pierre and Miquelon,46.7817,-56.1736,NAM-22
+North America,Kingstown,Kingstown,Saint Vincent and the Grenadines,13.1578,-61.225,NAM-22
+North America,Philipsburg,Philipsburg,Sint Maarten,18.0237,-63.0458,NAM-22
+North America,Port of Spain,Port of Spain,Trinidad and Tobago,10.6667,-61.5167,NAM-22
+North America,Grand Turk,Grand Turk,Turks and Caicos Islands,21.459,-71.139,NAM-22
+North America,Charlotte Amalie,Charlotte Amalie,U.S. Virgin Islands,18.342,-64.9331,NAM-22
+North America,Akron,Akron,United States,41.0798,-81.5219,NAM-22
+North America,Albany,Albany,United States,42.6664,-73.7987,NAM-22
+North America,Albuquerque,Albuquerque,United States,35.1054,-106.6465,NAM-22
+North America,Allentown,Allentown,United States,40.5961,-75.4756,NAM-22
+North America,Atlanta,Atlanta,United States,33.7628,-84.422,NAM-22
+North America,Austin,Austin,United States,30.3005,-97.7522,NAM-22
+North America,Bakersfield,Bakersfield,United States,35.3529,-119.0359,NAM-22
+North America,Baltimore,Baltimore,United States,39.3051,-76.6144,NAM-22
+North America,Baton Rouge,Baton Rouge,United States,30.442,-91.1311,NAM-22
+North America,Birmingham,Birmingham,United States,33.5279,-86.7971,NAM-22
+North America,Boston,Boston,United States,42.3188,-71.0852,NAM-22
+North America,Bridgeport,Bridgeport,United States,41.1918,-73.1954,NAM-22
+North America,Bronx,Bronx,United States,40.8501,-73.8662,NAM-22
+North America,Brooklyn,Brooklyn,United States,40.6501,-73.9496,NAM-22
+North America,Buffalo,Buffalo,United States,42.9018,-78.8487,NAM-22
+North America,Cape Coral,Cape Coral,United States,26.6443,-81.9957,NAM-22
+North America,Charleston,Charleston,United States,32.8168,-79.9687,NAM-22
+North America,Charlotte,Charlotte,United States,35.2083,-80.8303,NAM-22
+North America,Chicago,Chicago,United States,41.8375,-87.6866,NAM-22
+North America,Cincinnati,Cincinnati,United States,39.1413,-84.506,NAM-22
+North America,Cleveland,Cleveland,United States,41.4764,-81.6805,NAM-22
+North America,Colorado Springs,Colorado Springs,United States,38.8674,-104.7605,NAM-22
+North America,Columbia,Columbia,United States,34.0378,-80.9036,NAM-22
+North America,Columbus,Columbus,United States,39.9862,-82.9855,NAM-22
+North America,Concord,Concord,United States,37.9722,-122.0016,NAM-22
+North America,Dallas,Dallas,United States,32.7935,-96.7667,NAM-22
+North America,Dayton,Dayton,United States,39.7805,-84.2003,NAM-22
+North America,Denver,Denver,United States,39.762,-104.8758,NAM-22
+North America,Des Moines,Des Moines,United States,41.5725,-93.6105,NAM-22
+North America,Detroit,Detroit,United States,42.3834,-83.1024,NAM-22
+North America,El Paso,El Paso,United States,31.8476,-106.43,NAM-22
+North America,Fort Worth,Fort Worth,United States,32.7817,-97.3474,NAM-22
+North America,Fresno,Fresno,United States,36.783,-119.7939,NAM-22
+North America,Grand Rapids,Grand Rapids,United States,42.9619,-85.6562,NAM-22
+North America,Hartford,Hartford,United States,41.7661,-72.6834,NAM-22
+North America,Hempstead,Hempstead,United States,40.6629,-73.6089,NAM-22
+North America,Houston,Houston,United States,29.786,-95.3885,NAM-22
+North America,Indianapolis,Indianapolis,United States,39.7771,-86.1458,NAM-22
+North America,Jacksonville,Jacksonville,United States,30.3322,-81.6749,NAM-22
+North America,Kansas City,Kansas City,United States,39.1238,-94.5541,NAM-22
+North America,Knoxville,Knoxville,United States,35.9692,-83.9496,NAM-22
+North America,Las Vegas,Las Vegas,United States,36.2333,-115.2654,NAM-22
+North America,Los Angeles,Los Angeles,United States,34.1141,-118.4068,NAM-22
+North America,Louisville,Louisville,United States,38.1663,-85.6485,NAM-22
+North America,Manhattan,Manhattan,United States,40.7834,-73.9662,NAM-22
+North America,McAllen,McAllen,United States,26.2252,-98.2467,NAM-22
+North America,Memphis,Memphis,United States,35.1087,-89.9663,NAM-22
+North America,Mesa,Mesa,United States,33.4015,-111.7178,NAM-22
+North America,Miami,Miami,United States,25.784,-80.2101,NAM-22
+North America,Milwaukee,Milwaukee,United States,43.0642,-87.9675,NAM-22
+North America,Minneapolis,Minneapolis,United States,44.9635,-93.2678,NAM-22
+North America,Mission Viejo,Mission Viejo,United States,33.6096,-117.6551,NAM-22
+North America,Nashville,Nashville,United States,36.1715,-86.7842,NAM-22
+North America,New Haven,New Haven,United States,41.3113,-72.9246,NAM-22
+North America,New Orleans,New Orleans,United States,30.0687,-89.9288,NAM-22
+North America,New York,New York,United States,40.6943,-73.9249,NAM-22
+North America,Ogden,Ogden,United States,41.2279,-111.9682,NAM-22
+North America,Oklahoma City,Oklahoma City,United States,35.4676,-97.5136,NAM-22
+North America,Omaha,Omaha,United States,41.2627,-96.0529,NAM-22
+North America,Orlando,Orlando,United States,28.4773,-81.337,NAM-22
+North America,Palm Bay,Palm Bay,United States,27.9631,-80.6593,NAM-22
+North America,Philadelphia,Philadelphia,United States,40.0077,-75.1339,NAM-22
+North America,Phoenix,Phoenix,United States,33.5722,-112.0892,NAM-22
+North America,Pittsburgh,Pittsburgh,United States,40.4397,-79.9763,NAM-22
+North America,Portland,Portland,United States,45.5371,-122.65,NAM-22
+North America,Providence,Providence,United States,41.823,-71.4187,NAM-22
+North America,Provo,Provo,United States,40.2457,-111.6457,NAM-22
+North America,Queens,Queens,United States,40.7498,-73.7976,NAM-22
+North America,Raleigh,Raleigh,United States,35.8324,-78.6429,NAM-22
+North America,Richmond,Richmond,United States,37.5295,-77.4756,NAM-22
+North America,Riverside,Riverside,United States,33.9381,-117.3949,NAM-22
+North America,Rochester,Rochester,United States,43.168,-77.6162,NAM-22
+North America,Sacramento,Sacramento,United States,38.5677,-121.4685,NAM-22
+North America,Salt Lake City,Salt Lake City,United States,40.7776,-111.9311,NAM-22
+North America,San Antonio,San Antonio,United States,29.4632,-98.5238,NAM-22
+North America,San Diego,San Diego,United States,32.8313,-117.1222,NAM-22
+North America,San Francisco,San Francisco,United States,37.7558,-122.4449,NAM-22
+North America,San Jose,San Jose,United States,37.3012,-121.848,NAM-22
+North America,Seattle,Seattle,United States,47.6211,-122.3244,NAM-22
+North America,St. Louis,St. Louis,United States,38.6359,-90.2451,NAM-22
+North America,Tampa,Tampa,United States,27.9945,-82.4447,NAM-22
+North America,Tucson,Tucson,United States,32.1541,-110.8787,NAM-22
+North America,Tulsa,Tulsa,United States,36.1283,-95.9042,NAM-22
+North America,Virginia Beach,Virginia Beach,United States,36.7335,-76.0435,NAM-22
+North America,Washington,Washington,United States,38.9047,-77.0163,NAM-22
+North America,Wichita,Wichita,United States,37.6895,-97.3443,NAM-22
+North America,Road Town,Road Town,"Virgin Islands, British",18.4167,-64.6167,NAM-22
+Oceania,Adelaide,Adelaide,Australia,-34.9275,138.6,AUS-22
+Oceania,Brisbane,Brisbane,Australia,-27.4678,153.0281,AUS-22
+Oceania,Canberra,Canberra,Australia,-35.2931,149.1269,AUS-22
+Oceania,Gold Coast,Gold Coast,Australia,-28.0167,153.4,AUS-22
+Oceania,Melbourne,Melbourne,Australia,-37.8142,144.9631,AUS-22
+Oceania,Perth,Perth,Australia,-31.9558,115.8597,AUS-22
+Oceania,Sydney,Sydney,Australia,-33.8667,151.2,AUS-22
+Oceania,Avarua,Avarua,Cook Islands,-21.207,-159.771,AUS-22
+Oceania,Suva,Suva,Fiji,-18.1333,178.4333,AUS-22
+Oceania,Papeete,Papeete,French Polynesia,-17.5334,-149.5667,AUS-22
+Oceania,Hagåtña,Hagta,Guam,13.4745,144.7504,AUS-22
+Oceania,Tarawa,Tarawa,Kiribati,1.3382,173.0176,AUS-22
+Oceania,Majuro,Majuro,Marshall Islands,7.0833,171.3833,AUS-22
+Oceania,Palikir,Palikir,"Micronesia, Federated States of",6.9172,158.1589,AUS-22
+Oceania,Yaren,Yaren,Nauru,-0.5456,166.925,AUS-22
+Oceania,Nouméa,Noumea,New Caledonia,-22.2625,166.4443,AUS-22
+Oceania,Auckland,Auckland,New Zealand,-36.8492,174.7653,AUS-22
+Oceania,Wellington,Wellington,New Zealand,-41.2889,174.7772,AUS-22
+Oceania,Alofi,Alofi,Niue,-19.056,-169.921,AUS-22
+Oceania,Capitol Hill,Capitol Hill,Northern Mariana Islands,15.2137,145.7546,AUS-22
+Oceania,Ngerulmud,Ngerulmud,Palau,7.5006,134.6242,AUS-22
+Oceania,Port Moresby,Port Moresby,Papua New Guinea,-9.4789,147.1494,AUS-22
+Oceania,Apia,Apia,Samoa,-13.8333,-171.75,AUS-22
+Oceania,Honiara,Honiara,Solomon Islands,-9.4333,159.95,AUS-22
+Oceania,Nuku‘alofa,Nuku`alofa,Tonga,-21.1333,-175.2,AUS-22
+Oceania,Funafuti,Funafuti,Tuvalu,-8.5167,179.2,AUS-22
+Oceania,Port-Vila,Port-Vila,Vanuatu,-17.7333,168.3167,AUS-22
+Oceania,Mata-Utu,Mata-Utu,Wallis and Futuna,-13.2825,-176.1736,AUS-22
+South America,Buenos Aires,Buenos Aires,Argentina,-34.6036,-58.3814,SAM-22
+South America,Córdoba,Cordoba,Argentina,-31.4167,-64.1833,SAM-22
+South America,La Plata,La Plata,Argentina,-34.9211,-57.9544,SAM-22
+South America,Mar del Plata,Mar del Plata,Argentina,-38.0,-57.55,SAM-22
+South America,Rosario,Rosario,Argentina,-32.9575,-60.6394,SAM-22
+South America,Salta,Salta,Argentina,-24.7833,-65.4167,SAM-22
+South America,San Miguel de Tucumán,San Miguel de Tucuman,Argentina,-26.8167,-65.2167,SAM-22
+South America,Santiago del Estero,Santiago del Estero,Argentina,-27.7833,-64.2667,SAM-22
+South America,Cochabamba,Cochabamba,Bolivia,-17.3883,-66.1597,SAM-22
+South America,El Alto,El Alto,Bolivia,-16.5047,-68.1633,SAM-22
+South America,La Paz,La Paz,Bolivia,-16.4958,-68.1333,SAM-22
+South America,Santa Cruz de la Sierra,Santa Cruz de la Sierra,Bolivia,-17.7892,-63.1975,SAM-22
+South America,Sucre,Sucre,Bolivia,-19.0475,-65.26,SAM-22
+South America,Aracaju,Aracaju,Brazil,-10.9111,-37.0717,SAM-22
+South America,Belo Horizonte,Belo Horizonte,Brazil,-19.9281,-43.9419,SAM-22
+South America,Belém,Belem,Brazil,-1.4558,-48.5039,SAM-22
+South America,Brasília,Brasilia,Brazil,-15.7939,-47.8828,SAM-22
+South America,Campinas,Campinas,Brazil,-22.9009,-47.0573,SAM-22
+South America,Campo Grande,Campo Grande,Brazil,-20.4686,-54.6222,SAM-22
+South America,Campos,Campos,Brazil,-21.7523,-41.3304,SAM-22
+South America,Contagem,Contagem,Brazil,-19.9319,-44.0539,SAM-22
+South America,Curitiba,Curitiba,Brazil,-25.4297,-49.2719,SAM-22
+South America,Fortaleza,Fortaleza,Brazil,-3.7275,-38.5275,SAM-22
+South America,Goiânia,Goiania,Brazil,-16.6806,-49.2564,SAM-22
+South America,Guarulhos,Guarulhos,Brazil,-23.4667,-46.5333,SAM-22
+South America,Jaboatão dos Guararapes,Jaboatao dos Guararapes,Brazil,-8.1128,-35.015,SAM-22
+South America,João Pessoa,Joao Pessoa,Brazil,-7.12,-34.88,SAM-22
+South America,Juiz de Fora,Juiz de Fora,Brazil,-21.7642,-43.3503,SAM-22
+South America,Macapá,Macapa,Brazil,0.033,-51.05,SAM-22
+South America,Maceió,Maceio,Brazil,-9.6658,-35.735,SAM-22
+South America,Natal,Natal,Brazil,-5.795,-35.2089,SAM-22
+South America,Osasco,Osasco,Brazil,-23.5328,-46.7919,SAM-22
+South America,Porto Alegre,Porto Alegre,Brazil,-30.0328,-51.23,SAM-22
+South America,Recife,Recife,Brazil,-8.0539,-34.8808,SAM-22
+South America,Ribeirão Prêto,Ribeirao Preto,Brazil,-21.1776,-47.8101,SAM-22
+South America,Rio de Janeiro,Rio de Janeiro,Brazil,-22.9111,-43.2056,SAM-22
+South America,Salvador,Salvador,Brazil,-12.9831,-38.4928,SAM-22
+South America,Santo André,Santo Andre,Brazil,-23.6533,-46.528,SAM-22
+South America,Sorocaba,Sorocaba,Brazil,-23.5019,-47.4578,SAM-22
+South America,São Bernardo do Campo,Sao Bernardo do Campo,Brazil,-23.6939,-46.565,SAM-22
+South America,São Gonçalo,Sao Goncalo,Brazil,-22.8269,-43.0539,SAM-22
+South America,São José dos Campos,Sao Jose dos Campos,Brazil,-23.1789,-45.8869,SAM-22
+South America,São Luís,Sao Luis,Brazil,-2.53,-44.3028,SAM-22
+South America,São Paulo,Sao Paulo,Brazil,-23.5504,-46.6339,SAM-22
+South America,Teresina,Teresina,Brazil,-5.0903,-42.8167,SAM-22
+South America,Uberlândia,Uberlandia,Brazil,-18.9189,-48.2769,SAM-22
+South America,Concepción,Concepcion,Chile,-36.8282,-73.0514,SAM-22
+South America,Maipú,Maipu,Chile,-33.5167,-70.7667,SAM-22
+South America,Puente Alto,Puente Alto,Chile,-33.6167,-70.5667,SAM-22
+South America,Santiago,Santiago,Chile,-33.4372,-70.6506,SAM-22
+South America,Barranquilla,Barranquilla,Colombia,10.9833,-74.8019,SAM-22
+South America,Bello,Bello,Colombia,6.3333,-75.5667,SAM-22
+South America,Bogotá,Bogota,Colombia,4.7111,-74.0722,SAM-22
+South America,Bucaramanga,Bucaramanga,Colombia,7.1333,-73.0,SAM-22
+South America,Cali,Cali,Colombia,3.4206,-76.5222,SAM-22
+South America,Cartagena,Cartagena,Colombia,10.4,-75.5,SAM-22
+South America,Cúcuta,Cucuta,Colombia,7.8942,-72.5039,SAM-22
+South America,Ibagué,Ibague,Colombia,4.4333,-75.2333,SAM-22
+South America,Medellín,Medellin,Colombia,6.2308,-75.5906,SAM-22
+South America,Palermo,Palermo,Colombia,2.8917,-75.4375,SAM-22
+South America,Pereira,Pereira,Colombia,4.8143,-75.6946,SAM-22
+South America,Santa Marta,Santa Marta,Colombia,11.2419,-74.2053,SAM-22
+South America,Soacha,Soacha,Colombia,4.5872,-74.2214,SAM-22
+South America,Soledad,Soledad,Colombia,10.9167,-74.75,SAM-22
+South America,Valledupar,Valledupar,Colombia,10.4833,-73.25,SAM-22
+South America,Villavicencio,Villavicencio,Colombia,4.15,-73.6333,SAM-22
+South America,Guayaquil,Guayaquil,Ecuador,-2.19,-79.8875,SAM-22
+South America,Quito,Quito,Ecuador,-0.22,-78.5125,SAM-22
+South America,Stanley,Stanley,Falkland Islands (Islas Malvinas),-51.7,-57.85,SAM-22
+South America,Cayenne,Cayenne,French Guiana,4.933,-52.33,SAM-22
+South America,Georgetown,Georgetown,Guyana,6.8011,-58.155,SAM-22
+South America,Asunción,Asuncion,Paraguay,-25.2945,-57.6435,SAM-22
+South America,Arequipa,Arequipa,Peru,-16.3989,-71.5369,SAM-22
+South America,Chiclayo,Chiclayo,Peru,-6.763,-79.8366,SAM-22
+South America,Lima,Lima,Peru,-12.06,-77.0375,SAM-22
+South America,Trujillo,Trujillo,Peru,-8.112,-79.0288,SAM-22
+South America,Paramaribo,Paramaribo,Suriname,5.8522,-55.2039,SAM-22
+South America,Montevideo,Montevideo,Uruguay,-34.9056,-56.1842,SAM-22
+South America,Barcelona,Barcelona,Venezuela,10.1403,-64.6833,SAM-22
+South America,Barquisimeto,Barquisimeto,Venezuela,10.0636,-69.3347,SAM-22
+South America,Caracas,Caracas,Venezuela,10.4806,-66.9036,SAM-22
+South America,Catia La Mar,Catia La Mar,Venezuela,10.6,-67.0333,SAM-22
+South America,Ciudad Guayana,Ciudad Guayana,Venezuela,8.3667,-62.65,SAM-22
+South America,Maracaibo,Maracaibo,Venezuela,10.6333,-71.6333,SAM-22
+South America,Maracay,Maracay,Venezuela,10.2469,-67.5961,SAM-22
+South America,Maturín,Maturin,Venezuela,9.75,-63.183,SAM-22
+South America,Valencia,Valencia,Venezuela,10.1833,-68.0,SAM-22
