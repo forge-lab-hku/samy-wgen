@@ -754,6 +754,36 @@ def _city_meta(city: str) -> dict:
     }
 
 
+def _normalize_city_name(city: str, cfg: pd.DataFrame | None = None) -> str:
+    """Return the canonical city name from cities_config.csv for one requested city."""
+    cfg = _load_cities_config() if cfg is None else cfg
+    key = city.lower()
+
+    row = cfg[cfg["city"].str.lower() == key]
+    if row.empty and "city_ascii" in cfg.columns:
+        row = cfg[cfg["city_ascii"].str.lower() == key]
+    if row.empty:
+        raise ValueError(
+            f"City '{city}' not found in cities_config. "
+            f"Available: {cfg['city'].tolist()}"
+        )
+    return str(row.iloc[0]["city"])
+
+
+def _normalize_city_args(requested: list[str]) -> list[str]:
+    """Resolve city arguments to canonical config names while preserving order."""
+    cfg = _load_cities_config()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for city in requested:
+        resolved = _normalize_city_name(city, cfg)
+        if resolved in seen:
+            continue
+        normalized.append(resolved)
+        seen.add(resolved)
+    return normalized
+
+
 def _resolve_coords(
     city: str,
     lat: Optional[float],
@@ -764,6 +794,15 @@ def _resolve_coords(
         return lat, lon
     meta = _city_meta(city)
     return meta["lat"], meta["lon"]
+
+
+def _resolve_city_points(cities: list[str]) -> dict[str, tuple[float, float]]:
+    """Return canonical city -> (lat, lon) mapping."""
+    points: dict[str, tuple[float, float]] = {}
+    for city in _normalize_city_args(cities):
+        meta = _city_meta(city)
+        points[city] = (meta["lat"], meta["lon"])
+    return points
 
 
 def _resolve_nsrdb_source(city: str) -> list[tuple[str, int, int]]:
@@ -919,6 +958,105 @@ def _nc_bytes_to_point_df(nc_bytes: bytes, lat: float, lon: float) -> pd.DataFra
     return pd.concat(series, axis=1).reset_index().rename(columns={"index": "time"})
 
 
+def _nc_bytes_to_point_dfs(
+    nc_bytes: bytes,
+    city_points: dict[str, tuple[float, float]],
+) -> dict[str, pd.DataFrame]:
+    """Extract nearest-grid time-series DataFrames for multiple cities from one NetCDF payload."""
+    import numpy as np
+    import xarray as xr
+
+    if nc_bytes[:2] == b"PK":
+        import zipfile
+        with zipfile.ZipFile(BytesIO(nc_bytes)) as zf:
+            nc_names = [n for n in zf.namelist() if n.endswith(".nc")]
+            if not nc_names:
+                raise ValueError("No .nc file found inside zip archive")
+            nc_bytes = zf.read(nc_names[0])
+
+    ds = xr.open_dataset(BytesIO(nc_bytes), engine="h5netcdf")
+
+    lat_name = next((c for c in ds.coords if c in ("lat", "latitude")), None)
+    lon_name = next((c for c in ds.coords if c in ("lon", "longitude")), None)
+    if lat_name is None or lon_name is None:
+        raise ValueError(f"lat/lon coordinates not found. Available: {list(ds.coords)}")
+
+    lat_arr = ds[lat_name].values
+    lon_arr = ds[lon_name].values
+    time_index = pd.to_datetime(ds["time"].values)
+
+    city_series: dict[str, list[pd.Series]] = {city: [] for city in city_points}
+    city_indices: dict[str, tuple[int, int]] = {}
+    for city, (lat, lon) in city_points.items():
+        if lon_arr.min() >= 0 and lon_arr.max() > 180:
+            lon_target = lon % 360
+        else:
+            lon_target = lon
+
+        if lat_arr.ndim == 1:
+            li = int(np.argmin(np.abs(lat_arr - lat)))
+            lj = int(np.argmin(np.abs(lon_arr - lon_target)))
+        else:
+            dist = (lat_arr - lat) ** 2 + (lon_arr - lon_target) ** 2
+            li, lj = np.unravel_index(np.argmin(dist), dist.shape)
+        city_indices[city] = (li, lj)
+
+    for var in ds.data_vars:
+        if var.endswith(("_bnds", "_bounds")):
+            continue
+        da = ds[var]
+        if "time" not in da.dims:
+            continue
+        for city, (li, lj) in city_indices.items():
+            if da.ndim == 3:
+                values = da[:, li, lj].values
+            elif da.ndim == 1:
+                values = da.values
+            else:
+                continue
+            city_series[city].append(pd.Series(values, index=time_index, name=var))
+
+    ds.close()
+    result: dict[str, pd.DataFrame] = {}
+    for city, series in city_series.items():
+        if not series:
+            continue
+        result[city] = (
+            pd.concat(series, axis=1)
+            .reset_index()
+            .rename(columns={"index": "time"})
+        )
+    if not result:
+        raise ValueError("No time-series data variables found in NetCDF")
+    return result
+
+
+def _cmip6_request_area(city_points: dict[str, tuple[float, float]], padding_deg: float = 1.5) -> list[float]:
+    """Build one CDS area box that covers all requested city coordinates."""
+    lats = [lat for lat, _ in city_points.values()]
+    lons = [lon for _, lon in city_points.values()]
+    return [
+        round(max(lats) + padding_deg, 2),
+        round(min(lons) - padding_deg, 2),
+        round(min(lats) - padding_deg, 2),
+        round(max(lons) + padding_deg, 2),
+    ]
+
+
+def _merge_cmip6_city_frames(
+    city_frames: dict[str, list[pd.DataFrame]],
+    city: str,
+) -> pd.DataFrame | None:
+    """Merge per-variable CMIP6 DataFrames for one city."""
+    var_dfs = city_frames.get(city, [])
+    if not var_dfs:
+        return None
+    merged = var_dfs[0]
+    for df_v in var_dfs[1:]:
+        merged = pd.merge(merged, df_v, on="time", how="outer")
+    return merged.sort_values("time").reset_index(drop=True)
+
+
 # ─── ISD ──────────────────────────────────────────────────────────────────────
 
 def list_isd_stations(
@@ -1054,6 +1192,33 @@ def download_isd(
     logger.info(f"ISD download complete ({len(years)} years requested) → {station_dir}")
 
 
+def download_isd_for_cities(
+    cities: list[str],
+    years: List[int],
+    output_dir: str = "data/ISD",
+    isd_station_ids: dict[str, str] | None = None,
+    isd_radius_km: float = 50.0,
+) -> None:
+    """Download ISD data for multiple cities."""
+    canonical_cities = _normalize_city_args(cities)
+    for city in canonical_cities:
+        station_id = (
+            isd_station_ids[city]
+            if isd_station_ids and city in isd_station_ids
+            else select_best_isd_station(
+                city=city,
+                radius_km=isd_radius_km,
+                cache_dir=output_dir,
+            )
+        )
+        download_isd(
+            station_id=station_id,
+            city=city,
+            years=years,
+            output_dir=output_dir,
+        )
+
+
 # ─── NSRDB ────────────────────────────────────────────────────────────────────
 
 def download_nsrdb(
@@ -1151,6 +1316,27 @@ def download_nsrdb(
     out_path = out_dir / f"nsrdb_{city_lower}_{y0}-{y1}.csv"
     combined.to_csv(out_path, index=False)
     logger.info(f"NSRDB saved → {out_path} ({len(combined)} rows, {y0}–{y1})")
+
+
+def download_nsrdb_for_cities(
+    cities: list[str],
+    years: Optional[List[int]] = None,
+    output_dir: str = "data/NSRDB",
+    interval: int = 60,
+    max_retries: int = 3,
+    retry_backoff_sec: float = 2.0,
+) -> None:
+    """Download NSRDB data for multiple cities."""
+    canonical_cities = _normalize_city_args(cities)
+    for city in canonical_cities:
+        download_nsrdb(
+            city=city,
+            years=years,
+            output_dir=output_dir,
+            interval=interval,
+            max_retries=max_retries,
+            retry_backoff_sec=retry_backoff_sec,
+        )
 
 
 # ─── CMIP6 ────────────────────────────────────────────────────────────────────
@@ -1255,6 +1441,113 @@ def download_cmip6(
                 merged = merged.sort_values("time").reset_index(drop=True)
                 merged.to_csv(out_csv, index=False)
                 logger.info(f"CMIP6 saved → {out_csv} ({len(merged)} rows)")
+
+
+def download_cmip6_for_cities(
+    cities: list[str],
+    models: Optional[List[str]] = None,
+    experiments: Optional[List[str]] = None,
+    variables: Optional[List[str]] = None,
+    year_range: Optional[tuple] = None,
+    output_dir: str = "data/CMIP6",
+) -> None:
+    """Download CMIP6 projections for multiple cities using one CDS request per variable group."""
+    import cdsapi
+
+    city_points = _resolve_city_points(cities)
+    models = models or ["mpi_esm1_2_lr"]
+    experiments = experiments or ["historical", "ssp2_4_5"]
+    variables = variables or sorted(CMIP6_SUPPORTED_VARIABLES)
+    all_months = [f"{i:02d}" for i in range(1, 13)]
+    all_days = [f"{i:02d}" for i in range(1, 32)]
+    area = _cmip6_request_area(city_points)
+    client = cdsapi.Client()
+
+    for model in models:
+        for cds_exp in experiments:
+            variable_groups = _filter_cmip6_variable_groups(
+                _get_cmip6_variable_groups(model, cds_exp),
+                variables,
+            )
+            if not variable_groups:
+                logger.warning(
+                    f"CMIP6 combination not available in CDS: model='{model}', experiment='{cds_exp}'. "
+                    "Run 'samy-download list-cmip6' to inspect currently available combinations."
+                )
+                continue
+
+            years = CMIP6_EXP_YEARS.get(cds_exp, [])
+            if year_range is not None:
+                years = [y for y in years if year_range[0] <= y <= year_range[1]]
+            if not years:
+                logger.warning(f"No years available for experiment '{cds_exp}' with given range, skipping")
+                continue
+            label = CMIP6_EXP_LABEL[cds_exp]
+
+            for temporal_res, var_list in variable_groups.items():
+                suffix = "" if temporal_res == "daily" else "_monthly"
+                pending_cities = [
+                    city for city in city_points
+                    if not (Path(output_dir) / city / f"{model}_{label}{suffix}.csv").exists()
+                ]
+                if not pending_cities:
+                    logger.info(
+                        "CMIP6 outputs already exist for all cities: model='%s', experiment='%s', resolution='%s'",
+                        model, label, temporal_res,
+                    )
+                    continue
+
+                city_frames: dict[str, list[pd.DataFrame]] = {city: [] for city in pending_cities}
+                pbar_desc = f"CMIP6 {model} {label} ({len(pending_cities)} cities)"
+
+                for variable in tqdm(var_list, desc=pbar_desc, unit="var"):
+                    tmp_nc = Path(output_dir) / f"_tmp_{model}_{cds_exp}_{variable}.nc"
+                    logger.info("  → %s", variable)
+                    try:
+                        req: dict = {
+                            "temporal_resolution": temporal_res,
+                            "experiment": cds_exp,
+                            "variable": variable,
+                            "model": model,
+                            "year": [str(y) for y in years],
+                            "area": area,
+                        }
+                        if temporal_res == "daily":
+                            req["month"] = all_months
+                            req["day"] = all_days
+                        client.retrieve(CDS_CMIP6_DATASET, req, str(tmp_nc))
+
+                        city_dfs = _nc_bytes_to_point_dfs(
+                            tmp_nc.read_bytes(),
+                            {city: city_points[city] for city in pending_cities},
+                        )
+                        rename = {}
+                        for raw_col in next(iter(city_dfs.values())).columns:
+                            if raw_col != "time":
+                                rename[raw_col] = CMIP6_VAR_SHORT.get(raw_col, raw_col)
+                        for city, df_city in city_dfs.items():
+                            city_frames[city].append(df_city.rename(columns=rename))
+                        logger.info("    ✓ %s", CMIP6_VAR_SHORT.get(variable, variable))
+                    except Exception as exc:
+                        logger.warning("    ✗ %s: %s", variable, exc)
+                    finally:
+                        if tmp_nc.exists():
+                            tmp_nc.unlink()
+                    time.sleep(1)
+
+                for city in pending_cities:
+                    merged = _merge_cmip6_city_frames(city_frames, city)
+                    if merged is None:
+                        logger.error(
+                            "No variables downloaded for city='%s', model='%s', experiment='%s', resolution='%s'",
+                            city, model, label, temporal_res,
+                        )
+                        continue
+                    city_dir = Path(output_dir) / city
+                    city_dir.mkdir(parents=True, exist_ok=True)
+                    out_csv = city_dir / f"{model}_{label}{suffix}.csv"
+                    merged.to_csv(out_csv, index=False)
+                    logger.info("CMIP6 saved → %s (%s rows)", out_csv, len(merged))
 
 
 # ─── CORDEX-CMIP5 ─────────────────────────────────────────────────────────────
@@ -1409,8 +1702,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--isd-dir", default="data/ISD", help="Directory to cache isd-history.csv")
 
     # ── download ───────────────────────────────────────────────────────────────
-    p_dl = sub.add_parser("download", help="Download weather data for a city")
-    p_dl.add_argument("--city", required=True, help="City name (from cities_config.csv)")
+    p_dl = sub.add_parser("download", help="Download weather data for one or more cities")
+    p_dl.add_argument("--city", required=True, nargs="+", help="City name(s) from cities_config.csv")
     p_dl.add_argument(
         "--data", nargs="+",
         choices=["isd", "nsrdb", "cmip6"],
@@ -1553,38 +1846,35 @@ def main() -> None:
         return
 
     # ── download ───────────────────────────────────────────────────────────────
-    meta    = _city_meta(args.city)
-    lat     = meta["lat"]
-    lon     = meta["lon"]
+    cities = _normalize_city_args(args.city)
     sources = set(args.data)
 
     if "isd" in sources:
-        station_id = args.isd_station or select_best_isd_station(
-            city=args.city,
-            radius_km=args.isd_radius,
-            cache_dir=args.isd_dir,
-        )
         yr_start, yr_end = args.years if args.years else DEFAULT_ISD_YEAR_RANGE
-        download_isd(
-            station_id=station_id,
-            city=args.city,
+        station_ids = None
+        if args.isd_station:
+            if len(cities) != 1:
+                raise SystemExit("ERROR: --isd-station can only be used when exactly one --city is provided.")
+            station_ids = {cities[0]: args.isd_station}
+        download_isd_for_cities(
+            cities=cities,
             years=list(range(yr_start, yr_end + 1)),
             output_dir=args.isd_dir,
+            isd_station_ids=station_ids,
+            isd_radius_km=args.isd_radius,
         )
 
     if "nsrdb" in sources:
         yr_start, yr_end = args.years if args.years else DEFAULT_NSRDB_YEAR_RANGE
-        download_nsrdb(
-            city=args.city,
-            lat=lat, lon=lon,
+        download_nsrdb_for_cities(
+            cities=cities,
             years=list(range(yr_start, yr_end + 1)),
             output_dir=args.nsrdb_dir,
         )
 
     if "cmip6" in sources:
-        download_cmip6(
-            city=args.city,
-            lat=lat, lon=lon,
+        download_cmip6_for_cities(
+            cities=cities,
             models=args.models,
             experiments=args.experiments,
             variables=args.cmip6_var,

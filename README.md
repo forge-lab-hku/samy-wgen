@@ -44,6 +44,9 @@ Before first use, make sure NSRDB credentials are saved with `samy-download conf
 # Deterministic forecast — Miami, SSP2-4.5, auto-download missing ISD/NSRDB/CMIP6 inputs
 samy-run --city Miami
 
+# Batch one-click run for multiple cities
+samy-run --city Miami "Los Angeles"
+
 # Custom forecast window and scenario
 samy-run --city Miami --start 2025-01-01 --end 2060-12-31 --ssp ssp585
 
@@ -229,6 +232,7 @@ delta workflows.
 | `list-cordex [--detail]` | Inspect live CORDEX catalogue combinations from CDS |
 | `list-stations --city <name> [--radius 150]` | Print nearby ISD stations sorted by distance |
 | `download --city <name> [--isd-station <USAF-WBAN>]` | Download ISD + NSRDB + CMIP6; otherwise auto-select best-coverage ISD station within 50 km |
+| `download --city <name1> <name2> ...` | Batch-download multiple cities; CMIP6 requests are grouped into shared bounding-box fetches |
 | `download --models mpi_esm1_2_lr cnrm_esm2_1` | Specify CMIP6 models |
 | `download --experiments historical ssp2_4_5 ssp5_8_5` | Specify CMIP6 CDS experiment names |
 

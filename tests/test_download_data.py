@@ -428,6 +428,12 @@ class TestCliParsing:
         assert set(args.data) == {"isd", "nsrdb", "cmip6"}
         assert args.isd_station is None
         assert args.isd_radius == 50.0
+        assert args.city == ["Miami"]
+
+    def test_download_accepts_multiple_cities(self):
+        parser = self._parser()
+        args = parser.parse_args(["download", "--city", "Miami", "Los Angeles"])
+        assert args.city == ["Miami", "Los Angeles"]
 
     def test_download_custom_experiments(self):
         parser = self._parser()
@@ -1060,6 +1066,53 @@ class TestCmip6YearRange:
 
         assert len(captured_requests) == 1
         assert captured_requests[0]["variable"] == "precipitation"
+
+    def test_download_cmip6_for_cities_batches_request(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cmip6_for_cities
+
+        captured_requests: list[dict] = []
+
+        def fake_retrieve(dataset, req, path):
+            captured_requests.append(req.copy())
+            Path(path).write_bytes(b"fake_nc")
+
+        mock_client = MagicMock()
+        mock_client.retrieve.side_effect = fake_retrieve
+
+        def fake_extract(_nc_bytes, city_points):
+            times = pd.date_range("1995-01-01", periods=2, freq="D")
+            return {
+                city: pd.DataFrame({"time": times, "near_surface_air_temperature": [1.0, 2.0]})
+                for city in city_points
+            }
+
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch(
+                "samy_wgen.pipeline.download_data._get_cmip6_variable_groups",
+                return_value={"daily": ["near_surface_air_temperature"]},
+            ),
+            patch(
+                "samy_wgen.pipeline.download_data._resolve_city_points",
+                return_value={
+                    "Miami": (25.76, -80.19),
+                    "Los Angeles": (34.05, -118.24),
+                },
+            ),
+            patch("samy_wgen.pipeline.download_data._nc_bytes_to_point_dfs", side_effect=fake_extract),
+        ):
+            download_cmip6_for_cities(
+                cities=["Miami", "Los Angeles"],
+                models=["mpi_esm1_2_lr"],
+                experiments=["historical"],
+                year_range=(1995, 1995),
+                output_dir=str(tmp_path),
+            )
+
+        assert len(captured_requests) == 1
+        assert captured_requests[0]["area"] == [35.55, -119.74, 24.26, -78.69]
+        assert (tmp_path / "Miami" / "mpi_esm1_2_lr_historical.csv").exists()
+        assert (tmp_path / "Los Angeles" / "mpi_esm1_2_lr_historical.csv").exists()
 
     def test_download_cordex_uses_constrained_plan(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_cordex_cmip5

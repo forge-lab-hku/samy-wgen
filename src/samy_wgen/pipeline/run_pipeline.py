@@ -23,6 +23,7 @@ Intermediate files are skipped on re-runs unless --overwrite is passed.
 
 USAGE:
   samy-run --city Miami
+  samy-run --city Miami Los_Angeles
   samy-run --city Miami --mode ensemble --members 50
   samy-run --city Miami --start 2025-01-01 --end 2050-12-31 --ssp ssp585
   samy-run --city Miami --overwrite
@@ -133,8 +134,8 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    parser.add_argument("--city", required=True,
-                        help="City name (must match cities_config.csv, e.g. 'Miami')")
+    parser.add_argument("--city", required=True, nargs="+",
+                        help="City name(s) matching cities_config.csv, e.g. 'Miami' 'Los Angeles'")
 
     parser.add_argument("--data-dir", default="data",
                         help="Root data directory (ISD/, NSRDB/, CMIP6/ live here)")
@@ -227,10 +228,15 @@ def _has_required_cmip6_data(city: str, cmip6_dir: Path, ssp: str, models: Itera
     return False
 
 
-def _ensure_pipeline_inputs(args, data_dir: Path) -> tuple[Path, Path, Path]:
+def _normalize_city_args(requested: list[str]) -> list[str]:
+    from samy_wgen.pipeline.download_data import _normalize_city_args as _normalize
+
+    return _normalize(requested)
+
+
+def _ensure_pipeline_inputs(args, data_dir: Path, city: str, cmip6_dir: Path | None = None) -> tuple[Path, Path, Path]:
     from samy_wgen.pipeline.download_data import (
         _city_meta,
-        download_cmip6,
         download_isd,
         download_nsrdb,
         select_best_isd_station,
@@ -240,66 +246,84 @@ def _ensure_pipeline_inputs(args, data_dir: Path) -> tuple[Path, Path, Path]:
         isd_station_dir = Path(args.isd_dir)
     else:
         try:
-            isd_station_dir = _find_isd_dir(args.city, data_dir)
+            isd_station_dir = _find_isd_dir(city, data_dir)
         except SystemExit:
             if args.skip_download or "isd" not in set(args.download_data):
                 raise
             _print_title("Download ISD")
             yr_start, yr_end = args.download_years if args.download_years else DEFAULT_ISD_YEAR_RANGE
             station_id = args.isd_station or select_best_isd_station(
-                city=args.city,
+                city=city,
                 radius_km=args.isd_radius,
                 cache_dir=str(data_dir / "ISD"),
             )
             download_isd(
                 station_id=station_id,
-                city=args.city,
+                city=city,
                 years=list(range(yr_start, yr_end + 1)),
                 output_dir=str(data_dir / "ISD"),
             )
-            isd_station_dir = _find_isd_dir(args.city, data_dir)
+            isd_station_dir = _find_isd_dir(city, data_dir)
 
     if args.nsrdb:
         nsrdb_csv = Path(args.nsrdb)
     else:
         try:
-            nsrdb_csv = _find_nsrdb_csv(args.city, data_dir)
+            nsrdb_csv = _find_nsrdb_csv(city, data_dir)
         except SystemExit:
             if args.skip_download or "nsrdb" not in set(args.download_data):
                 raise
             _print_title("Download NSRDB")
-            meta = _city_meta(args.city)
+            meta = _city_meta(city)
             yr_start, yr_end = args.download_years if args.download_years else DEFAULT_NSRDB_YEAR_RANGE
             download_nsrdb(
-                city=args.city,
+                city=city,
                 lat=meta["lat"],
                 lon=meta["lon"],
                 years=list(range(yr_start, yr_end + 1)),
                 output_dir=str(data_dir / "NSRDB"),
             )
-            nsrdb_csv = _find_nsrdb_csv(args.city, data_dir)
+            nsrdb_csv = _find_nsrdb_csv(city, data_dir)
 
-    cmip6_dir = Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6"
-    if not _has_required_cmip6_data(args.city, cmip6_dir, args.ssp, args.cmip6_models):
-        if args.skip_download or "cmip6" not in set(args.download_data):
-            missing_city_dir = cmip6_dir / args.city
-            raise SystemExit(
-                f"ERROR: Required CMIP6 files not found under {missing_city_dir}. "
-                "Provide --cmip6-dir, pre-download the files, or allow auto-download."
-            )
-        _print_title("Download CMIP6")
-        meta = _city_meta(args.city)
-        download_cmip6(
-            city=args.city,
-            lat=meta["lat"],
-            lon=meta["lon"],
-            models=args.cmip6_models,
-            experiments=_cmip6_download_experiments(args.ssp, args.cmip6_experiments),
-            year_range=tuple(args.cmip6_years) if args.cmip6_years else None,
-            output_dir=str(cmip6_dir),
+    cmip6_dir = cmip6_dir or (Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6")
+    if not _has_required_cmip6_data(city, cmip6_dir, args.ssp, args.cmip6_models):
+        missing_city_dir = cmip6_dir / city
+        raise SystemExit(
+            f"ERROR: Required CMIP6 files not found under {missing_city_dir}. "
+            "Provide --cmip6-dir, pre-download the files, or allow auto-download."
         )
 
     return isd_station_dir, nsrdb_csv, cmip6_dir
+
+
+def _ensure_batch_cmip6_inputs(args, data_dir: Path, cities: list[str]) -> Path:
+    from samy_wgen.pipeline.download_data import download_cmip6_for_cities
+
+    cmip6_dir = Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6"
+    missing_cities = [
+        city for city in cities
+        if not _has_required_cmip6_data(city, cmip6_dir, args.ssp, args.cmip6_models)
+    ]
+    if not missing_cities:
+        return cmip6_dir
+
+    if args.skip_download or "cmip6" not in set(args.download_data):
+        missing_city_dir = cmip6_dir / missing_cities[0]
+        raise SystemExit(
+            f"ERROR: Required CMIP6 files not found under {missing_city_dir}. "
+            "Provide --cmip6-dir, pre-download the files, or allow auto-download."
+        )
+
+    _print_title("Download CMIP6")
+    print(f"[batch] Downloading shared CMIP6 inputs for: {', '.join(missing_cities)}")
+    download_cmip6_for_cities(
+        cities=missing_cities,
+        models=args.cmip6_models,
+        experiments=_cmip6_download_experiments(args.ssp, args.cmip6_experiments),
+        year_range=tuple(args.cmip6_years) if args.cmip6_years else None,
+        output_dir=str(cmip6_dir),
+    )
+    return cmip6_dir
 
 
 # ==========================================================================
@@ -533,31 +557,34 @@ def _stage3_ensemble(merged_csv: Path, lat: float,
 # MAIN ENTRY
 # ==========================================================================
 
-def main():
-    parser = _build_parser()
-    args = parser.parse_args()
+def _city_out_dir(args, city: str) -> Path:
+    if args.out_dir is None:
+        return Path("output") / city
+    base = Path(args.out_dir)
+    if len(args.city) == 1:
+        return base
+    return base / city
 
-    # --- Resolve paths ---
-    data_dir = Path(args.data_dir)
-    out_dir  = Path(args.out_dir) if args.out_dir else Path("output") / args.city
+
+def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None:
+    out_dir = _city_out_dir(args, city)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    isd_station_dir, nsrdb_csv, cmip6_dir = _ensure_pipeline_inputs(args, data_dir)
+    isd_station_dir, nsrdb_csv, cmip6_dir = _ensure_pipeline_inputs(args, data_dir, city, cmip6_dir)
 
-    meta = _load_city_meta(args.city)
+    meta = _load_city_meta(city)
     meta["elevation_m"] = args.elevation
 
     epw_years = [int(y.strip()) for y in args.epw_years.split(",")]
     ow = args.overwrite
 
     print("=" * 70)
-    print(f"SAMY PIPELINE  city={args.city}  mode={args.mode}")
+    print(f"SAMY PIPELINE  city={city}  mode={args.mode}")
     print(f"  baseline: {args.baseline_start}–{args.baseline_end}")
     print(f"  forecast: {args.start} → {args.end}")
     print(f"  output:   {out_dir}")
     print("=" * 70)
 
-    # --- Stage 0: parse ISD (no cache) ---
     isd_lst_cache = out_dir / "1_isd_lst.csv"
     if isd_lst_cache.exists() and not ow:
         _print_title("Stage 0 Parse ISD")
@@ -565,17 +592,15 @@ def main():
         isd_lst = pd.read_csv(isd_lst_cache, parse_dates=["DATE"]).set_index("DATE")
     else:
         isd_raw = _stage0_parse_isd(isd_station_dir)
-        isd_lst = _stage1_remap_to_lst(isd_raw, args.city, out_dir, overwrite=ow)
+        isd_lst = _stage1_remap_to_lst(isd_raw, city, out_dir, overwrite=ow)
 
-    # --- Stage 2: merge NSRDB ---
     merged_csv = _stage2_merge_nsrdb(isd_lst, nsrdb_csv, out_dir, overwrite=ow)
 
-    # --- Mode branch ---
     if args.mode == "deterministic":
         xlsx = _stage3_rsvar(
             merged_csv=merged_csv,
             lat=meta["lat"],
-            city=args.city,
+            city=city,
             baseline_start=args.baseline_start,
             baseline_end=args.baseline_end,
             forecast_start=args.start,
@@ -586,7 +611,7 @@ def main():
         output_df = _stage4_climate_delta(
             rsvar_xlsx=xlsx,
             cmip6_dir=cmip6_dir,
-            city=args.city,
+            city=city,
             ssp=args.ssp,
             lat=meta["lat"],
             baseline_start=args.baseline_start,
@@ -598,7 +623,7 @@ def main():
         written = _output_epw(
             output_df=output_df,
             epw_years=epw_years,
-            city=args.city,
+            city=city,
             ssp=args.ssp,
             meta=meta,
             out_dir=out_dir,
@@ -606,8 +631,7 @@ def main():
         )
         print(f"\n{'='*70}")
         print(f"DONE — {len(written)} EPW file(s) in {out_dir / 'EPW'}")
-
-    else:  # ensemble
+    else:
         ens_dir = _stage3_ensemble(
             merged_csv=merged_csv,
             lat=meta["lat"],
@@ -623,6 +647,20 @@ def main():
         )
         print(f"\n{'='*70}")
         print(f"DONE — {args.members} ensemble members in {ens_dir}")
+
+
+def main():
+    parser = _build_parser()
+    args = parser.parse_args()
+    args.city = _normalize_city_args(args.city)
+    data_dir = Path(args.data_dir)
+
+    if args.isd_station and len(args.city) != 1:
+        raise SystemExit("ERROR: --isd-station can only be used when exactly one --city is provided.")
+
+    cmip6_dir = _ensure_batch_cmip6_inputs(args, data_dir, args.city)
+    for city in args.city:
+        _run_city_pipeline(args, city, data_dir, cmip6_dir)
 
 
 if __name__ == "__main__":
