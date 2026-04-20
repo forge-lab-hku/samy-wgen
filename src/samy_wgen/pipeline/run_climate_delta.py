@@ -1,33 +1,23 @@
 #!/usr/bin/env python3
 """
-Apply Climate Delta from Any GCM-RCM Variant
+Apply climate delta from explicit weather projection inputs.
 
-This script takes the saved RS-VAR output (baseline + anomaly) and applies
-climate delta from a specified CORDEX_CMIP5 GCM-RCM variant.
+Supported projection sources:
+    1. CMIP6 city-level CSV files under a projection root
+    2. CORDEX-CMIP5 city-level CSV files under a projection root
 
-INPUTS:
-    1. RS-VAR output Excel/CSV (from run_v5_save_rsvar.py)
-    2. CORDEX_CMIP5 CSV for any GCM-RCM variant
+Inputs:
+    1. RS-VAR output Excel/CSV (from samy-rsvar)
+    2. Projection CSV files laid out under the expected city subdirectory
 
-OUTPUT:
-    - New Excel file with sheets:
-        - "Output": Final forecast with climate delta applied
-        - "Climate_Delta_{GCM-RCM}": The applied climate delta
-        - "Metadata": Configuration and delta statistics
+Output:
+    Excel file containing the corrected forecast, delta statistics, and metadata.
 
-USAGE:
-    python apply_climate_delta.py \
-        --rsvar output/rsvar_output.xlsx \
-        --cordex path/to/new_gcm_rcm.csv \
-        --gcm-rcm "MPI-ESM-LR_REMO2015" \
-        --output output/forecast_MPI-ESM-LR_REMO2015.xlsx
-
-CLIMATE DELTA CALCULATION:
+Climate delta calculation:
     For each date in the forecast period:
-        delta(date) = CORDEX_CMIP5(date) - CORDEX_baseline(day_of_year)
+        delta(date) = projection(date) - projection_baseline(day_of_year or month)
 
-    Where CORDEX_baseline is the 1991-2010 climatology (DOY means).
-    This is consistent with the baseline computation in the main V5 pipeline.
+    The baseline climatology is computed over the requested baseline years.
 """
 
 import argparse
@@ -36,7 +26,6 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from typing import Any
-import yaml
 
 import importlib.resources
 
@@ -45,22 +34,9 @@ from samy_wgen.utils.physics_qa import (
     enforce_solar_constraints as shared_enforce_solar_constraints,
 )
 
-
-def _get_bundled_config_path() -> Path:
-    ref = importlib.resources.files("samy_wgen.config").joinpath("config.yaml")
-    return Path(str(ref))
-
-
 def _get_bundled_cities_config() -> Path:
     ref = importlib.resources.files("samy_wgen.config").joinpath("cities_config.csv")
     return Path(str(ref))
-
-
-def _load_scenarios() -> dict:
-    """Load and return scenarios from bundled config.yaml (lazy, call from main() only)."""
-    with open(_get_bundled_config_path(), 'r') as f:
-        cfg = yaml.safe_load(f)
-    return cfg.get('scenarios', {})
 
 
 # Variable transformation types (consistent with V5 pipeline)
@@ -85,6 +61,8 @@ BASELINE_END = 2010
 DEFAULT_RSVAR_DIR = Path("output") / "RSVAR"
 DEFAULT_OUT_DIR = Path("output") / "RSVAR_cd"
 DEFAULT_OUT_DIR_MONTHLY = Path("output") / "RSVAR_cd_monthly"
+DEFAULT_CMIP6_DIR = Path("data") / "CMIP6"
+DEFAULT_CORDEX_CMIP5_DIR = Path("data") / "CORDEX_CMIP5"
 
 
 def _load_cities_config(path: Path) -> pd.DataFrame:
@@ -104,6 +82,10 @@ def _load_cities_config(path: Path) -> pd.DataFrame:
 
     df = df.copy()
     df["city"] = df["city"].astype(str)
+    if "city_ascii" in df.columns:
+        df["city_ascii"] = df["city_ascii"].fillna(df["city"]).astype(str)
+        df["city_native"] = df["city"]
+        df["city"] = df["city_ascii"]
     df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
 
     bad = df[df["latitude"].isna()]["city"].tolist()
@@ -114,20 +96,64 @@ def _load_cities_config(path: Path) -> pd.DataFrame:
     return df
 
 
-def _normalize_city_args(requested: list[str] | None, available_cities: list[str], config_path: Path) -> list[str]:
-    """Resolve requested city list (case-sensitive) and validate."""
+def _normalize_city_args(requested: list[str] | None, cities_df: pd.DataFrame, config_path: Path) -> list[str]:
+    """Resolve requested city list and validate against city/city_ascii aliases."""
+    available_cities = list(cities_df["city"])
     if not requested:
         return sorted(available_cities)
 
-    avail_set = set(available_cities)
-    missing = [c for c in requested if c not in avail_set]
+    lookup: dict[str, str] = {}
+    for _, row in cities_df.iterrows():
+        canonical = str(row["city"])
+        lookup[canonical.lower()] = canonical
+        if "city_native" in cities_df.columns:
+            lookup[str(row["city_native"]).lower()] = canonical
+
+    resolved: list[str] = []
+    missing: list[str] = []
+    for city in requested:
+        canonical = lookup.get(city.lower())
+        if canonical is None:
+            missing.append(city)
+            continue
+        if canonical not in resolved:
+            resolved.append(canonical)
+
     if missing:
-        avail = ", ".join(sorted(avail_set))
+        avail = ", ".join(sorted(set(available_cities)))
         raise SystemExit(
             f"ERROR: City(ies) not found in {config_path}: {missing}.\n"
             f"Available cities: {avail}"
         )
-    return requested
+    return resolved
+
+
+def _resolve_projection_args(args) -> dict[str, Any]:
+    """Resolve a single explicit projection configuration from CLI args."""
+    projection_type = args.projection_type
+
+    if projection_type == "cmip6":
+        if not args.ssp:
+            raise SystemExit("ERROR: --ssp is required when --projection-type=cmip6.")
+        projection_root = Path(args.projection_root) if args.projection_root else DEFAULT_CMIP6_DIR
+        return {
+            "type": "cmip6",
+            "label": args.scenario_label or f"CMIP6_{args.ssp}",
+            "root": projection_root,
+            "ssp": args.ssp,
+            "gcm": args.gcm or "AUTO",
+            "rcm": args.rcm,
+        }
+
+    projection_root = Path(args.projection_root) if args.projection_root else DEFAULT_CORDEX_CMIP5_DIR
+    return {
+        "type": "cordex-cmip5",
+        "label": args.scenario_label or "CORDEX_CMIP5_rcp85",
+        "root": projection_root,
+        "ssp": "rcp85",
+        "gcm": args.gcm or "UNKNOWN",
+        "rcm": args.rcm or "UNKNOWN",
+    }
 
 
 def _slug_city(city: str) -> str:
@@ -482,6 +508,20 @@ def load_and_merge_cordex_city_variant(variant_root: Path, city: str) -> tuple[p
     return merged, meta
 
 
+def load_cordex_cmip5_projection(base_path: Path, city: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Load CORDEX-CMIP5 daily data and derive a monthly view from it."""
+    daily_df, meta = load_and_merge_cordex_city_variant(base_path, city)
+    monthly_df = _cordex_monthly_view(daily_df)
+    meta = {
+        **meta,
+        "base_path": str(base_path),
+        "city": city,
+        "ssp": "rcp85",
+        "model_name": "CORDEX-CMIP5",
+    }
+    return daily_df, monthly_df, meta
+
+
 def _apply_unit_conversions(df: pd.DataFrame) -> pd.DataFrame:
     """Apply standard unit conversions to climate data."""
     for col in ['tas', 'tasmax', 'tasmin']:
@@ -525,9 +565,7 @@ def _load_and_merge_climate_data(file_pairs: list[tuple[Path, Path]], required: 
             elif 'mpi_esm1_2_lr' in hist_name:
                 model_name = 'MPI-ESM1-2-LR'
             elif 'mpi_esm_lr' in hist_name:
-                model_name = 'MPI-ESM-LR (CMIP5)'
-            elif '_day_' in hist_name:
-                model_name = 'CORDEX-CMIP6'
+                model_name = 'MPI-ESM-LR'
             else:
                 model_name = 'Unknown'
 
@@ -539,46 +577,19 @@ def _load_and_merge_climate_data(file_pairs: list[tuple[Path, Path]], required: 
     return pd.DataFrame(), "None"
 
 
-def load_cmip6_or_cordex6(base_path: Path, city: str, ssp: str, scenario_id: str = None) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """Load CMIP5, CMIP6 or CORDEX-CMIP6 data with auto-detection of file format.
-
-    Supports multiple formats:
-    - CMIP5: mpi_esm_lr_historical.csv + mpi_esm_lr_rcp_8_5.csv
-    - CMIP6 MPI: mpi_esm1_2_lr_historical.csv + mpi_esm1_2_lr_{ssp}.csv
-    - CMIP6 CNRM: cnrm_esm2_1_historical.csv + cnrm_esm2_1_{ssp}.csv
-    - CORDEX_CMIP6: {City}_historical_day_*.csv + {City}_{ssp}_day_*.csv
+def load_cmip6_projection(base_path: Path, city: str, ssp: str, scenario_id: str = None) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Load CMIP6 data with auto-detection of supported model file names.
 
     Args:
         base_path: Base path to data directory
         city: City name (e.g., 'Los Angeles')
-        ssp: SSP scenario (e.g., 'ssp245', 'ssp370', 'rcp85')
-        scenario_id: Full scenario identifier (e.g., 'CMIP6_CNRM_ssp245') for model priority detection
+        ssp: SSP scenario (e.g., 'ssp245', 'ssp370')
+        scenario_id: Full scenario identifier for model priority detection
 
     Returns:
         (daily_df, monthly_df, meta_dict)
     """
-    city_slug = _slug_city(city)
     city_dir = _resolve_city_dir(base_path, city)
-
-    # Determine future scenario file suffix based on SSP
-    # For CMIP5: rcp85 -> rcp_8_5
-    # For CMIP6: ssp245 -> ssp245
-    if ssp.startswith('rcp'):
-        # CMIP5 format: rcp85 -> rcp_8_5
-        future_suffix = ssp.replace('rcp', 'rcp_').replace('85', '8_5').replace('45', '4_5').replace('26', '2_6')
-    else:
-        # CMIP6 format: keep as-is
-        future_suffix = ssp
-
-    # Try CMIP5 format: mpi_esm_lr_{experiment}.csv
-    cmip5_daily_pairs = [(
-        city_dir / "mpi_esm_lr_historical.csv",
-        city_dir / f"mpi_esm_lr_{future_suffix}.csv"
-    )]
-    cmip5_monthly_pairs = [(
-        city_dir / "mpi_esm_lr_historical_monthly.csv",
-        city_dir / f"mpi_esm_lr_{future_suffix}_monthly.csv"
-    )]
 
     # Try CMIP6 format: mpi_esm1_2_lr_{experiment}.csv
     cmip6_daily_pairs = [(
@@ -600,27 +611,15 @@ def load_cmip6_or_cordex6(base_path: Path, city: str, ssp: str, scenario_id: str
         city_dir / f"cnrm_esm2_1_{ssp}_monthly.csv"
     )]
 
-    # Try CORDEX_CMIP6 format: {City}_{experiment}_day_*.csv
-    cordex6_daily_pairs = [(
-        city_dir / f"{city_slug}_historical_day_19500101-20141231.csv",
-        city_dir / f"{city_slug}_{ssp}_day_20150101-21001231.csv"
-    )]
-    cordex6_monthly_pairs = [(
-        city_dir / f"{city_slug}_historical_mon_195001-201412.csv",
-        city_dir / f"{city_slug}_{ssp}_mon_201501-210012.csv"
-    )]
-
     # Determine loading priority based on scenario_id
     # If scenario contains "CNRM", prioritize CNRM model files
     if scenario_id and "CNRM" in scenario_id:
-        # Priority: CNRM -> CMIP6(MPI) -> CMIP5 -> CORDEX_CMIP6
-        daily_pairs = cnrm_daily_pairs + cmip6_daily_pairs + cmip5_daily_pairs + cordex6_daily_pairs
-        monthly_pairs = cnrm_monthly_pairs + cmip6_monthly_pairs + cmip5_monthly_pairs + cordex6_monthly_pairs
+        daily_pairs = cnrm_daily_pairs + cmip6_daily_pairs
+        monthly_pairs = cnrm_monthly_pairs + cmip6_monthly_pairs
         print(f"  [Model Priority] Using CNRM model priority for scenario: {scenario_id}")
     else:
-        # Default priority: CMIP5 -> CMIP6(MPI) -> CNRM -> CORDEX_CMIP6
-        daily_pairs = cmip5_daily_pairs + cmip6_daily_pairs + cnrm_daily_pairs + cordex6_daily_pairs
-        monthly_pairs = cmip5_monthly_pairs + cmip6_monthly_pairs + cnrm_monthly_pairs + cordex6_monthly_pairs
+        daily_pairs = cmip6_daily_pairs + cnrm_daily_pairs
+        monthly_pairs = cmip6_monthly_pairs + cnrm_monthly_pairs
 
     # Try loading daily data (required)
     daily_df, model_name = _load_and_merge_climate_data(daily_pairs, required=True)
@@ -637,6 +636,11 @@ def load_cmip6_or_cordex6(base_path: Path, city: str, ssp: str, scenario_id: str
     }
 
     return daily_df, monthly_df, meta
+
+
+def load_cmip6_or_cordex6(base_path: Path, city: str, ssp: str, scenario_id: str = None) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Backward-compatible wrapper retained for samy-run and existing tests."""
+    return load_cmip6_projection(base_path=base_path, city=city, ssp=ssp, scenario_id=scenario_id)
 
 
 def _cordex_daily_view(cordex: pd.DataFrame) -> pd.DataFrame:
@@ -818,8 +822,8 @@ def compute_mixed_resolution_baseline(
 
     # Default variable configuration
     # NOTE: ps_hPa resolution depends on the dataset:
-    #   - CMIP6: daily (converted from psl)
-    #   - CORDEX_CMIP6: monthly (from ps)
+    #   - CMIP6 often provides daily pressure
+    #   - CORDEX-CMIP5 commonly needs monthly pressure climatology
     baseline_vars = {
         # Daily variables (temperature, wind)
         'tas_C': ('daily', 'additive'),
@@ -833,8 +837,7 @@ def compute_mixed_resolution_baseline(
         'huss': ('monthly', 'multiplicative'),
     }
 
-    # Auto-detect ps_hPa resolution based on actual data availability
-    # (CMIP6 has it in daily, CORDEX_CMIP6 may have it in monthly)
+    # Auto-detect ps_hPa resolution based on actual data availability.
     if 'ps_hPa' in daily_df.columns and 'ps_hPa' not in var_resolution_config:
         baseline_vars['ps_hPa'] = ('daily', 'additive')
     elif 'ps_hPa' in monthly_df.columns and 'ps_hPa' not in var_resolution_config:
@@ -1484,28 +1487,31 @@ def main():
     )
 
     parser.add_argument(
-        "--scenario", type=str, nargs='*', default=None,
-        help="Scenario(s) to run (default: all). Use --list-scenarios to see available."
+        "--projection-type", type=str, default="cmip6", choices=["cmip6", "cordex-cmip5"],
+        help="Weather projection source type."
     )
-
     parser.add_argument(
-        "--list-scenarios", action='store_true',
-        help="List available scenarios and exit"
+        "--projection-root", type=str, default=None,
+        help="Base directory containing per-city projection CSV files."
+    )
+    parser.add_argument(
+        "--ssp", type=str, default=None,
+        help="CMIP6 SSP scenario to load (e.g. ssp245, ssp585). Required for projection-type=cmip6."
+    )
+    parser.add_argument(
+        "--scenario-label", type=str, default=None,
+        help="Output label used in directory/file names."
+    )
+    parser.add_argument(
+        "--gcm", type=str, default=None,
+        help="Optional metadata override for GCM name."
+    )
+    parser.add_argument(
+        "--rcm", type=str, default=None,
+        help="Optional metadata override for RCM name."
     )
 
     args = parser.parse_args()
-
-    SCENARIOS = _load_scenarios()
-
-    # Handle --list-scenarios
-    if args.list_scenarios:
-        print("Available scenarios:")
-        for name, conf in SCENARIOS.items():
-            gcm = conf.get('gcm', 'UNKNOWN')
-            rcm = conf.get('rcm', None)
-            model_str = f"{gcm}_{rcm}" if rcm else gcm
-            print(f"  {name} ({model_str})")
-        return
 
     cities_config_path = Path(args.config)
     cities_df = _load_cities_config(cities_config_path)
@@ -1513,7 +1519,7 @@ def main():
     # Avoid itertuples attribute access (IDE typing can get confused)
     cities_by_name = dict(zip(cities_df["city"], cities_df["latitude"].astype(float)))
 
-    requested_cities = _normalize_city_args(args.city, list(cities_by_name.keys()), cities_config_path)
+    requested_cities = _normalize_city_args(args.city, cities_df, cities_config_path)
 
     rsvar_dir = Path(args.rsvar_dir)
     if not rsvar_dir.exists():
@@ -1525,25 +1531,13 @@ def main():
         out_dir = DEFAULT_OUT_DIR_MONTHLY if args.delta_mode == "monthly" else DEFAULT_OUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Filter scenarios based on --scenario argument
-    if args.scenario:
-        invalid = [s for s in args.scenario if s not in SCENARIOS]
-        if invalid:
-            avail = ", ".join(SCENARIOS.keys())
-            raise SystemExit(
-                f"ERROR: Unknown scenario(s): {invalid}\n"
-                f"Available: {avail}\n"
-                "Use --list-scenarios to see all available scenarios."
-            )
-        scenarios = {k: SCENARIOS[k] for k in args.scenario}
-    else:
-        scenarios = SCENARIOS
+    projection = _resolve_projection_args(args)
 
     print("="*80)
     print("APPLY CLIMATE DELTA (BATCH)")
     print("="*80)
     print(f"Cities: {requested_cities}")
-    print(f"Scenarios: {list(scenarios.keys())}")
+    print(f"Projection: {projection['label']} ({projection['type']})")
     print(f"RSVAR dir: {rsvar_dir}")
     print(f"Out dir:   {out_dir}")
     print(f"Baseline:  {args.baseline_start}-{args.baseline_end}")
@@ -1596,172 +1590,157 @@ def main():
             n_fail += 1
             continue
 
-        for scenario_id, sconf in scenarios.items():
-            gcm = sconf.get('gcm', 'UNKNOWN')
-            rcm = sconf.get('rcm', None)
+        projection_label = projection["label"]
+        gcm = projection["gcm"]
+        rcm = projection["rcm"]
 
-            city_out_dir = out_dir / scenario_id / city_slug
-            city_out_dir.mkdir(parents=True, exist_ok=True)
-            mode_suffix = "_monthly" if args.delta_mode == "monthly" else ""
-            out_xlsx = city_out_dir / f"forecast_{city_slug}_{scenario_id}{mode_suffix}.xlsx"
+        city_out_dir = out_dir / projection_label / city_slug
+        city_out_dir.mkdir(parents=True, exist_ok=True)
+        mode_suffix = "_monthly" if args.delta_mode == "monthly" else ""
+        out_xlsx = city_out_dir / f"forecast_{city_slug}_{projection_label}{mode_suffix}.xlsx"
 
-            if out_xlsx.exists() and not args.overwrite:
-                print(f"  [SKIP] {scenario_id}: output exists: {out_xlsx}")
-                n_skip += 1
+        if out_xlsx.exists() and not args.overwrite:
+            print(f"  [SKIP] {projection_label}: output exists: {out_xlsx}")
+            n_skip += 1
+            continue
+
+        print(f"  Projection: {projection_label}")
+
+        if projection["type"] == "cmip6":
+            try:
+                daily_df, monthly_df, meta = load_cmip6_projection(
+                    projection["root"], city, projection["ssp"], scenario_id=projection_label
+                )
+            except Exception as e:
+                print(f"  [FAIL] Could not load data for {city}/{projection_label}: {e}")
+                n_fail += 1
                 continue
 
-            print(f"  Scenario: {scenario_id}")
+            try:
+                monthly_df_effective = monthly_df
+                var_resolution_config = {}
 
-            # Determine scenario type:
-            # 1. CMIP5/CMIP6/CORDEX_CMIP6: has cmip5_base_path, cmip6_base_path or cordex_base_path
-            # 2. CORDEX_CMIP5: has variant_root
-            is_cmip_type = 'cmip5_base_path' in sconf or 'cmip6_base_path' in sconf or 'cordex_base_path' in sconf
-
-            if is_cmip_type:
-                # CMIP5, CMIP6 or CORDEX_CMIP6 workflow (unified loader)
-                base_path = Path(sconf.get('cordex_base_path') or sconf.get('cmip6_base_path') or sconf.get('cmip5_base_path'))
-
-                # Extract SSP/RCP from scenario_id
-                # Examples: "CMIP6_ssp245" -> "ssp245", "CMIP5_rcp85" -> "rcp85", "CORDEX_CMIP6_CRCM5_ssp245" -> "ssp245"
-                import re
-                scenario_match = re.search(r'(ssp\d+|rcp\d+)', scenario_id)
-                ssp = scenario_match.group(1) if scenario_match else scenario_id
-
-                try:
-                    daily_df, monthly_df, meta = load_cmip6_or_cordex6(base_path, city, ssp, scenario_id=scenario_id)
-                except Exception as e:
-                    print(f"  [FAIL] Could not load data for {city}/{scenario_id}: {e}")
-                    n_fail += 1
-                    continue
-
-                try:
-                    monthly_df_effective = monthly_df
-                    var_resolution_config = {}
-
-                    if args.delta_mode == "monthly":
-                        monthly_df_effective, missing_in_monthly, monthly_only_cols = build_effective_monthly_df(
-                            daily_df, monthly_df
-                        )
-                        if missing_in_monthly:
-                            print(f"  [Monthly Mode] Filled missing monthly vars from daily resample: {missing_in_monthly}")
-                        if monthly_only_cols:
-                            print(f"  [Monthly Mode] Monthly-only vars retained: {monthly_only_cols}")
-
-                        # Force monthly deltas for all variables when requested
-                        var_resolution_config = {
-                            'tas_C': 'monthly',
-                            'tasmax_C': 'monthly',
-                            'tasmin_C': 'monthly',
-                            'ps_hPa': 'monthly',
-                            'sfcWind': 'monthly',
-                            'rsds': 'monthly',
-                            'hurs': 'monthly',
-                            'huss': 'monthly',
-                        }
-
-                    baseline = compute_mixed_resolution_baseline(
-                        daily_df, monthly_df_effective,
-                        args.baseline_start, args.baseline_end,
-                        var_resolution_config
+                if args.delta_mode == "monthly":
+                    monthly_df_effective, missing_in_monthly, monthly_only_cols = build_effective_monthly_df(
+                        daily_df, monthly_df
                     )
-                except Exception as e:
-                    print(f"  [FAIL] Could not compute baseline for {city}/{scenario_id}: {e}")
-                    n_fail += 1
-                    continue
+                    if missing_in_monthly:
+                        print(f"  [Monthly Mode] Filled missing monthly vars from daily resample: {missing_in_monthly}")
+                    if monthly_only_cols:
+                        print(f"  [Monthly Mode] Monthly-only vars retained: {monthly_only_cols}")
 
-                try:
-                    output_df, delta_stats = apply_mixed_resolution_climate_delta(
-                        rsvar_df, daily_df, monthly_df_effective, baseline,
-                        gcm=gcm, rcm=rcm, lat=lat,
-                        baseline_start=args.baseline_start,
-                        baseline_end=args.baseline_end,
-                        isd_path=isd_path,
-                        debug=args.debug
-                    )
-                except Exception as e:
-                    print(f"  [FAIL] Delta apply failed for {city}/{scenario_id}: {e}")
-                    n_fail += 1
-                    continue
+                    var_resolution_config = {
+                        'tas_C': 'monthly',
+                        'tasmax_C': 'monthly',
+                        'tasmin_C': 'monthly',
+                        'ps_hPa': 'monthly',
+                        'sfcWind': 'monthly',
+                        'rsds': 'monthly',
+                        'hurs': 'monthly',
+                        'huss': 'monthly',
+                    }
 
-                metadata_rows = [
-                    ['city', city],
-                    ['city_slug', city_slug],
-                    ['lat', lat],
-                    ['scenario_id', scenario_id],
-                    ['gcm', gcm],
-                    ['rcm', rcm if rcm else 'N/A'],
-                    ['base_path', str(base_path)],
-                    ['ssp', ssp],
-                    ['baseline_start', args.baseline_start],
-                    ['baseline_end', args.baseline_end],
-                    ['delta_mode', args.delta_mode],
-                    ['n_hours', len(output_df)],
-                    ['rsvar_source', rsvar_metadata.get('isd_path', str(rsvar_path))],
-                ]
-
-            else:
-                # Original CORDEX_CMIP5 workflow
-                variant_root = Path(sconf['variant_root'])
-
-                try:
-                    cordex, cordex_meta = load_and_merge_cordex_city_variant(variant_root, city)
-                except Exception as e:
-                    print(f"  [FAIL] Could not load CORDEX for {city}/{scenario_id}: {e}")
-                    n_fail += 1
-                    continue
-
-                baseline = compute_cordex_baseline(
-                    cordex,
-                    args.baseline_start,
-                    args.baseline_end,
-                    mode=args.delta_mode
+                baseline = compute_mixed_resolution_baseline(
+                    daily_df, monthly_df_effective,
+                    args.baseline_start, args.baseline_end,
+                    var_resolution_config
                 )
+            except Exception as e:
+                print(f"  [FAIL] Could not compute baseline for {city}/{projection_label}: {e}")
+                n_fail += 1
+                continue
 
-                try:
-                    output_df, delta_stats = apply_climate_delta(
-                        rsvar_df,
-                        cordex,
-                        baseline,
-                        gcm=gcm,
-                        rcm=rcm,
-                        lat=lat,
-                        baseline_start=args.baseline_start,
-                        baseline_end=args.baseline_end,
-                        isd_path=isd_path,
-                        debug=args.debug,
-                        delta_mode=args.delta_mode,
-                    )
-                except Exception as e:
-                    print(f"  [FAIL] Delta apply failed for {city}/{scenario_id}: {e}")
-                    n_fail += 1
-                    continue
+            try:
+                output_df, delta_stats = apply_mixed_resolution_climate_delta(
+                    rsvar_df, daily_df, monthly_df_effective, baseline,
+                    gcm=meta.get("model_name", gcm), rcm=rcm, lat=lat,
+                    baseline_start=args.baseline_start,
+                    baseline_end=args.baseline_end,
+                    isd_path=isd_path,
+                    debug=args.debug
+                )
+            except Exception as e:
+                print(f"  [FAIL] Delta apply failed for {city}/{projection_label}: {e}")
+                n_fail += 1
+                continue
 
-                # Metadata rows for CMIP5
-                metadata_rows = [
-                    ['city', city],
-                    ['city_slug', city_slug],
-                    ['lat', lat],
-                    ['scenario_id', scenario_id],
-                    ['gcm', gcm],
-                    ['rcm', rcm if rcm else 'N/A'],
-                    ['variant_root', str(variant_root)],
-                    ['cordex_historical_path', cordex_meta.get('historical_path', '')],
-                    ['cordex_rcp85_path', cordex_meta.get('rcp85_path', '')],
-                    ['baseline_start', args.baseline_start],
-                    ['baseline_end', args.baseline_end],
-                    ['delta_mode', args.delta_mode],
-                    ['n_hours', len(output_df)],
-                    ['rsvar_source', rsvar_metadata.get('isd_path', str(rsvar_path))],
-                ]
+            metadata_rows = [
+                ['city', city],
+                ['city_slug', city_slug],
+                ['lat', lat],
+                ['scenario_id', projection_label],
+                ['projection_type', projection['type']],
+                ['gcm', meta.get("model_name", gcm)],
+                ['rcm', rcm if rcm else 'N/A'],
+                ['base_path', str(projection["root"])],
+                ['ssp', projection["ssp"]],
+                ['baseline_start', args.baseline_start],
+                ['baseline_end', args.baseline_end],
+                ['delta_mode', args.delta_mode],
+                ['n_hours', len(output_df)],
+                ['rsvar_source', rsvar_metadata.get('isd_path', str(rsvar_path))],
+            ]
 
-            save_output(
-                output_df,
-                metadata_rows,
-                delta_stats,
-                out_xlsx,
-                preview_first_year=args.preview_first_year,
+        else:
+            try:
+                cordex, _monthly_df, cordex_meta = load_cordex_cmip5_projection(projection["root"], city)
+            except Exception as e:
+                print(f"  [FAIL] Could not load CORDEX for {city}/{projection_label}: {e}")
+                n_fail += 1
+                continue
+
+            baseline = compute_cordex_baseline(
+                cordex,
+                args.baseline_start,
+                args.baseline_end,
+                mode=args.delta_mode
             )
-            n_ok += 1
+
+            try:
+                output_df, delta_stats = apply_climate_delta(
+                    rsvar_df,
+                    cordex,
+                    baseline,
+                    gcm=gcm,
+                    rcm=rcm,
+                    lat=lat,
+                    baseline_start=args.baseline_start,
+                    baseline_end=args.baseline_end,
+                    isd_path=isd_path,
+                    debug=args.debug,
+                    delta_mode=args.delta_mode,
+                )
+            except Exception as e:
+                print(f"  [FAIL] Delta apply failed for {city}/{projection_label}: {e}")
+                n_fail += 1
+                continue
+
+            metadata_rows = [
+                ['city', city],
+                ['city_slug', city_slug],
+                ['lat', lat],
+                ['scenario_id', projection_label],
+                ['projection_type', projection['type']],
+                ['gcm', gcm],
+                ['rcm', rcm if rcm else 'N/A'],
+                ['variant_root', str(projection["root"])],
+                ['cordex_historical_path', cordex_meta.get('historical_path', '')],
+                ['cordex_rcp85_path', cordex_meta.get('rcp85_path', '')],
+                ['baseline_start', args.baseline_start],
+                ['baseline_end', args.baseline_end],
+                ['delta_mode', args.delta_mode],
+                ['n_hours', len(output_df)],
+                ['rsvar_source', rsvar_metadata.get('isd_path', str(rsvar_path))],
+            ]
+
+        save_output(
+            output_df,
+            metadata_rows,
+            delta_stats,
+            out_xlsx,
+            preview_first_year=args.preview_first_year,
+        )
+        n_ok += 1
 
     print("\n" + "="*80)
     print("BATCH SUMMARY")
