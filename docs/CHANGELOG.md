@@ -41,7 +41,7 @@
 - `pipeline/`: Batch pipeline scripts (`samy-rsvar`, `samy-delta` CLI entry points) and EPW writer (`gen_samy.py`)
 - `utils/`: Centralized humidity calculations (`calculate_weather_var`), solar utilities, ISD parser, EPW/DDY converter
 - `utils/time_utils`: One-time UTC→LST conversion at ISD ingestion boundary; `assert_is_lst` consistency check
-- `config/`: Bundled `config.yaml` and `cities_config.csv` as package data
+- `config/`: Bundled `cities_config.csv` as package data
 - Miami POC dataset support (`data/ISD/Miami`, `data/CMIP6/Miami`, `data/ERA5`, `data/NSRDB`)
 - `pyproject.toml` with `hatchling` build backend
 - Test suite skeleton: `conftest.py`, unit tests, end-to-end POC test (`@slow`)

@@ -50,10 +50,10 @@ Configure external data access once after installation.
    #   NSRDB email   : your@email.com
    ```
 
-**Copernicus CDS** (CMIP6 climate projections; CORDEX-CMIP5 catalogue queries)
+**Copernicus CDS** (CMIP6 climate projections; optional CORDEX-CMIP5 catalogue queries)
 
 1. Register at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu)
-2. Accept the dataset licence for *CMIP6 climate projections* and, if you plan to inspect CORDEX availability, *CORDEX regional climate projections* in your CDS profile
+2. Accept the dataset licence for *CMIP6 climate projections* and, if you plan to inspect CORDEX availability through the catalogue tools, *CORDEX regional climate projections* in your CDS profile
 3. Create `~/.cdsapirc`:
    ```ini
    # ~/.cdsapirc
@@ -217,6 +217,29 @@ This repository does **not** currently provide a built-in CORDEX download path
 through `samy-download download`.
 
 You can still use externally prepared CORDEX-CMIP5 data as climate-delta input.
+The package only requires that your files follow the expected folder structure
+and CSV schema.
+
+Required layout:
+
+```text
+<your-cordex-root>/
+└── <CitySlug>/
+    ├── historical.csv
+    └── rcp85.csv
+```
+
+Required CSV conventions:
+
+- Each file must include a `time` column.
+- Historical and future files must use the same variable columns.
+- Variable names must match the climate-delta reader expectations, such as
+  `tas`, `tasmax`, `tasmin`, `ps` or `psl`, `sfcWind`, `rsds`, `hurs`, `huss`.
+
+If the folder structure and CSV columns match, the data can be loaded by
+`samy-delta` even when the files were downloaded or prepared outside this
+repository.
+
 Recommended sources:
 
 - CORDEX official access guide:
@@ -226,8 +249,8 @@ Recommended sources:
 
 `samy-download list-cordex` remains available to inspect the live CDS CORDEX
 catalogue, but actual CORDEX files must currently be downloaded outside the
-package and then placed under your chosen data directory for downstream climate
-delta workflows.
+package and then placed under a compatible directory layout for downstream
+climate-delta workflows.
 
 ### `samy-download` reference
 
@@ -358,6 +381,6 @@ for year in [2030, 2050, 2080]:
 | `samy-run --city <name>` | Full pipeline with auto-download of missing ISD / NSRDB / CMIP6 inputs |
 | `samy-run --city <name> --mode ensemble` | Full pipeline in ensemble mode |
 | `samy-rsvar --isd <csv> --city <name> --output <xlsx>` | Train RS-VAR + forecast only |
-| `samy-delta --rsvar-dir <dir> --city <name> --out-dir <dir>` | Apply CMIP6 delta to RS-VAR output |
+| `samy-delta --rsvar-dir <dir> --city <name> --projection-type cmip6 --projection-root <dir> --ssp <scenario>` | Apply CMIP6 delta to RS-VAR output |
+| `samy-delta --rsvar-dir <dir> --city <name> --projection-type cordex-cmip5 --projection-root <dir>` | Apply CORDEX-CMIP5 delta from compatible city-folder CSV inputs |
 | `samy-ensemble --isd <csv> --city <name> --members 50 ...` | Generate stochastic ensemble members |
-| `samy-delta --list-scenarios` | List available climate scenarios |

@@ -47,7 +47,6 @@ packages = ["src/samy_wgen"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/samy_wgen/config/config.yaml",
     "src/samy_wgen/config/cities_config.csv",
 ]
 
