@@ -30,13 +30,12 @@ USAGE:
 """
 
 import argparse
-import importlib.resources
 import tempfile
 from pathlib import Path
 from typing import Iterable
 
-import numpy as np
 import pandas as pd
+from samy_wgen.utils.city_utils import resolve_city, resolve_city_codes
 
 
 # ==========================================================================
@@ -72,31 +71,18 @@ def _print_title(title: str) -> None:
 # ==========================================================================
 
 def _load_city_meta(city: str) -> dict:
-    """Return lat, lon, tz_offset for *city* from bundled config files."""
+    """Return lat, lon, tz_offset for an ASCII city code."""
     from samy_wgen.utils.time_utils import get_utc_offset
 
-    ref = importlib.resources.files("samy_wgen.config").joinpath("cities_config.csv")
-    cfg = pd.read_csv(str(ref))
-    row = cfg[cfg["city"] == city]
-    if row.empty and "city_ascii" in cfg.columns:
-        row = cfg[cfg["city_ascii"] == city]
-    if row.empty:
-        available = (
-            cfg["city_ascii"].fillna(cfg["city"]).tolist()
-            if "city_ascii" in cfg.columns
-            else cfg["city"].tolist()
-        )
-        raise SystemExit(
-            f"ERROR: city '{city}' not in cities_config.csv. Available: {available}"
-        )
-    r = row.iloc[0]
-    lat = float(r["latitude"])
-    lon = float(r["longitude"])
-    tz = get_utc_offset(city=city, latitude=lat, longitude=lon)
+    record = resolve_city(city)
+    lat = record.latitude
+    lon = record.longitude
+    tz = get_utc_offset(city=record.city_ascii, latitude=lat, longitude=lon)
     return {
         "lat": lat,
         "lon": lon,
         "tz":  tz,
+        "country": record.country_iso2,
     }
 
 
@@ -122,11 +108,6 @@ def _find_nsrdb_csv(city: str, base: Path) -> Path:
     pattern = f"nsrdb_{city_slug}*.csv"
     matches = list(nsrdb_dir.glob(pattern))
     if not matches:
-        # Try case-insensitive fallback with normalized separators.
-        normalized_city = city.lower().replace("_", "").replace(" ", "")
-        matches = [f for f in nsrdb_dir.glob("*.csv")
-                   if normalized_city in f.stem.lower().replace("_", "").replace(" ", "")]
-    if not matches:
         raise SystemExit(
             f"ERROR: No NSRDB CSV found for '{city}' in {nsrdb_dir}.\n"
             f"  Expected pattern: {pattern}"
@@ -143,7 +124,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--city", required=True, nargs="+",
-                        help="City name(s) matching cities_config.csv, e.g. 'Miami' 'Los Angeles'")
+                        help="ASCII city code(s) matching cities_config.csv, e.g. 'Miami' 'Los_Angeles'")
 
     parser.add_argument("--data-dir", default="data",
                         help="Root data directory (ISD/, NSRDB/, CMIP6/ live here)")
@@ -222,24 +203,18 @@ def _cmip6_download_experiments(ssp: str, requested: Iterable[str] | None = None
 
 
 def _has_required_cmip6_data(city: str, cmip6_dir: Path, ssp: str, models: Iterable[str]) -> bool:
-    city_slug = city.replace(" ", "_")
-    candidate_dirs = [cmip6_dir / city, cmip6_dir / city_slug]
-    for city_dir in candidate_dirs:
-        if not city_dir.exists():
-            continue
-        required = []
-        for model in models:
-            required.append(city_dir / f"{model}_historical.csv")
-            required.append(city_dir / f"{model}_{ssp}.csv")
-        if all(path.exists() for path in required):
-            return True
-    return False
+    city_dir = cmip6_dir / city
+    if not city_dir.exists():
+        return False
+    required = []
+    for model in models:
+        required.append(city_dir / f"{model}_historical.csv")
+        required.append(city_dir / f"{model}_{ssp}.csv")
+    return all(path.exists() for path in required)
 
 
 def _normalize_city_args(requested: list[str]) -> list[str]:
-    from samy_wgen.pipeline.download_data import _normalize_city_args as _normalize
-
-    return _normalize(requested)
+    return resolve_city_codes(requested)
 
 
 def _parse_isd_station_args(values: list[str] | None, cities: list[str]) -> dict[str, str] | None:

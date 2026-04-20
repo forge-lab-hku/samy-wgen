@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import pandas as pd
+from samy_wgen.utils.city_utils import load_city_table, resolve_city, resolve_city_codes
 
 logger = logging.getLogger(__name__)
 
@@ -726,65 +727,28 @@ def _resolve_cordex_download_plan(
     return plan
 
 def _load_cities_config() -> pd.DataFrame:
-    import importlib.resources as ir
-    with ir.files("samy_wgen.config").joinpath("cities_config.csv").open() as f:
-        return pd.read_csv(f)
+    return load_city_table()
 
 
 def _city_meta(city: str) -> dict:
-    """Return lat, lon, cordex_domain for the requested city.
-
-    Matches against both `city` and `city_ascii` columns (case-insensitive).
-    """
-    cfg = _load_cities_config()
-    key = city.lower()
-    row = cfg[cfg["city"].str.lower() == key]
-    if row.empty and "city_ascii" in cfg.columns:
-        row = cfg[cfg["city_ascii"].str.lower() == key]
-    if row.empty:
-        raise ValueError(
-            f"City '{city}' not found in cities_config. "
-            f"Available: {cfg['city'].tolist()}"
-        )
-    r = row.iloc[0]
+    """Return lat, lon, cordex_domain for the requested ASCII city code."""
+    r = resolve_city(city)
     return {
-        "lat":           float(r["latitude"]),
-        "lon":           float(r["longitude"]),
-        "cordex_domain": str(r.get("cordex_domain", "NAM-22")),
+        "lat": r.latitude,
+        "lon": r.longitude,
+        "cordex_domain": r.cordex_domain,
     }
 
 
 def _normalize_city_name(city: str, cfg: pd.DataFrame | None = None) -> str:
-    """Return the canonical city name from cities_config.csv for one requested city."""
-    cfg = _load_cities_config() if cfg is None else cfg
-    key = city.lower()
-
-    row = cfg[cfg["city"].str.lower() == key]
-    if row.empty and "city_ascii" in cfg.columns:
-        row = cfg[cfg["city_ascii"].str.lower() == key]
-    if row.empty:
-        raise ValueError(
-            f"City '{city}' not found in cities_config. "
-            f"Available: {cfg['city'].tolist()}"
-        )
-    canonical = row.iloc[0]
-    if "city_ascii" in cfg.columns and pd.notna(canonical.get("city_ascii")):
-        return str(canonical["city_ascii"])
-    return str(canonical["city"])
+    """Return the canonical ASCII city code from cities_config.csv for one request."""
+    del cfg
+    return resolve_city(city).city_ascii
 
 
 def _normalize_city_args(requested: list[str]) -> list[str]:
-    """Resolve city arguments to canonical config names while preserving order."""
-    cfg = _load_cities_config()
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for city in requested:
-        resolved = _normalize_city_name(city, cfg)
-        if resolved in seen:
-            continue
-        normalized.append(resolved)
-        seen.add(resolved)
-    return normalized
+    """Resolve city arguments to canonical ASCII city codes while preserving order."""
+    return resolve_city_codes(requested)
 
 
 def _parse_isd_station_args(
@@ -794,7 +758,7 @@ def _parse_isd_station_args(
     """Parse `--isd-station` values into a canonical city -> station_id mapping.
 
     Supported forms:
-    - single-city legacy form: `--isd-station 722020-12839`
+    - single-city form: `--isd-station 722020-12839`
     - multi/single-city mapped form: `--isd-station Miami=722020-12839`
     """
     if not values:
@@ -804,7 +768,7 @@ def _parse_isd_station_args(
     if len(values) == 1 and "=" not in values[0]:
         if len(canonical_cities) != 1:
             raise SystemExit(
-                "ERROR: Multi-city --isd-station values must use City=USAF-WBAN mappings."
+                "ERROR: Multi-city --isd-station values must use city_ascii=USAF-WBAN mappings."
             )
         return {canonical_cities[0]: values[0]}
 
@@ -812,7 +776,7 @@ def _parse_isd_station_args(
     for item in values:
         if "=" not in item:
             raise SystemExit(
-                "ERROR: --isd-station entries must be USAF-WBAN or City=USAF-WBAN."
+                "ERROR: --isd-station entries must be USAF-WBAN or city_ascii=USAF-WBAN."
             )
         raw_city, station_id = item.split("=", 1)
         city = _normalize_city_name(raw_city.strip())
@@ -1738,13 +1702,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── list-stations ──────────────────────────────────────────────────────────
     p_list = sub.add_parser("list-stations", help="List nearby ISD stations for a city")
-    p_list.add_argument("--city",    required=True,    help="City name (from cities_config.csv)")
+    p_list.add_argument("--city",    required=True,    help="ASCII city code from cities_config.csv")
     p_list.add_argument("--radius",  type=float, default=150, help="Search radius in km (default: 150)")
     p_list.add_argument("--isd-dir", default="data/ISD", help="Directory to cache isd-history.csv")
 
     # ── download ───────────────────────────────────────────────────────────────
     p_dl = sub.add_parser("download", help="Download weather data for one or more cities")
-    p_dl.add_argument("--city", required=True, nargs="+", help="City name(s) from cities_config.csv")
+    p_dl.add_argument("--city", required=True, nargs="+", help="ASCII city code(s) from cities_config.csv")
     p_dl.add_argument(
         "--data", nargs="+",
         choices=["isd", "nsrdb", "cmip6"],

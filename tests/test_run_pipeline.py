@@ -28,7 +28,7 @@ class TestDownloadDefaults:
         target = nsrdb_dir / "nsrdb_los_angeles_1998-2024.csv"
         target.write_text("Year,Month,Day,Hour,GHI\n")
 
-        found = _find_nsrdb_csv("Los Angeles", tmp_path)
+        found = _find_nsrdb_csv("Los_Angeles", tmp_path)
 
         assert found == target
 
@@ -40,7 +40,7 @@ class TestDownloadDefaults:
         (city_dir / "mpi_esm1_2_lr_historical.csv").write_text("time,tas\n")
         (city_dir / "mpi_esm1_2_lr_ssp245.csv").write_text("time,tas\n")
 
-        assert _has_required_cmip6_data("Los Angeles", tmp_path / "CMIP6", "ssp245", ["mpi_esm1_2_lr"])
+        assert _has_required_cmip6_data("Los_Angeles", tmp_path / "CMIP6", "ssp245", ["mpi_esm1_2_lr"])
 
 
 class TestEnsurePipelineInputs:
@@ -134,14 +134,14 @@ class TestEnsurePipelineInputs:
         (city_dir / "mpi_esm1_2_lr_ssp245.csv").write_text("time,tas\n")
 
         args = Namespace(
-            city=["Miami", "Los Angeles"],
+            city=["Miami", "Los_Angeles"],
             isd_dir=None,
             nsrdb=None,
             cmip6_dir=None,
             skip_download=False,
             download_data=["isd", "nsrdb", "cmip6"],
             download_years=None,
-            isd_station=["Miami=722020-12839", "Los Angeles=722950-23174"],
+            isd_station=["Miami=722020-12839", "Los_Angeles=722950-23174"],
             isd_radius=50.0,
             ssp="ssp245",
             cmip6_models=["mpi_esm1_2_lr"],
@@ -179,7 +179,7 @@ class TestEnsurePipelineInputs:
             captured["output_dir"] = output_dir
 
         args = Namespace(
-            city=["Miami", "Los Angeles"],
+            city=["Miami", "Los_Angeles"],
             cmip6_dir=None,
             skip_download=False,
             download_data=["cmip6"],
@@ -190,9 +190,9 @@ class TestEnsurePipelineInputs:
         )
 
         with patch("samy_wgen.pipeline.download_data.download_cmip6_for_cities", side_effect=fake_download_cmip6_for_cities):
-            cmip6_dir = _ensure_batch_cmip6_inputs(args, data_dir, ["Miami", "Los Angeles"])
+            cmip6_dir = _ensure_batch_cmip6_inputs(args, data_dir, ["Miami", "Los_Angeles"])
 
         assert cmip6_dir == data_dir / "CMIP6"
-        assert captured["cities"] == ["Los Angeles"]
+        assert captured["cities"] == ["Los_Angeles"]
         assert captured["models"] == ["mpi_esm1_2_lr"]
         assert captured["experiments"] == ["historical", "ssp2_4_5"]

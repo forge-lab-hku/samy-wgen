@@ -33,6 +33,7 @@ from samy_wgen.utils.physics_qa import (
     apply_physics_qa as shared_apply_physics_qa,
     enforce_solar_constraints as shared_enforce_solar_constraints,
 )
+from samy_wgen.utils.city_utils import load_city_table, resolve_city_codes
 
 def _get_bundled_cities_config() -> Path:
     ref = importlib.resources.files("samy_wgen.config").joinpath("cities_config.csv")
@@ -66,66 +67,16 @@ DEFAULT_CORDEX_CMIP5_DIR = Path("data") / "CORDEX_CMIP5"
 
 
 def _load_cities_config(path: Path) -> pd.DataFrame:
-    """Load cities_config.csv and return a DataFrame with at least city + latitude."""
+    """Load the validated bundled city table."""
     if not path.exists():
         raise SystemExit(f"ERROR: cities config not found: {path}")
-
-    df = pd.read_csv(path)
-
-    required = {"city", "latitude"}
-    missing = sorted(required - set(df.columns))
-    if missing:
-        raise SystemExit(
-            "ERROR: cities_config.csv missing required columns: "
-            f"{missing}. Found columns: {list(df.columns)}"
-        )
-
-    df = df.copy()
-    df["city"] = df["city"].astype(str)
-    if "city_ascii" in df.columns:
-        df["city_ascii"] = df["city_ascii"].fillna(df["city"]).astype(str)
-        df["city_native"] = df["city"]
-        df["city"] = df["city_ascii"]
-    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
-
-    bad = df[df["latitude"].isna()]["city"].tolist()
-    if bad:
-        raise SystemExit(f"ERROR: Invalid latitude for cities: {bad}")
-
-    df = df.drop_duplicates(subset=["city"], keep="first")
-    return df
+    del path
+    return load_city_table()
 
 
 def _normalize_city_args(requested: list[str] | None, cities_df: pd.DataFrame, config_path: Path) -> list[str]:
-    """Resolve requested city list and validate against city/city_ascii aliases."""
-    available_cities = list(cities_df["city"])
-    if not requested:
-        return sorted(available_cities)
-
-    lookup: dict[str, str] = {}
-    for _, row in cities_df.iterrows():
-        canonical = str(row["city"])
-        lookup[canonical.lower()] = canonical
-        if "city_native" in cities_df.columns:
-            lookup[str(row["city_native"]).lower()] = canonical
-
-    resolved: list[str] = []
-    missing: list[str] = []
-    for city in requested:
-        canonical = lookup.get(city.lower())
-        if canonical is None:
-            missing.append(city)
-            continue
-        if canonical not in resolved:
-            resolved.append(canonical)
-
-    if missing:
-        avail = ", ".join(sorted(set(available_cities)))
-        raise SystemExit(
-            f"ERROR: City(ies) not found in {config_path}: {missing}.\n"
-            f"Available cities: {avail}"
-        )
-    return resolved
+    del cities_df, config_path
+    return resolve_city_codes(requested)
 
 
 def _resolve_projection_args(args) -> dict[str, Any]:
@@ -161,13 +112,8 @@ def _slug_city(city: str) -> str:
 
 
 def _resolve_city_dir(base_path: Path, city: str) -> Path:
-    """Resolve a city data directory, accepting both spaced and underscored names."""
-    city_slug = _slug_city(city)
-    candidates = [Path(base_path) / city_slug, Path(base_path) / city]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
+    """Resolve a city data directory using the canonical ASCII city code."""
+    return Path(base_path) / _slug_city(city)
 
 
 def _load_isd_baseline_mean(isd_path: Path, baseline_start: int, baseline_end: int) -> float:
@@ -1440,11 +1386,11 @@ def main():
 
     parser.add_argument(
         "--config", type=str, default=str(_get_bundled_cities_config()),
-        help="Path to cities_config.csv (must include columns: city, latitude)"
+        help="Path to cities_config.csv (must include city_id and city_ascii)"
     )
     parser.add_argument(
         "--city", type=str, nargs='*', default=None,
-        help="City name(s) to process (default: all cities in cities_config.csv)"
+        help="ASCII city code(s) to process (default: all cities in cities_config.csv)"
     )
 
     parser.add_argument(
@@ -1517,7 +1463,7 @@ def main():
     cities_df = _load_cities_config(cities_config_path)
 
     # Avoid itertuples attribute access (IDE typing can get confused)
-    cities_by_name = dict(zip(cities_df["city"], cities_df["latitude"].astype(float)))
+    cities_by_name = dict(zip(cities_df["city_ascii"], cities_df["latitude"].astype(float)))
 
     requested_cities = _normalize_city_args(args.city, cities_df, cities_config_path)
 
@@ -1559,12 +1505,7 @@ def main():
         rsvar_csv = rsvar_dir / f"rsvar_output_{city_slug}.csv"
 
         # Find ISD file for baseline temperature
-        # Try both lowercase slug and capitalized city name formats
         isd_path = isd_dir / f"{city_slug}_with_solar.csv"
-        if not isd_path.exists():
-            # Try capitalized format (e.g., Montreal_with_solar.csv, Los_Angeles_with_solar.csv)
-            isd_path = isd_dir / f"{city.replace(' ', '_')}_with_solar.csv"
-
         if not isd_path.exists():
             print(f"[WARNING] ISD file not found: {isd_path}")
             isd_path = None

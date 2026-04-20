@@ -3,24 +3,24 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_resolve_city_dir_accepts_spaced_name(tmp_path):
+def test_resolve_city_dir_uses_canonical_ascii_code(tmp_path):
     from samy_wgen.pipeline.run_climate_delta import _resolve_city_dir
 
-    spaced = tmp_path / "Los Angeles"
-    spaced.mkdir(parents=True, exist_ok=True)
+    city_dir = tmp_path / "Los_Angeles"
+    city_dir.mkdir(parents=True, exist_ok=True)
 
-    resolved = _resolve_city_dir(tmp_path, "Los Angeles")
+    resolved = _resolve_city_dir(tmp_path, "Los_Angeles")
 
-    assert resolved == spaced
+    assert resolved == city_dir
 
 
-def test_normalize_city_args_accepts_native_and_returns_ascii():
+def test_normalize_city_args_requires_ascii_codes():
     from samy_wgen.pipeline.run_climate_delta import _get_bundled_cities_config, _load_cities_config, _normalize_city_args
 
     config_path = _get_bundled_cities_config()
     cities_df = _load_cities_config(config_path)
 
-    resolved = _normalize_city_args(["Montréal", "Toronto"], cities_df, config_path)
+    resolved = _normalize_city_args(["Montreal", "Toronto"], cities_df, config_path)
 
     assert resolved == ["Montreal", "Toronto"]
 

@@ -54,6 +54,7 @@ import numpy as np
 import importlib.resources
 
 from samy_wgen.model.rsvar import ForecastTo2100V5
+from samy_wgen.utils.city_utils import load_city_table, resolve_city_codes
 
 
 def _get_bundled_cities_config() -> Path:
@@ -79,53 +80,16 @@ DEFAULT_OUTPUT_DIR = Path("output") / "RSVAR"
 # ==========================================================================
 
 def _load_cities_config(path: Path) -> pd.DataFrame:
-    """Load cities_config.csv and return a DataFrame with at least city + latitude.
-
-    Expected header includes:
-    continent,city,country,latitude,longitude,cordex_domain
-    """
+    """Load the validated bundled city table."""
     if not path.exists():
         raise SystemExit(f"ERROR: cities config not found: {path}")
-
-    df = pd.read_csv(path)
-
-    required = {"city", "latitude"}
-    missing = sorted(required - set(df.columns))
-    if missing:
-        raise SystemExit(
-            "ERROR: cities_config.csv missing required columns: "
-            f"{missing}. Found columns: {list(df.columns)}"
-        )
-
-    # Normalize types
-    df = df.copy()
-    df["city"] = df["city"].astype(str)
-    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
-
-    bad = df[df["latitude"].isna()]["city"].tolist()
-    if bad:
-        raise SystemExit(f"ERROR: Invalid latitude for cities: {bad}")
-
-    # Drop duplicate city definitions (keep first)
-    df = df.drop_duplicates(subset=["city"], keep="first")
-
-    return df
+    del path
+    return load_city_table()
 
 
 def _normalize_city_args(requested: list[str] | None, available_cities: list[str]) -> list[str]:
-    """Resolve requested city list (case-sensitive) and validate."""
-    if not requested:
-        return sorted(available_cities)
-
-    avail_set = set(available_cities)
-    missing = [c for c in requested if c not in avail_set]
-    if missing:
-        avail = ", ".join(sorted(avail_set))
-        raise SystemExit(
-            f"ERROR: City(ies) not found in {_get_bundled_cities_config()}: {missing}.\n"
-            f"Available cities: {avail}"
-        )
-    return requested
+    del available_cities
+    return resolve_city_codes(requested)
 
 
 class RSVAROnlyPipeline(ForecastTo2100V5):
@@ -429,7 +393,7 @@ def main():
     )
     parser.add_argument(
         "--config", type=str, default=str(_get_bundled_cities_config()),
-        help="Path to cities_config.csv (must include columns: city, latitude)"
+        help="Path to cities_config.csv (must include city_id and city_ascii)"
     )
     parser.add_argument(
         "--output", type=str, default=None,
@@ -442,14 +406,14 @@ def main():
     # Batch processing arguments
     parser.add_argument(
         "--city", type=str, nargs='*', default=None,
-        help="City name(s) to process (default: all cities in data/cities_config.csv)"
+        help="ASCII city code(s) to process (default: all cities in cities_config.csv)"
     )
 
     args = parser.parse_args()
 
     cities_config_path = Path(args.config)
     cities_df = _load_cities_config(cities_config_path)
-    cities_by_name = {row.city: float(row.latitude) for row in cities_df.itertuples(index=False)}
+    cities_by_name = {row.city_ascii: float(row.latitude) for row in cities_df.itertuples(index=False)}
 
     # Determine processing mode
     # - If --isd is provided: single-file mode (requires --city with exactly 1 entry to select latitude)

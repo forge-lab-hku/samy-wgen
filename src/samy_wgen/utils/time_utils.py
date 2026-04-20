@@ -17,57 +17,25 @@ Typical usage:
 
 from __future__ import annotations
 
-import importlib.resources
 import logging
 import os
 import tempfile
-import unicodedata
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+from samy_wgen.utils.city_utils import resolve_city
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-def _normalize_city_key(city: str) -> str:
-    """Return a comparison key that tolerates accents and separator variants."""
-    ascii_city = unicodedata.normalize("NFKD", city).encode("ascii", "ignore").decode("ascii")
-    return ascii_city.lower().replace("_", "").replace(" ", "")
-
-
-@lru_cache(maxsize=1)
-def _load_cities_config() -> pd.DataFrame:
-    ref = importlib.resources.files("samy_wgen.config").joinpath("cities_config.csv")
-    with ref.open("r") as f:
-        cfg = pd.read_csv(f)
-    return cfg
-
-
 def _resolve_city_coordinates(city: str) -> tuple[float, float, str]:
     """Return latitude, longitude, and canonical city label for a requested city."""
-    cfg = _load_cities_config()
-    key = _normalize_city_key(city)
-
-    for _, row in cfg.iterrows():
-        candidates = [str(row.get("city", ""))]
-        if "city_ascii" in cfg.columns and pd.notna(row.get("city_ascii")):
-            candidates.append(str(row["city_ascii"]))
-        if any(_normalize_city_key(candidate) == key for candidate in candidates):
-            canonical = str(row["city_ascii"]) if "city_ascii" in cfg.columns and pd.notna(row.get("city_ascii")) else str(row["city"])
-            return float(row["latitude"]), float(row["longitude"]), canonical
-
-    available = sorted({
-        str(row["city_ascii"]) if "city_ascii" in cfg.columns and pd.notna(row.get("city_ascii")) else str(row["city"])
-        for _, row in cfg.iterrows()
-    })
-    raise KeyError(
-        f"City '{city}' not found in cities_config.csv. "
-        f"Available: {', '.join(available)}"
-    )
+    record = resolve_city(city)
+    return record.latitude, record.longitude, record.city_ascii
 
 
 @lru_cache(maxsize=1)

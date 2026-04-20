@@ -24,6 +24,10 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
+import tempfile
+
+os.environ.setdefault("NUMBA_CACHE_DIR", str(Path(tempfile.gettempdir()) / "numba-cache"))
+
 from timezonefinder import TimezoneFinder
 import pytz
 import argparse

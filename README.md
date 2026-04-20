@@ -66,13 +66,14 @@ Configure external data access once after installation.
 ## Quickstart — one-click pipeline
 
 `samy-run` chains all stages automatically, downloads missing inputs by default, and caches intermediate outputs so re-runs are fast.
+All user-facing city values use the canonical ASCII city code from `src/samy_wgen/config/cities_config.csv`.
 
 ```bash
 # Deterministic forecast — Miami, SSP2-4.5, auto-download missing ISD/NSRDB/CMIP6 inputs
 samy-run --city Miami
 
 # Batch one-click run for multiple cities
-samy-run --city Miami "Los Angeles"
+samy-run --city Miami Los_Angeles
 
 # Custom forecast window and scenario
 samy-run --city Miami --start 2025-01-01 --end 2060-12-31 --ssp ssp585
@@ -90,7 +91,7 @@ samy-run --city Miami --skip-download
 samy-run --city Miami --overwrite
 ```
 
-Outputs land in `output/<City>/`:
+Outputs land in `output/<city_ascii>/`:
 
 ```
 output/Miami/
@@ -112,7 +113,7 @@ output/Miami/
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--city` | *(required)* | City name matching `cities_config.csv` |
+| `--city` | *(required)* | ASCII city code matching `cities_config.csv` |
 | `--mode` | `deterministic` | `deterministic` or `ensemble` |
 | `--baseline-start/end` | `1991` / `2010` | Training baseline period |
 | `--start` / `--end` | `2025-01-01` / `2100-12-31` | Forecast window |
@@ -123,7 +124,7 @@ output/Miami/
 | `--residual-mode` | `block` | Residual sampling: `deterministic`/`iid`/`block`/`parametric` |
 | `--overwrite` | `false` | Ignore all cached intermediate files |
 | `--data-dir` | `data` | Root directory for ISD / NSRDB / CMIP6 |
-| `--out-dir` | `output/<city>` | Output directory |
+| `--out-dir` | `output/<city_ascii>` | Output directory |
 | `--download-data` | `isd nsrdb cmip6` | Missing datasets to auto-download before running |
 | `--isd-radius` | `50` | Radius used for automatic ISD station selection |
 | `--cmip6-models` | `mpi_esm1_2_lr` | CMIP6 model(s) used for automatic download |
@@ -260,10 +261,10 @@ climate-delta workflows.
 | `list-cmip6 [--detail]` | List available CMIP6 model / experiment / resolution / variable combinations from the live CDS catalogue |
 | `list-cmip6 --experiment <exp> --resolution <res> --var <var>` | Filter live CMIP6 catalogue rows before download |
 | `list-cordex [--detail]` | Inspect live CORDEX catalogue combinations from CDS |
-| `list-stations --city <name> [--radius 150]` | Print nearby ISD stations sorted by distance |
-| `download --city <name> [--isd-station <USAF-WBAN>]` | Download ISD + NSRDB + CMIP6 for one city; otherwise auto-select best-coverage ISD station within 50 km |
-| `download --city <name1> <name2> ...` | Batch-download multiple cities; CMIP6 requests are grouped into shared bounding-box fetches |
-| `download --city <name1> <name2> --isd-station <name1=id> <name2=id>` | Override ISD station IDs per city in batch mode |
+| `list-stations --city <city_ascii> [--radius 150]` | Print nearby ISD stations sorted by distance |
+| `download --city <city_ascii> [--isd-station <USAF-WBAN>]` | Download ISD + NSRDB + CMIP6 for one city; otherwise auto-select best-coverage ISD station within 50 km |
+| `download --city <city_ascii_1> <city_ascii_2> ...` | Batch-download multiple cities; CMIP6 requests are grouped into shared bounding-box fetches |
+| `download --city <city_ascii_1> <city_ascii_2> --isd-station <city_ascii_1=id> <city_ascii_2=id>` | Override ISD station IDs per city in batch mode |
 | `download --models mpi_esm1_2_lr cnrm_esm2_1` | Specify CMIP6 models |
 | `download --experiments historical ssp2_4_5 ssp5_8_5` | Specify CMIP6 CDS experiment names |
 
@@ -376,11 +377,11 @@ for year in [2030, 2050, 2080]:
 | `samy-download config` | Save NSRDB credentials to `~/.config/samy_wgen/credentials.yaml` |
 | `samy-download list-cmip6 [--detail]` | Inspect live CMIP6 CDS catalogue entries |
 | `samy-download list-cordex [--detail]` | Inspect live CORDEX CDS catalogue entries |
-| `samy-download list-stations --city <name>` | List nearby ISD stations |
-| `samy-download download --city <name>` | Download ISD / NSRDB / CMIP6 (auto-select ISD station by coverage within 50 km) |
-| `samy-run --city <name>` | Full pipeline with auto-download of missing ISD / NSRDB / CMIP6 inputs |
-| `samy-run --city <name> --mode ensemble` | Full pipeline in ensemble mode |
-| `samy-rsvar --isd <csv> --city <name> --output <xlsx>` | Train RS-VAR + forecast only |
-| `samy-delta --rsvar-dir <dir> --city <name> --projection-type cmip6 --projection-root <dir> --ssp <scenario>` | Apply CMIP6 delta to RS-VAR output |
-| `samy-delta --rsvar-dir <dir> --city <name> --projection-type cordex-cmip5 --projection-root <dir>` | Apply CORDEX-CMIP5 delta from compatible city-folder CSV inputs |
-| `samy-ensemble --isd <csv> --city <name> --members 50 ...` | Generate stochastic ensemble members |
+| `samy-download list-stations --city <city_ascii>` | List nearby ISD stations |
+| `samy-download download --city <city_ascii>` | Download ISD / NSRDB / CMIP6 (auto-select ISD station by coverage within 50 km) |
+| `samy-run --city <city_ascii>` | Full pipeline with auto-download of missing ISD / NSRDB / CMIP6 inputs |
+| `samy-run --city <city_ascii> --mode ensemble` | Full pipeline in ensemble mode |
+| `samy-rsvar --isd <csv> --city <city_ascii> --output <xlsx>` | Train RS-VAR + forecast only |
+| `samy-delta --rsvar-dir <dir> --city <city_ascii> --projection-type cmip6 --projection-root <dir> --ssp <scenario>` | Apply CMIP6 delta to RS-VAR output |
+| `samy-delta --rsvar-dir <dir> --city <city_ascii> --projection-type cordex-cmip5 --projection-root <dir>` | Apply CORDEX-CMIP5 delta from compatible city-folder CSV inputs |
+| `samy-ensemble --isd <csv> --city <city_ascii> --members 50 ...` | Generate stochastic ensemble members |

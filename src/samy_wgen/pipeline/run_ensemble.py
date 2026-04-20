@@ -43,7 +43,6 @@ USAGE:
 
 import argparse
 import os
-import importlib.resources
 from pathlib import Path
 
 import numpy as np
@@ -51,6 +50,7 @@ import pandas as pd
 
 from samy_wgen.model.rsvar import ForecastTo2100V5
 from samy_wgen.model.anomaly_generator import AnomalyGenerator
+from samy_wgen.utils.city_utils import resolve_city
 
 
 # ==========================================================================
@@ -271,13 +271,8 @@ def _save_summary(
 # ==========================================================================
 
 def _get_lat_for_city(city: str) -> float:
-    """Look up latitude from bundled cities_config.csv."""
-    ref = importlib.resources.files("samy_wgen.config").joinpath("cities_config.csv")
-    cfg = pd.read_csv(str(ref))
-    row = cfg[cfg['city'] == city]
-    if row.empty:
-        raise SystemExit(f"ERROR: City '{city}' not found in cities_config.csv")
-    return float(row.iloc[0]['latitude'])
+    """Look up latitude from the canonical ASCII city code."""
+    return resolve_city(city).latitude
 
 
 def main():
@@ -286,7 +281,7 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument('--isd', required=True, help="Path to merged ISD+solar CSV (LST, hourly)")
-    parser.add_argument('--city', required=True, help="City name (used to look up latitude)")
+    parser.add_argument('--city', required=True, help="ASCII city code (used to look up latitude)")
     parser.add_argument('--lat', type=float, default=None,
                         help="Override latitude (optional; auto-looked up from city if not given)")
     parser.add_argument('--out-dir', default='output/ensemble',

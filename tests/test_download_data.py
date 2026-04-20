@@ -73,8 +73,8 @@ class TestCityMeta:
         from samy_wgen.pipeline.download_data import _city_meta
 
         meta = _city_meta("Miami")
-        assert abs(meta["lat"] - 25.7617) < 0.01
-        assert abs(meta["lon"] - (-80.1918)) < 0.01
+        assert abs(meta["lat"] - 25.7840) < 0.01
+        assert abs(meta["lon"] - (-80.2101)) < 0.01
         assert meta["cordex_domain"] == "NAM-22"
 
     def test_case_insensitive(self):
@@ -320,23 +320,27 @@ class TestDownloadNsrdbUnit:
     def test_missing_env_vars_raises(self, tmp_path, monkeypatch):
         from samy_wgen.pipeline.download_data import download_nsrdb
 
-        monkeypatch.delenv("NSRDB_API_KEY", raising=False)
-        monkeypatch.delenv("NSRDB_EMAIL",   raising=False)
-
-        with pytest.raises(EnvironmentError, match="NSRDB_API_KEY"):
-            download_nsrdb("Miami", 25.76, -80.19, [2000], output_dir=str(tmp_path))
+        with patch(
+            "samy_wgen.pipeline.download_data._load_nsrdb_credentials",
+            side_effect=EnvironmentError("NSRDB_API_KEY missing"),
+        ):
+            with pytest.raises(EnvironmentError, match="NSRDB_API_KEY"):
+                download_nsrdb("Miami", 25.76, -80.19, [2000], output_dir=str(tmp_path))
 
     def test_saves_merged_csv(self, tmp_path, monkeypatch):
         from samy_wgen.pipeline.download_data import download_nsrdb
-
-        monkeypatch.setenv("NSRDB_API_KEY", "test_key")
-        monkeypatch.setenv("NSRDB_EMAIL",   "test@example.com")
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.text = self._mock_nsrdb_csv(2000)
 
-        with patch("requests.get", return_value=mock_resp):
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
+
+        with (
+            patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
+            patch("requests.Session", return_value=mock_session),
+        ):
             download_nsrdb(
                 "Miami", 25.76, -80.19, [2000], output_dir=str(tmp_path)
             )
@@ -350,15 +354,15 @@ class TestDownloadNsrdbUnit:
         """Years outside 1998–2024 are silently skipped."""
         from samy_wgen.pipeline.download_data import download_nsrdb
 
-        monkeypatch.setenv("NSRDB_API_KEY", "test_key")
-        monkeypatch.setenv("NSRDB_EMAIL",   "test@example.com")
-
-        with patch("requests.get") as mock_get:
+        with (
+            patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
+            patch("requests.Session") as mock_session,
+        ):
             download_nsrdb(
                 "Miami", 25.76, -80.19, [1980, 2030],  # both out of range
                 output_dir=str(tmp_path),
             )
-            mock_get.assert_not_called()
+        mock_session.assert_not_called()
 
     def test_retries_transient_failure_then_succeeds(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_nsrdb
@@ -432,17 +436,17 @@ class TestCliParsing:
 
     def test_download_accepts_multiple_cities(self):
         parser = self._parser()
-        args = parser.parse_args(["download", "--city", "Miami", "Los Angeles"])
-        assert args.city == ["Miami", "Los Angeles"]
+        args = parser.parse_args(["download", "--city", "Miami", "Los_Angeles"])
+        assert args.city == ["Miami", "Los_Angeles"]
 
     def test_download_accepts_isd_station_mapping(self):
         parser = self._parser()
         args = parser.parse_args([
             "download",
-            "--city", "Miami", "Los Angeles",
-            "--isd-station", "Miami=722020-12839", "Los Angeles=722950-23174",
+            "--city", "Miami", "Los_Angeles",
+            "--isd-station", "Miami=722020-12839", "Los_Angeles=722950-23174",
         ])
-        assert args.isd_station == ["Miami=722020-12839", "Los Angeles=722950-23174"]
+        assert args.isd_station == ["Miami=722020-12839", "Los_Angeles=722950-23174"]
 
     def test_download_accepts_single_city_legacy_isd_station(self):
         parser = self._parser()
@@ -1114,13 +1118,13 @@ class TestCmip6YearRange:
                 "samy_wgen.pipeline.download_data._resolve_city_points",
                 return_value={
                     "Miami": (25.76, -80.19),
-                    "Los Angeles": (34.05, -118.24),
+                    "Los_Angeles": (34.05, -118.24),
                 },
             ),
             patch("samy_wgen.pipeline.download_data._nc_bytes_to_point_dfs", side_effect=fake_extract),
         ):
             download_cmip6_for_cities(
-                cities=["Miami", "Los Angeles"],
+                cities=["Miami", "Los_Angeles"],
                 models=["mpi_esm1_2_lr"],
                 experiments=["historical"],
                 year_range=(1995, 1995),
@@ -1130,7 +1134,7 @@ class TestCmip6YearRange:
         assert len(captured_requests) == 1
         assert captured_requests[0]["area"] == [35.55, -119.74, 24.26, -78.69]
         assert (tmp_path / "Miami" / "mpi_esm1_2_lr_historical.csv").exists()
-        assert (tmp_path / "Los Angeles" / "mpi_esm1_2_lr_historical.csv").exists()
+        assert (tmp_path / "Los_Angeles" / "mpi_esm1_2_lr_historical.csv").exists()
 
     def test_download_cordex_uses_constrained_plan(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_cordex_cmip5

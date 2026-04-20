@@ -19,20 +19,24 @@ class TestGetUtcOffset:
     def test_los_angeles(self):
         assert get_utc_offset("Los_Angeles") == -8.0
 
-    def test_montreal_with_accent(self):
-        assert get_utc_offset("Montréal") == -5.0
+    def test_montreal_ascii_code(self):
+        assert get_utc_offset("Montreal") == -5.0
 
     def test_by_coordinates(self):
         assert get_utc_offset(latitude=25.7840, longitude=-80.2101) == -5.0
 
     def test_unknown_city_raises(self):
-        with pytest.raises(KeyError, match="not found"):
+        with pytest.raises(ValueError, match="not found"):
             get_utc_offset("Atlantis")
 
 
 class TestNormalizeCityArgs:
-    def test_prefers_ascii_city_names(self):
-        assert _normalize_city_args(["Montréal", "Toronto"]) == ["Montreal", "Toronto"]
+    def test_requires_canonical_ascii_codes(self):
+        assert _normalize_city_args(["Montreal", "Toronto"]) == ["Montreal", "Toronto"]
+
+    def test_unknown_city_suggests_ascii_code(self):
+        with pytest.raises(ValueError, match="Did you mean: Montreal"):
+            _normalize_city_args(["Montréal"])
 
 
 class TestUtcToLst:
