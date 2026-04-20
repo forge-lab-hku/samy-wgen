@@ -19,74 +19,110 @@ from __future__ import annotations
 
 import importlib.resources
 import logging
+import os
+import tempfile
+import unicodedata
+from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
-import yaml
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-def _load_city_timezones() -> dict[str, float]:
-    """Return {city: utc_offset_hours} from bundled config.yaml."""
-    ref = importlib.resources.files("samy_wgen.config").joinpath("config.yaml")
+def _normalize_city_key(city: str) -> str:
+    """Return a comparison key that tolerates accents and separator variants."""
+    ascii_city = unicodedata.normalize("NFKD", city).encode("ascii", "ignore").decode("ascii")
+    return ascii_city.lower().replace("_", "").replace(" ", "")
+
+
+@lru_cache(maxsize=1)
+def _load_cities_config() -> pd.DataFrame:
+    ref = importlib.resources.files("samy_wgen.config").joinpath("cities_config.csv")
     with ref.open("r") as f:
-        cfg = yaml.safe_load(f)
-    raw = cfg.get("city_timezones", {})
-    # config stores IANA names; we need fixed offsets.
-    # Extend this mapping as new cities are added.
-    iana_to_offset: dict[str, float] = {
-        "America/Los_Angeles": -8.0,
-        "America/New_York": -5.0,
-        "America/Toronto": -5.0,
-        "America/Montreal": -5.0,
-        "America/Vancouver": -8.0,
-        "America/Chicago": -6.0,
-        "America/Denver": -7.0,
-        "America/Phoenix": -7.0,   # Arizona — no DST, fixed MST
-    }
-    result: dict[str, float] = {}
-    for city, iana in raw.items():
-        if iana in iana_to_offset:
-            result[city] = iana_to_offset[iana]
-        else:
-            raise ValueError(
-                f"No fixed UTC offset known for timezone '{iana}' (city: {city}). "
-                "Add it to iana_to_offset in time_utils.py."
-            )
-    return result
+        cfg = pd.read_csv(f)
+    return cfg
 
 
-def get_utc_offset(city: str) -> float:
-    """Return fixed LST offset from UTC (hours) for a city.
+def _resolve_city_coordinates(city: str) -> tuple[float, float, str]:
+    """Return latitude, longitude, and canonical city label for a requested city."""
+    cfg = _load_cities_config()
+    key = _normalize_city_key(city)
 
-    Examples:
-        Miami  → -5.0  (EST, America/New_York standard offset)
-        LA     → -8.0  (PST, America/Los_Angeles standard offset)
-        Toronto → -5.0
+    for _, row in cfg.iterrows():
+        candidates = [str(row.get("city", ""))]
+        if "city_ascii" in cfg.columns and pd.notna(row.get("city_ascii")):
+            candidates.append(str(row["city_ascii"]))
+        if any(_normalize_city_key(candidate) == key for candidate in candidates):
+            canonical = str(row["city_ascii"]) if "city_ascii" in cfg.columns and pd.notna(row.get("city_ascii")) else str(row["city"])
+            return float(row["latitude"]), float(row["longitude"]), canonical
 
-    Args:
-        city: City name matching keys in config.yaml city_timezones section
-              (e.g. "Miami", "Los_Angeles", "Toronto", "Montreal").
+    available = sorted({
+        str(row["city_ascii"]) if "city_ascii" in cfg.columns and pd.notna(row.get("city_ascii")) else str(row["city"])
+        for _, row in cfg.iterrows()
+    })
+    raise KeyError(
+        f"City '{city}' not found in cities_config.csv. "
+        f"Available: {', '.join(available)}"
+    )
 
-    Returns:
-        UTC offset in hours (negative for Americas).
 
-    Raises:
-        KeyError: If city is not found in config.
-    """
-    offsets = _load_city_timezones()
-    if city not in offsets:
-        available = ", ".join(sorted(offsets))
-        raise KeyError(
-            f"City '{city}' not found in config city_timezones. "
-            f"Available: {available}"
+@lru_cache(maxsize=1)
+def _get_timezone_finder():
+    # timezonefinder imports numba-decorated modules at import time; under some
+    # conda setups it needs an explicit writable cache directory.
+    os.environ.setdefault("NUMBA_CACHE_DIR", str(Path(tempfile.gettempdir()) / "numba-cache"))
+    from timezonefinder import TimezoneFinder
+
+    return TimezoneFinder()
+
+
+def get_timezone_name(
+    city: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> str:
+    """Return the IANA timezone name for a city or coordinate pair."""
+    if latitude is None or longitude is None:
+        if city is None:
+            raise ValueError("Either city or both latitude/longitude must be provided.")
+        latitude, longitude, _ = _resolve_city_coordinates(city)
+
+    tz_name = _get_timezone_finder().timezone_at(lat=latitude, lng=longitude)
+    if tz_name is None:
+        raise ValueError(
+            f"Could not determine timezone for lat={latitude}, lon={longitude}."
         )
-    return offsets[city]
+    return tz_name
 
 
-def utc_to_lst(df: pd.DataFrame, city: str) -> pd.DataFrame:
+def get_utc_offset(
+    city: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> float:
+    """Return fixed LST offset from UTC (hours) for a city or coordinate pair.
+
+    The returned offset is the standard-time offset, evaluated on January 15 to
+    avoid daylight-saving shifts.
+    """
+    tz_name = get_timezone_name(city=city, latitude=latitude, longitude=longitude)
+    standard_dt = datetime(2020, 1, 15, 12, 0, tzinfo=ZoneInfo(tz_name))
+    offset = standard_dt.utcoffset()
+    if offset is None:
+        raise ValueError(f"Could not determine UTC offset for timezone '{tz_name}'.")
+    return offset.total_seconds() / 3600.0
+
+
+def utc_to_lst(
+    df: pd.DataFrame,
+    city: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> pd.DataFrame:
     """Shift a UTC-indexed DataFrame to Local Standard Time (no DST).
 
     This is the single UTC→LST conversion point in the pipeline.
@@ -94,18 +130,21 @@ def utc_to_lst(df: pd.DataFrame, city: str) -> pd.DataFrame:
 
     Args:
         df: DataFrame with a timezone-naive or UTC DatetimeIndex.
-        city: City name (must match config.yaml city_timezones).
+        city: City name, used to look up coordinates from cities_config.csv.
+        latitude: Optional explicit latitude.
+        longitude: Optional explicit longitude.
 
     Returns:
         New DataFrame with index shifted to LST (timezone-naive).
     """
-    offset_hours = get_utc_offset(city)
+    offset_hours = get_utc_offset(city=city, latitude=latitude, longitude=longitude)
     offset = pd.Timedelta(hours=offset_hours)
     out = df.copy()
     if out.index.tz is not None:
         out.index = out.index.tz_localize(None)
     out.index = out.index + offset
-    logger.debug("utc_to_lst: shifted %s by %.1fh for %s", len(df), offset_hours, city)
+    label = city or f"lat={latitude}, lon={longitude}"
+    logger.debug("utc_to_lst: shifted %s by %.1fh for %s", len(df), offset_hours, label)
     return out
 
 
@@ -143,12 +182,10 @@ def assert_is_lst(df: pd.DataFrame, name: str = "") -> None:
             "This may indicate a timezone conversion error."
         )
 
-    # Check for ±1h jumps indicative of DST (only for sub-daily frequency)
     if len(df) > 1:
         diffs = df.index.to_series().diff().dropna()
         expected = diffs.mode().iloc[0]
         if expected <= pd.Timedelta(hours=2):
-            # Only check for hourly-or-finer data
             dst_jumps = ((diffs == pd.Timedelta(hours=2)) | (diffs == pd.Timedelta(0))).sum()
             if dst_jumps > 0:
                 raise ValueError(

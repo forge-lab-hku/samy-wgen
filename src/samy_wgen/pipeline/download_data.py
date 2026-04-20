@@ -767,7 +767,10 @@ def _normalize_city_name(city: str, cfg: pd.DataFrame | None = None) -> str:
             f"City '{city}' not found in cities_config. "
             f"Available: {cfg['city'].tolist()}"
         )
-    return str(row.iloc[0]["city"])
+    canonical = row.iloc[0]
+    if "city_ascii" in cfg.columns and pd.notna(canonical.get("city_ascii")):
+        return str(canonical["city_ascii"])
+    return str(canonical["city"])
 
 
 def _normalize_city_args(requested: list[str]) -> list[str]:

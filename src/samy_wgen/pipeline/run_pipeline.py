@@ -78,16 +78,24 @@ def _load_city_meta(city: str) -> dict:
     ref = importlib.resources.files("samy_wgen.config").joinpath("cities_config.csv")
     cfg = pd.read_csv(str(ref))
     row = cfg[cfg["city"] == city]
+    if row.empty and "city_ascii" in cfg.columns:
+        row = cfg[cfg["city_ascii"] == city]
     if row.empty:
-        available = cfg["city"].tolist()
+        available = (
+            cfg["city_ascii"].fillna(cfg["city"]).tolist()
+            if "city_ascii" in cfg.columns
+            else cfg["city"].tolist()
+        )
         raise SystemExit(
             f"ERROR: city '{city}' not in cities_config.csv. Available: {available}"
         )
     r = row.iloc[0]
-    tz = get_utc_offset(city)
+    lat = float(r["latitude"])
+    lon = float(r["longitude"])
+    tz = get_utc_offset(city=city, latitude=lat, longitude=lon)
     return {
-        "lat": float(r["latitude"]),
-        "lon": float(r["longitude"]),
+        "lat": lat,
+        "lon": lon,
         "tz":  tz,
     }
 
@@ -352,6 +360,7 @@ def _stage0_parse_isd(isd_station_dir: Path) -> pd.DataFrame:
 
 
 def _stage1_remap_to_lst(isd_raw: pd.DataFrame, city: str,
+                          lat: float, lon: float,
                           out_dir: Path, overwrite: bool) -> pd.DataFrame:
     """Remap ISD columns + UTC→LST + resample to hourly → 1_isd_lst.csv."""
     from samy_wgen.utils.parse_ISD import remap_isd_columns, resample_isd_hourly
@@ -370,7 +379,7 @@ def _stage1_remap_to_lst(isd_raw: pd.DataFrame, city: str,
 
     key_cols = [c for c in ["temp", "dewpoint", "pressure", "wind_speed"] if c in df.columns]
     df = df.dropna(subset=key_cols, how="all")
-    df = utc_to_lst(df, city)
+    df = utc_to_lst(df, city=city, latitude=lat, longitude=lon)
     df = resample_isd_hourly(df)
 
     yr_min, yr_max = df.index.year.min(), df.index.year.max()
@@ -599,7 +608,14 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
         isd_lst = pd.read_csv(isd_lst_cache, parse_dates=["DATE"]).set_index("DATE")
     else:
         isd_raw = _stage0_parse_isd(isd_station_dir)
-        isd_lst = _stage1_remap_to_lst(isd_raw, city, out_dir, overwrite=ow)
+        isd_lst = _stage1_remap_to_lst(
+            isd_raw,
+            city,
+            meta["lat"],
+            meta["lon"],
+            out_dir,
+            overwrite=ow,
+        )
 
     merged_csv = _stage2_merge_nsrdb(isd_lst, nsrdb_csv, out_dir, overwrite=ow)
 

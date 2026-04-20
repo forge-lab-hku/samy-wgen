@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from samy_wgen.utils.time_utils import utc_to_lst, assert_is_lst, get_utc_offset
+from samy_wgen.pipeline.download_data import _normalize_city_args
 
 
 def make_utc_df(n_hours: int = 48) -> pd.DataFrame:
@@ -18,9 +19,20 @@ class TestGetUtcOffset:
     def test_los_angeles(self):
         assert get_utc_offset("Los_Angeles") == -8.0
 
+    def test_montreal_with_accent(self):
+        assert get_utc_offset("Montréal") == -5.0
+
+    def test_by_coordinates(self):
+        assert get_utc_offset(latitude=25.7840, longitude=-80.2101) == -5.0
+
     def test_unknown_city_raises(self):
         with pytest.raises(KeyError, match="not found"):
             get_utc_offset("Atlantis")
+
+
+class TestNormalizeCityArgs:
+    def test_prefers_ascii_city_names(self):
+        assert _normalize_city_args(["Montréal", "Toronto"]) == ["Montreal", "Toronto"]
 
 
 class TestUtcToLst:
