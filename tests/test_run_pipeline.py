@@ -111,6 +111,55 @@ class TestEnsurePipelineInputs:
         assert captured["isd"]["years"] == (1970, 2024)
         assert captured["nsrdb"]["years"] == (1998, 2024)
 
+    def test_ensure_pipeline_inputs_uses_city_specific_isd_station_mapping(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _ensure_pipeline_inputs
+
+        data_dir = tmp_path / "data"
+        captured: dict[str, object] = {}
+
+        def fake_download_isd(station_id: str, city: str, years: list[int], output_dir: str) -> None:
+            captured["station_id"] = station_id
+            station_dir = Path(output_dir) / city / f"{station_id}_AUTO"
+            station_dir.mkdir(parents=True, exist_ok=True)
+            (station_dir / f"{station_id}-2000.gz").write_bytes(b"ok")
+
+        def fake_download_nsrdb(city: str, lat: float, lon: float, years: list[int], output_dir: str) -> None:
+            nsrdb_dir = Path(output_dir)
+            nsrdb_dir.mkdir(parents=True, exist_ok=True)
+            (nsrdb_dir / "nsrdb_miami_1998-2024.csv").write_text("Year,Month,Day,Hour,GHI\n")
+
+        city_dir = data_dir / "CMIP6" / "Miami"
+        city_dir.mkdir(parents=True, exist_ok=True)
+        (city_dir / "mpi_esm1_2_lr_historical.csv").write_text("time,tas\n")
+        (city_dir / "mpi_esm1_2_lr_ssp245.csv").write_text("time,tas\n")
+
+        args = Namespace(
+            city=["Miami", "Los Angeles"],
+            isd_dir=None,
+            nsrdb=None,
+            cmip6_dir=None,
+            skip_download=False,
+            download_data=["isd", "nsrdb", "cmip6"],
+            download_years=None,
+            isd_station=["Miami=722020-12839", "Los Angeles=722950-23174"],
+            isd_radius=50.0,
+            ssp="ssp245",
+            cmip6_models=["mpi_esm1_2_lr"],
+            cmip6_experiments=None,
+            cmip6_years=None,
+        )
+
+        with (
+            patch("samy_wgen.pipeline.download_data.select_best_isd_station") as station_mock,
+            patch("samy_wgen.pipeline.download_data._city_meta", return_value={"lat": 25.7617, "lon": -80.1918}),
+            patch("samy_wgen.pipeline.download_data.download_isd", side_effect=fake_download_isd),
+            patch("samy_wgen.pipeline.download_data.download_nsrdb", side_effect=fake_download_nsrdb),
+        ):
+            _ensure_pipeline_inputs(args, data_dir, "Miami")
+
+        station_mock.assert_not_called()
+        assert captured["station_id"] == "722020-12839"
+
     def test_batch_cmip6_downloads_missing_cities_once(self, tmp_path):
         from samy_wgen.pipeline.run_pipeline import _ensure_batch_cmip6_inputs
 

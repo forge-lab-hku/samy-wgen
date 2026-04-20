@@ -34,11 +34,38 @@ Python ≥ 3.10 required. All dependencies are declared in `pyproject.toml` and 
 
 ---
 
+## Credentials and API setup
+
+Configure external data access once after installation.
+
+**NOAA ISD** — no registration required (public FTP).
+
+**NREL NSRDB** (solar irradiance)
+
+1. Register for a free API key at [developer.nlr.gov/signup](https://developer.nlr.gov/signup/)
+2. Save credentials once via the interactive prompt:
+   ```bash
+   samy-download config
+   #   NSRDB API key : your_key_here
+   #   NSRDB email   : your@email.com
+   ```
+
+**Copernicus CDS** (CMIP6 climate projections; CORDEX-CMIP5 catalogue queries)
+
+1. Register at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu)
+2. Accept the dataset licence for *CMIP6 climate projections* and, if you plan to inspect CORDEX availability, *CORDEX regional climate projections* in your CDS profile
+3. Create `~/.cdsapirc`:
+   ```ini
+   # ~/.cdsapirc
+   url: https://cds.climate.copernicus.eu/api
+   key: <UID>:<API-key>          # shown on your CDS profile page
+   ```
+
+---
+
 ## Quickstart — one-click pipeline
 
 `samy-run` chains all stages automatically, downloads missing inputs by default, and caches intermediate outputs so re-runs are fast.
-
-Before first use, make sure NSRDB credentials are saved with `samy-download config` and CDS credentials exist in `~/.cdsapirc`.
 
 ```bash
 # Deterministic forecast — Miami, SSP2-4.5, auto-download missing ISD/NSRDB/CMIP6 inputs
@@ -109,32 +136,7 @@ output/Miami/
 Before running the pipeline, three data sources must be present for each city.
 `samy-download` handles all three from the command line.
 
-### 1 · Register API credentials
-
-**NOAA ISD** — no registration required (public FTP).
-
-**NREL NSRDB** (solar irradiance)
-
-1. Register for a free API key at [developer.nlr.gov/signup](https://developer.nlr.gov/signup/)
-2. Save credentials once via the interactive prompt:
-   ```bash
-   samy-download config
-   #   NSRDB API key : your_key_here
-   #   NSRDB email   : your@email.com
-   ```
-
-**Copernicus CDS** (CMIP6 climate projections; CORDEX-CMIP5 catalogue queries)
-
-1. Register at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu)
-2. Accept the dataset licence for *CMIP6 climate projections* and, if you plan to inspect CORDEX availability, *CORDEX regional climate projections* in your CDS profile
-3. Create `~/.cdsapirc`:
-   ```ini
-   # ~/.cdsapirc
-   url: https://cds.climate.copernicus.eu/api
-   key: <UID>:<API-key>          # shown on your CDS profile page
-   ```
-
-### 2 · Inspect candidate ISD stations
+### 1 · Inspect candidate ISD stations
 
 ISD files are keyed by station ID. You can inspect nearby stations explicitly:
 
@@ -144,7 +146,7 @@ samy-download list-stations --city Miami
 
 If `--isd-station` is omitted, `samy-download download` and `samy-run` now auto-select the station with the best time coverage inside a 50 km radius.
 
-### 3 · Inspect live CMIP6 availability
+### 2 · Inspect live CMIP6 availability
 
 CMIP6 downloads are backed by the live CDS catalogue. You can inspect which
 model / experiment / temporal-resolution / variable combinations are currently
@@ -167,7 +169,7 @@ samy-download list-cmip6 \
 `samy-download download` uses the same CDS constraint checks before requesting
 CMIP6 data, so unavailable model / experiment combinations are skipped early.
 
-### 4 · Download all data for a city
+### 3 · Download all data
 
 ```bash
 # ISD + NSRDB + CMIP6 (default set)
@@ -178,6 +180,11 @@ samy-download download \
 samy-download download \
   --city Miami \
   --years 1991 2024
+
+# Batch multiple cities, with per-city ISD station overrides
+samy-download download \
+  --city Montreal Toronto \
+  --isd-station Montreal=716270-94792 Toronto=716240-99999
 
 # Download additional CMIP6 models or scenarios
 samy-download download \
@@ -231,8 +238,9 @@ delta workflows.
 | `list-cmip6 --experiment <exp> --resolution <res> --var <var>` | Filter live CMIP6 catalogue rows before download |
 | `list-cordex [--detail]` | Inspect live CORDEX catalogue combinations from CDS |
 | `list-stations --city <name> [--radius 150]` | Print nearby ISD stations sorted by distance |
-| `download --city <name> [--isd-station <USAF-WBAN>]` | Download ISD + NSRDB + CMIP6; otherwise auto-select best-coverage ISD station within 50 km |
+| `download --city <name> [--isd-station <USAF-WBAN>]` | Download ISD + NSRDB + CMIP6 for one city; otherwise auto-select best-coverage ISD station within 50 km |
 | `download --city <name1> <name2> ...` | Batch-download multiple cities; CMIP6 requests are grouped into shared bounding-box fetches |
+| `download --city <name1> <name2> --isd-station <name1=id> <name2=id>` | Override ISD station IDs per city in batch mode |
 | `download --models mpi_esm1_2_lr cnrm_esm2_1` | Specify CMIP6 models |
 | `download --experiments historical ssp2_4_5 ssp5_8_5` | Specify CMIP6 CDS experiment names |
 

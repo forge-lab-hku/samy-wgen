@@ -435,6 +435,24 @@ class TestCliParsing:
         args = parser.parse_args(["download", "--city", "Miami", "Los Angeles"])
         assert args.city == ["Miami", "Los Angeles"]
 
+    def test_download_accepts_isd_station_mapping(self):
+        parser = self._parser()
+        args = parser.parse_args([
+            "download",
+            "--city", "Miami", "Los Angeles",
+            "--isd-station", "Miami=722020-12839", "Los Angeles=722950-23174",
+        ])
+        assert args.isd_station == ["Miami=722020-12839", "Los Angeles=722950-23174"]
+
+    def test_download_accepts_single_city_legacy_isd_station(self):
+        parser = self._parser()
+        args = parser.parse_args([
+            "download",
+            "--city", "Miami",
+            "--isd-station", "722020-12839",
+        ])
+        assert args.isd_station == ["722020-12839"]
+
     def test_download_custom_experiments(self):
         parser = self._parser()
         args = parser.parse_args([

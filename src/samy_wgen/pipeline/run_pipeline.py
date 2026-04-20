@@ -183,8 +183,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Auto-download these datasets when required inputs are missing")
     parser.add_argument("--skip-download", action="store_true",
                         help="Disable automatic download of missing input data")
-    parser.add_argument("--isd-station", default=None,
-                        help="Override automatic ISD station selection with a USAF-WBAN station ID")
+    parser.add_argument("--isd-station", nargs="+", default=None,
+                        help="Override automatic ISD station selection. Single-city mode accepts USAF-WBAN; multi-city mode accepts City=USAF-WBAN mappings")
     parser.add_argument("--isd-radius", type=float, default=DEFAULT_ISD_RADIUS_KM,
                         help="Radius in km for automatic ISD station selection")
     parser.add_argument("--download-years", nargs=2, type=int, metavar=("START", "END"), default=None,
@@ -234,6 +234,12 @@ def _normalize_city_args(requested: list[str]) -> list[str]:
     return _normalize(requested)
 
 
+def _parse_isd_station_args(values: list[str] | None, cities: list[str]) -> dict[str, str] | None:
+    from samy_wgen.pipeline.download_data import _parse_isd_station_args as _parse
+
+    return _parse(values, cities)
+
+
 def _ensure_pipeline_inputs(args, data_dir: Path, city: str, cmip6_dir: Path | None = None) -> tuple[Path, Path, Path]:
     from samy_wgen.pipeline.download_data import (
         _city_meta,
@@ -252,7 +258,8 @@ def _ensure_pipeline_inputs(args, data_dir: Path, city: str, cmip6_dir: Path | N
                 raise
             _print_title("Download ISD")
             yr_start, yr_end = args.download_years if args.download_years else DEFAULT_ISD_YEAR_RANGE
-            station_id = args.isd_station or select_best_isd_station(
+            station_map = _parse_isd_station_args(args.isd_station, args.city)
+            station_id = (station_map or {}).get(city) or select_best_isd_station(
                 city=city,
                 radius_km=args.isd_radius,
                 cache_dir=str(data_dir / "ISD"),
@@ -654,9 +661,6 @@ def main():
     args = parser.parse_args()
     args.city = _normalize_city_args(args.city)
     data_dir = Path(args.data_dir)
-
-    if args.isd_station and len(args.city) != 1:
-        raise SystemExit("ERROR: --isd-station can only be used when exactly one --city is provided.")
 
     cmip6_dir = _ensure_batch_cmip6_inputs(args, data_dir, args.city)
     for city in args.city:

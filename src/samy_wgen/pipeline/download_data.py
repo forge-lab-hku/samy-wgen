@@ -784,6 +784,44 @@ def _normalize_city_args(requested: list[str]) -> list[str]:
     return normalized
 
 
+def _parse_isd_station_args(
+    values: list[str] | None,
+    cities: list[str],
+) -> dict[str, str] | None:
+    """Parse `--isd-station` values into a canonical city -> station_id mapping.
+
+    Supported forms:
+    - single-city legacy form: `--isd-station 722020-12839`
+    - multi/single-city mapped form: `--isd-station Miami=722020-12839`
+    """
+    if not values:
+        return None
+
+    canonical_cities = _normalize_city_args(cities)
+    if len(values) == 1 and "=" not in values[0]:
+        if len(canonical_cities) != 1:
+            raise SystemExit(
+                "ERROR: Multi-city --isd-station values must use City=USAF-WBAN mappings."
+            )
+        return {canonical_cities[0]: values[0]}
+
+    station_ids: dict[str, str] = {}
+    for item in values:
+        if "=" not in item:
+            raise SystemExit(
+                "ERROR: --isd-station entries must be USAF-WBAN or City=USAF-WBAN."
+            )
+        raw_city, station_id = item.split("=", 1)
+        city = _normalize_city_name(raw_city.strip())
+        station_id = station_id.strip()
+        if city not in canonical_cities:
+            raise SystemExit(
+                f"ERROR: --isd-station city '{city}' is not present in --city {canonical_cities}."
+            )
+        station_ids[city] = station_id
+    return station_ids
+
+
 def _resolve_coords(
     city: str,
     lat: Optional[float],
@@ -1712,8 +1750,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # ISD
-    p_dl.add_argument("--isd-station", metavar="USAF-WBAN",
-                      help="ISD station ID, e.g. 722020-12839 (default: auto-select best coverage within --isd-radius)")
+    p_dl.add_argument(
+        "--isd-station",
+        nargs="+",
+        metavar="USAF-WBAN|CITY=USAF-WBAN",
+        help="ISD station override. Single-city mode accepts a bare USAF-WBAN; multi-city mode accepts City=USAF-WBAN mappings.",
+    )
     p_dl.add_argument(
         "--isd-radius", type=float, default=50.0,
         help="Radius in km for automatic ISD station selection (default: 50)",
@@ -1851,11 +1893,7 @@ def main() -> None:
 
     if "isd" in sources:
         yr_start, yr_end = args.years if args.years else DEFAULT_ISD_YEAR_RANGE
-        station_ids = None
-        if args.isd_station:
-            if len(cities) != 1:
-                raise SystemExit("ERROR: --isd-station can only be used when exactly one --city is provided.")
-            station_ids = {cities[0]: args.isd_station}
+        station_ids = _parse_isd_station_args(args.isd_station, cities)
         download_isd_for_cities(
             cities=cities,
             years=list(range(yr_start, yr_end + 1)),
