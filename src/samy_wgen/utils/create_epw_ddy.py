@@ -422,6 +422,338 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
     return output_epw_path
 
 
+def _idf_design_day(
+    name: str,
+    month: int,
+    day_of_month: int,
+    day_type: str,
+    max_db: float,
+    daily_range: float,
+    humidity_type: str,
+    humidity_value: float | None,
+    pressure_pa: float,
+    wind_speed: float,
+    *,
+    wind_direction: int = 0,
+    sky_clearness: float = 0.0,
+    enthalpy_value: float | None = None,
+) -> str:
+    if humidity_type == "Enthalpy":
+        humidity_line = f"  ,                                 !- Wetbulb or DewPoint at Maximum Dry-Bulb {{C}}\n"
+        enthalpy_line = f"  {enthalpy_value:.1f},                  !- Enthalpy at Maximum Dry-Bulb {{J/kg}}\n"
+    else:
+        humidity_line = f"  {humidity_value:.1f},                  !- Wetbulb or DewPoint at Maximum Dry-Bulb {{C}}\n"
+        enthalpy_line = "  ,                                 !- Enthalpy at Maximum Dry-Bulb {J/kg}\n"
+    return f"""SizingPeriod:DesignDay,
+  {name},                           !- Name
+  {month},                          !- Month
+  {day_of_month},                   !- Day of Month
+  {day_type},                       !- Day Type
+  {max_db:.1f},                     !- Maximum Dry-Bulb Temperature {{C}}
+  {daily_range:.1f},                !- Daily Dry-Bulb Temperature Range {{C}}
+  DefaultMultipliers,               !- Dry-Bulb Temperature Range Modifier Type
+  ,                                 !- Dry-Bulb Temperature Range Modifier Day Schedule Name
+  {humidity_type},                  !- Humidity Condition Type
+{humidity_line}  ,                                 !- Humidity Indicating Day Schedule Name
+  ,                                 !- Humidity Ratio at Maximum Dry-Bulb {{kgWater/kgDryAir}}
+{enthalpy_line}  ,                                 !- Daily Wet-Bulb Temperature Range {{deltaC}}
+  {pressure_pa:.0f},                      !- Barometric Pressure {{Pa}}
+  {wind_speed:.1f},                    !- Wind Speed {{m/s}}
+  {wind_direction},                          !- Wind Direction {{Degrees; N=0, S=180}}
+  No,                                !- Rain Indicator
+  No,                                !- Snow Indicator
+  No,                                !- Daylight Saving Time Indicator
+  ASHRAEClearSky,                    !- Solar Model Indicator
+  ,                                  !- Beam Solar Day Schedule Name
+  ,                                  !- Diffuse Solar Day Schedule Name
+  ,                                  !- ASHRAE Clear Sky Optical Depth for Beam Irradiance (taub)
+  ,                                  !- ASHRAE Clear Sky Optical Depth for Diffuse Irradiance (taud)
+  {sky_clearness:.1f};                 !- Clearness
+"""
+
+
+def _coincident_mean(primary: np.ndarray, other: np.ndarray, pct: float, *, high: bool) -> tuple[float, float]:
+    """Return percentile threshold of ``primary`` and mean ``other`` over the extreme tail."""
+    threshold = np.percentile(primary, pct)
+    mask = primary >= threshold if high else primary <= threshold
+    return float(threshold), float(np.mean(other[mask]))
+
+
+def _estimate_pressure_pa(pressure: pd.Series | None, elevation_m: float) -> float:
+    if pressure is not None:
+        pressure = pd.to_numeric(pressure, errors="coerce")
+        valid = pressure[np.isfinite(pressure)]
+        if not valid.empty:
+            mean_val = float(valid.mean())
+            return mean_val * 100.0 if mean_val < 2000 else mean_val
+    return float(101325 * (1 - 2.25577e-5 * elevation_m) ** 5.25588)
+
+
+def _parse_epw_to_dataframe(epw_path: Path) -> tuple[pd.DataFrame, dict]:
+    with open(epw_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    if len(lines) < 9:
+        raise ValueError(f"EPW file is too short: {epw_path}")
+
+    location = lines[0].strip().split(",")
+    meta = {
+        "city": location[1] if len(location) > 1 else "Unknown",
+        "state": location[2] if len(location) > 2 else "",
+        "country": location[3] if len(location) > 3 else "",
+        "lat": float(location[6]) if len(location) > 6 else 0.0,
+        "lon": float(location[7]) if len(location) > 7 else 0.0,
+        "tz": float(location[8]) if len(location) > 8 else 0.0,
+        "elevation_m": float(location[9]) if len(location) > 9 else 0.0,
+    }
+
+    records = []
+    for line in lines[8:]:
+        parts = line.strip().split(",")
+        if len(parts) < 22:
+            continue
+        try:
+            records.append(
+                {
+                    "year": int(parts[0]),
+                    "month": int(parts[1]),
+                    "day": int(parts[2]),
+                    "hour": int(parts[3]),
+                    "temp": float(parts[6]),
+                    "dewpoint": float(parts[7]),
+                    "relative_humidity": float(parts[8]),
+                    "pressure": float(parts[9]),
+                    "wind_speed": float(parts[21]),
+                }
+            )
+        except (ValueError, IndexError):
+            continue
+
+    df = pd.DataFrame(records)
+    if df.empty:
+        raise ValueError(f"No valid hourly rows found in EPW: {epw_path}")
+    timestamps = pd.to_datetime(
+        {
+            "year": df["year"],
+            "month": df["month"],
+            "day": df["day"],
+            "hour": df["hour"].clip(lower=1, upper=24) - 1,
+        }
+    )
+    df = df.drop(columns=["year", "month", "day", "hour"])
+    df.index = timestamps
+    return df, meta
+
+
+def compute_ddy_params(df: pd.DataFrame, elevation_m: float = 0.0) -> dict:
+    """Extract generalized 18-condition ASHRAE DDY parameters from hourly data."""
+    required = {"temp", "dewpoint"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"DDY generation requires columns: {sorted(required)}; missing {sorted(missing)}")
+
+    sub = df.copy()
+    for col in ["temp", "dewpoint", "pressure", "wind_speed"]:
+        if col in sub.columns:
+            sub[col] = pd.to_numeric(sub[col], errors="coerce")
+
+    # Drop missing-value codes and physically invalid rows.
+    temp = sub["temp"]
+    dewpoint = sub["dewpoint"]
+    valid = (
+        temp.between(-50, 60)
+        & dewpoint.between(-50, 60)
+        & np.isfinite(temp)
+        & np.isfinite(dewpoint)
+    )
+    if "relative_humidity" in sub.columns:
+        rh_raw = pd.to_numeric(sub["relative_humidity"], errors="coerce")
+        valid &= rh_raw.between(0, 100) & np.isfinite(rh_raw)
+
+    sub = sub.loc[valid].copy()
+    if sub.empty:
+        raise ValueError("No valid hourly rows remain after DDY filtering")
+
+    TDB = sub["temp"].to_numpy(dtype=float)
+    TDP = sub["dewpoint"].to_numpy(dtype=float)
+    RH = np.clip(calc_RH_from_dewpoint(TDB, TDP), 0.1, 100.0)
+    WB = calc_wetbulb(TDB, RH)
+    Pw = 610.7 * np.exp(17.27 * TDP / (237.7 + TDP))
+    pressure_pa = _estimate_pressure_pa(sub.get("pressure"), elevation_m)
+    humidity_ratio = 0.62198 * Pw / np.maximum(pressure_pa - Pw, 1.0)
+    enthalpy = 1006.0 * TDB + humidity_ratio * (2501000.0 + 1860.0 * TDB)
+
+    if "wind_speed" in sub.columns:
+        WS = np.nan_to_num(sub["wind_speed"].to_numpy(dtype=float), nan=0.0)
+        WS = np.clip(WS, 0.0, None)
+    else:
+        WS = np.zeros(len(sub), dtype=float)
+
+    if isinstance(sub.index, pd.DatetimeIndex):
+        tdb_series = sub["temp"]
+        hottest_month = int(tdb_series.groupby(tdb_series.index.month).mean().idxmax())
+        hottest_month_data = tdb_series[tdb_series.index.month == hottest_month]
+        daily_range = float((hottest_month_data.resample("D").max() - hottest_month_data.resample("D").min()).mean())
+    else:
+        hottest_month = 7
+        daily_range = 10.0
+
+    htg_996_db, _ = _coincident_mean(TDB, TDB, 0.4, high=False)
+    htg_99_db, _ = _coincident_mean(TDB, TDB, 1.0, high=False)
+    dp_996, mcdb_dp_996 = _coincident_mean(TDP, TDB, 0.4, high=False)
+    dp_99, mcdb_dp_99 = _coincident_mean(TDP, TDB, 1.0, high=False)
+    ws_996, mcdb_ws_996 = _coincident_mean(WS, TDB, 99.6, high=True)
+    ws_99, mcdb_ws_99 = _coincident_mean(WS, TDB, 99.0, high=True)
+
+    clg_db_004, clg_wb_004 = _coincident_mean(TDB, WB, 99.6, high=True)
+    clg_db_01, clg_wb_01 = _coincident_mean(TDB, WB, 99.0, high=True)
+    clg_db_02, clg_wb_02 = _coincident_mean(TDB, WB, 98.0, high=True)
+
+    clg_wb_peak_004, clg_mdb_at_wb_004 = _coincident_mean(WB, TDB, 99.6, high=True)
+    clg_wb_peak_01, clg_mdb_at_wb_01 = _coincident_mean(WB, TDB, 99.0, high=True)
+    clg_wb_peak_02, clg_mdb_at_wb_02 = _coincident_mean(WB, TDB, 98.0, high=True)
+
+    clg_dp_004, clg_mdb_at_dp_004 = _coincident_mean(TDP, TDB, 99.6, high=True)
+    clg_dp_01, clg_mdb_at_dp_01 = _coincident_mean(TDP, TDB, 99.0, high=True)
+    clg_dp_02, clg_mdb_at_dp_02 = _coincident_mean(TDP, TDB, 98.0, high=True)
+
+    clg_h_004, clg_mdb_at_h_004 = _coincident_mean(enthalpy, TDB, 99.6, high=True)
+    clg_h_01, clg_mdb_at_h_01 = _coincident_mean(enthalpy, TDB, 99.0, high=True)
+    clg_h_02, clg_mdb_at_h_02 = _coincident_mean(enthalpy, TDB, 98.0, high=True)
+
+    cool_wind = float(WS[TDB >= clg_db_004].mean()) if len(WS) else 0.0
+
+    return {
+        "pressure_pa": pressure_pa,
+        "hottest_month": hottest_month,
+        "daily_range": max(daily_range, 0.0),
+        "cool_wind": cool_wind,
+        "htg_996_db": htg_996_db,
+        "htg_99_db": htg_99_db,
+        "htg_dp_996": dp_996,
+        "htg_mcdb_dp_996": mcdb_dp_996,
+        "htg_dp_99": dp_99,
+        "htg_mcdb_dp_99": mcdb_dp_99,
+        "htg_ws_996": ws_996,
+        "htg_mcdb_ws_996": mcdb_ws_996,
+        "htg_ws_99": ws_99,
+        "htg_mcdb_ws_99": mcdb_ws_99,
+        "clg_db_004": clg_db_004,
+        "clg_wb_004": clg_wb_004,
+        "clg_db_01": clg_db_01,
+        "clg_wb_01": clg_wb_01,
+        "clg_db_02": clg_db_02,
+        "clg_wb_02": clg_wb_02,
+        "clg_wb_peak_004": clg_wb_peak_004,
+        "clg_mdb_at_wb_004": clg_mdb_at_wb_004,
+        "clg_wb_peak_01": clg_wb_peak_01,
+        "clg_mdb_at_wb_01": clg_mdb_at_wb_01,
+        "clg_wb_peak_02": clg_wb_peak_02,
+        "clg_mdb_at_wb_02": clg_mdb_at_wb_02,
+        "clg_dp_004": clg_dp_004,
+        "clg_mdb_at_dp_004": clg_mdb_at_dp_004,
+        "clg_dp_01": clg_dp_01,
+        "clg_mdb_at_dp_01": clg_mdb_at_dp_01,
+        "clg_dp_02": clg_dp_02,
+        "clg_mdb_at_dp_02": clg_mdb_at_dp_02,
+        "clg_h_004": clg_h_004,
+        "clg_mdb_at_h_004": clg_mdb_at_h_004,
+        "clg_h_01": clg_h_01,
+        "clg_mdb_at_h_01": clg_mdb_at_h_01,
+        "clg_h_02": clg_h_02,
+        "clg_mdb_at_h_02": clg_mdb_at_h_02,
+    }
+
+
+def render_ddy_content(params: dict, *, city: str, state: str = "", country: str = "", lat: float = 0.0,
+                       lon: float = 0.0, tz: float = 0.0, elevation_m: float = 0.0,
+                       label: str = "future") -> str:
+    """Render 18 design-day conditions as IDF/DDY text."""
+    location_name = "_".join(part for part in [city, state, country, "Design_Conditions"] if part)
+    pressure_pa = round(params["pressure_pa"], 0)
+    daily_range = round(params["daily_range"], 1)
+    cooling_wind = round(params["cool_wind"], 1)
+
+    blocks = [
+        _idf_design_day(f"{label} Ann Htg 99.6% Condns DB", 1, 21, "WinterDesignDay",
+                        params["htg_996_db"], 0.0, "WetBulb", params["htg_996_db"], pressure_pa, 0.0),
+        _idf_design_day(f"{label} Ann Htg 99% Condns DB", 1, 21, "WinterDesignDay",
+                        params["htg_99_db"], 0.0, "WetBulb", params["htg_99_db"], pressure_pa, 0.0),
+        _idf_design_day(f"{label} Ann Hum_n 99.6% Condns DP=>MCDB", 1, 21, "WinterDesignDay",
+                        params["htg_mcdb_dp_996"], 0.0, "DewPoint", params["htg_dp_996"], pressure_pa, 0.0),
+        _idf_design_day(f"{label} Ann Hum_n 99% Condns DP=>MCDB", 1, 21, "WinterDesignDay",
+                        params["htg_mcdb_dp_99"], 0.0, "DewPoint", params["htg_dp_99"], pressure_pa, 0.0),
+        _idf_design_day(f"{label} Ann Htg Wind 99.6% Condns WS=>MCDB", 1, 21, "WinterDesignDay",
+                        params["htg_mcdb_ws_996"], 0.0, "WetBulb", params["htg_mcdb_ws_996"], pressure_pa, params["htg_ws_996"]),
+        _idf_design_day(f"{label} Ann Htg Wind 99% Condns WS=>MCDB", 1, 21, "WinterDesignDay",
+                        params["htg_mcdb_ws_99"], 0.0, "WetBulb", params["htg_mcdb_ws_99"], pressure_pa, params["htg_ws_99"]),
+        _idf_design_day(f"{label} Ann Clg .4% Condns DB=>MWB", 7, 21, "SummerDesignDay",
+                        params["clg_db_004"], daily_range, "WetBulb", params["clg_wb_004"], pressure_pa, cooling_wind, sky_clearness=1.0),
+        _idf_design_day(f"{label} Ann Clg 1% Condns DB=>MWB", 7, 21, "SummerDesignDay",
+                        params["clg_db_01"], daily_range, "WetBulb", params["clg_wb_01"], pressure_pa, cooling_wind, sky_clearness=1.0),
+        _idf_design_day(f"{label} Ann Clg 2% Condns DB=>MWB", 7, 21, "SummerDesignDay",
+                        params["clg_db_02"], daily_range, "WetBulb", params["clg_wb_02"], pressure_pa, cooling_wind, sky_clearness=1.0),
+        _idf_design_day(f"{label} Ann Clg .4% Condns WB=>MDB", 7, 21, "SummerDesignDay",
+                        params["clg_mdb_at_wb_004"], daily_range, "WetBulb", params["clg_wb_peak_004"], pressure_pa, cooling_wind, sky_clearness=1.0),
+        _idf_design_day(f"{label} Ann Clg 1% Condns WB=>MDB", 7, 21, "SummerDesignDay",
+                        params["clg_mdb_at_wb_01"], daily_range, "WetBulb", params["clg_wb_peak_01"], pressure_pa, cooling_wind, sky_clearness=1.0),
+        _idf_design_day(f"{label} Ann Clg 2% Condns WB=>MDB", 7, 21, "SummerDesignDay",
+                        params["clg_mdb_at_wb_02"], daily_range, "WetBulb", params["clg_wb_peak_02"], pressure_pa, cooling_wind, sky_clearness=1.0),
+        _idf_design_day(f"{label} Ann Clg .4% Condns DP=>MDB", 7, 21, "SummerDesignDay",
+                        params["clg_mdb_at_dp_004"], daily_range, "DewPoint", params["clg_dp_004"], pressure_pa, cooling_wind, sky_clearness=1.0),
+        _idf_design_day(f"{label} Ann Clg 1% Condns DP=>MDB", 7, 21, "SummerDesignDay",
+                        params["clg_mdb_at_dp_01"], daily_range, "DewPoint", params["clg_dp_01"], pressure_pa, cooling_wind, sky_clearness=1.0),
+        _idf_design_day(f"{label} Ann Clg 2% Condns DP=>MDB", 7, 21, "SummerDesignDay",
+                        params["clg_mdb_at_dp_02"], daily_range, "DewPoint", params["clg_dp_02"], pressure_pa, cooling_wind, sky_clearness=1.0),
+        _idf_design_day(f"{label} Ann Clg .4% Condns Enth=>MDB", 7, 21, "SummerDesignDay",
+                        params["clg_mdb_at_h_004"], daily_range, "Enthalpy", None, pressure_pa, cooling_wind, sky_clearness=1.0,
+                        enthalpy_value=params["clg_h_004"]),
+        _idf_design_day(f"{label} Ann Clg 1% Condns Enth=>MDB", 7, 21, "SummerDesignDay",
+                        params["clg_mdb_at_h_01"], daily_range, "Enthalpy", None, pressure_pa, cooling_wind, sky_clearness=1.0,
+                        enthalpy_value=params["clg_h_01"]),
+        _idf_design_day(f"{label} Ann Clg 2% Condns Enth=>MDB", 7, 21, "SummerDesignDay",
+                        params["clg_mdb_at_h_02"], daily_range, "Enthalpy", None, pressure_pa, cooling_wind, sky_clearness=1.0,
+                        enthalpy_value=params["clg_h_02"]),
+    ]
+
+    header = f""" ! Generalized ASHRAE design-day conditions derived from hourly weather data.
+ ! Cooling solar model is generalized to ASHRAEClearSky to avoid city-specific tau constants.
+
+ Site:Location,
+  {location_name},                   !- Location Name
+  {lat:.2f},                         !- Latitude {{N+ S-}}
+  {lon:.2f},                         !- Longitude {{W- E+}}
+  {tz:.2f},                          !- Time Zone Relative to GMT {{GMT+/-}}
+  {elevation_m:.2f};                 !- Elevation {{m}}
+
+ RunPeriodControl:DaylightSavingTime,
+  2nd Sunday in March,               !- Start Date
+  2nd Sunday in November;            !- End Date
+
+"""
+    return header + "\n\n".join(blocks) + "\n"
+
+
+def write_ddy_from_dataframe(df: pd.DataFrame, out_path: Path, *, city: str, state: str = "", country: str = "",
+                             lat: float = 0.0, lon: float = 0.0, tz: float = 0.0,
+                             elevation_m: float = 0.0, label: str = "future") -> Path:
+    params = compute_ddy_params(df, elevation_m=elevation_m)
+    content = render_ddy_content(
+        params,
+        city=city,
+        state=state,
+        country=country,
+        lat=lat,
+        lon=lon,
+        tz=tz,
+        elevation_m=elevation_m,
+        label=label,
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(content, encoding="utf-8")
+    return out_path
+
+
 def generate_ddy_from_epw(epw_path, energyplus_path):
     """
     Generate DDY file from EPW by analyzing weather data.
@@ -439,284 +771,20 @@ def generate_ddy_from_epw(epw_path, energyplus_path):
     print(f"  Generating DDY from EPW...")
 
     try:
-        # Read EPW file and extract weather data
-        epw_data = []
-        with open(epw_path, 'r') as f:
-            lines = f.readlines()
-            # Skip header lines (first 8 lines)
-            for line in lines[8:]:
-                parts = line.strip().split(',')
-                if len(parts) >= 22:
-                    try:
-                        temp = float(parts[6])  # Dry bulb temperature
-                        dewpoint = float(parts[7])  # Dew point temperature
-                        rh = float(parts[8])  # Relative humidity
-                        pressure = float(parts[9])  # Atmospheric pressure (Pa)
-                        wspd = float(parts[21])  # Wind speed
-                        epw_data.append({
-                            'temp': temp,
-                            'dewpoint': dewpoint,
-                            'rh': rh,
-                            'pressure': pressure,
-                            'windspeed': wspd
-                        })
-                    except (ValueError, IndexError):
-                        continue
-
-        if len(epw_data) == 0:
-            print(f"  ✗ Error: No valid weather data found in EPW file")
-            return False
-
-        # Convert to numpy arrays for analysis
-        temps = np.array([d['temp'] for d in epw_data])
-        dewpoints = np.array([d['dewpoint'] for d in epw_data])
-        rhs = np.array([d['rh'] for d in epw_data])
-        pressures = np.array([d['pressure'] for d in epw_data])
-        windspeeds = np.array([d['windspeed'] for d in epw_data])
-
-        # Filter out EPW missing-value codes and physically impossible values:
-        #   temp/dewpoint: 99.9 is the EPW missing code; also reject |T|>=60
-        #   RH: 999 is the EPW missing code; also reject RH<=0 or RH>100
-        #   windspeed: 999 is missing
-        #   pressure: 999999 is missing
-        phys_valid = (
-            (temps > -50) & (temps < 60) &
-            (dewpoints > -50) & (dewpoints < 60) &
-            (rhs > 0) & (rhs <= 100) &
-            ~np.isnan(temps) & ~np.isnan(dewpoints) & ~np.isnan(rhs)
+        epw_df, meta = _parse_epw_to_dataframe(Path(epw_path))
+        ddy_path = write_ddy_from_dataframe(
+            epw_df,
+            Path(epw_path).with_suffix(".ddy"),
+            city=meta["city"],
+            state=meta["state"],
+            country=meta["country"],
+            lat=meta["lat"],
+            lon=meta["lon"],
+            tz=meta["tz"],
+            elevation_m=meta["elevation_m"],
+            label=meta["city"],
         )
-        n_filtered = len(temps) - phys_valid.sum()
-        if n_filtered > 0:
-            print(f"  Filtered {n_filtered} rows with missing-value codes or out-of-range data")
-
-        temps = temps[phys_valid]
-        dewpoints = dewpoints[phys_valid]
-        rhs = rhs[phys_valid]
-        pressures = pressures[phys_valid]
-        windspeeds = windspeeds[phys_valid]
-
-        if len(temps) == 0:
-            print(f"  ✗ Error: No valid temperature data after filtering")
-            return False
-
-        print(f"  Data validation: {len(temps)} valid readings after filtering")
-
-        if len(temps) < len(phys_valid) * 0.9:
-            print(f"  Warning: More than 10% of data was filtered out")
-
-        # Compute wet-bulb temperature for all valid hours (Stull 2011)
-        wetbulbs = calc_wetbulb(temps, rhs)
-
-        # Aliases for downstream code
-        temps_clean = temps
-        dewpoints_clean = dewpoints
-        rhs_clean = rhs
-        wetbulbs_clean = wetbulbs
-        windspeeds_clean = windspeeds
-
-        # Wind speed valid mask (exclude missing code 999)
-        windspeed_valid_mask = (windspeeds_clean < 999) & (~np.isnan(windspeeds_clean))
-
-        # Calculate design conditions (ASHRAE percentiles)
-        # Heating: 99.6% annual cumulative frequency
-        heat_99_6 = np.percentile(temps_clean, 0.4)
-        # Cooling: 0.4% annual cumulative frequency
-        cool_0_4 = np.percentile(temps_clean, 99.6)
-
-        # Validate percentiles
-        if np.isnan(heat_99_6) or np.isnan(cool_0_4):
-            print(f"  ✗ Error: Failed to calculate design conditions (percentiles are NaN)")
-            print(f"    Temp range: {np.min(temps_clean):.1f} to {np.max(temps_clean):.1f}°C")
-            return False
-
-        # Additional statistics
-        temp_max = np.max(temps_clean)
-        temp_min = np.min(temps_clean)
-
-        # Calculate wind speed percentiles only from valid wind speed data (exclude 999)
-        if np.any(windspeed_valid_mask):
-            windspeeds_for_stats = windspeeds_clean[windspeed_valid_mask]
-            wspd_1pct = np.percentile(windspeeds_for_stats, 99.0)
-            wspd_2_5pct = np.percentile(windspeeds_for_stats, 97.5)
-            wspd_5pct = np.percentile(windspeeds_for_stats, 95.0)
-        else:
-            # No valid wind speed data
-            wspd_1pct = wspd_2_5pct = wspd_5pct = 0.0
-
-        # Mean coincident values with fallback handling
-        # For heating conditions (cold temperatures)
-        heat_mask = temps_clean <= heat_99_6
-        if np.any(heat_mask):
-            heat_wetbulb_raw = np.mean(wetbulbs_clean[heat_mask])
-
-            # Calculate wind speed mean, filtering out missing values (999)
-            heat_windspeeds = windspeeds_clean[heat_mask]
-            heat_windspeed_valid = heat_windspeeds[(heat_windspeeds < 999) & (~np.isnan(heat_windspeeds))]
-
-            if len(heat_windspeed_valid) > 0:
-                heat_windspeed_raw = np.mean(heat_windspeed_valid)
-            else:
-                heat_windspeed_raw = np.nan
-
-            # Check for NaN and apply fallback
-            # Default heating wind speed: 6.7 m/s (15 mph) per ASHRAE standard
-            heat_wetbulb = heat_wetbulb_raw if not np.isnan(heat_wetbulb_raw) else heat_99_6
-            heat_windspeed = heat_windspeed_raw if not np.isnan(heat_windspeed_raw) else 6.7
-
-            if np.isnan(heat_windspeed_raw) and len(heat_windspeed_valid) == 0:
-                print(f"  Info: No valid wind speed data for heating conditions, using default 6.7 m/s")
-        else:
-            print(f"  Warning: No data points found for heating design conditions")
-            heat_wetbulb = heat_99_6  # Fallback to dry-bulb temperature
-            heat_windspeed = 6.7  # Default ASHRAE heating design wind speed (15 mph)
-
-        # For cooling conditions (hot temperatures)
-        cool_mask = temps_clean >= cool_0_4
-        if np.any(cool_mask):
-            cool_wetbulb_raw = np.mean(wetbulbs_clean[cool_mask])
-
-            # Calculate wind speed mean, filtering out missing values (999)
-            cool_windspeeds = windspeeds_clean[cool_mask]
-            cool_windspeed_valid = cool_windspeeds[(cool_windspeeds < 999) & (~np.isnan(cool_windspeeds))]
-
-            if len(cool_windspeed_valid) > 0:
-                cool_windspeed_raw = np.mean(cool_windspeed_valid)
-            else:
-                cool_windspeed_raw = np.nan
-
-            # Check for NaN and apply fallback
-            # Default cooling wind speed: 3.35 m/s (7.5 mph) per ASHRAE standard
-            cool_wetbulb = cool_wetbulb_raw if not np.isnan(cool_wetbulb_raw) else (cool_0_4 - 5.0)
-            cool_windspeed = cool_windspeed_raw if not np.isnan(cool_windspeed_raw) else 3.35
-
-            if np.isnan(cool_windspeed_raw) and len(cool_windspeed_valid) == 0:
-                print(f"  Info: No valid wind speed data for cooling conditions, using default 3.35 m/s")
-        else:
-            print(f"  Warning: No data points found for cooling design conditions")
-            cool_wetbulb = cool_0_4 - 5.0  # Fallback to DB - 5°C
-            cool_windspeed = 3.35  # Default ASHRAE cooling design wind speed (7.5 mph)
-
-        # Get location info from EPW header
-        with open(epw_path, 'r') as f:
-            location_line = f.readline().strip().split(',')
-            city = location_line[1] if len(location_line) > 1 else "Unknown"
-            state = location_line[2] if len(location_line) > 2 else ""
-            country = location_line[3] if len(location_line) > 3 else ""
-            lat = float(location_line[6]) if len(location_line) > 6 else 0.0
-            lon = float(location_line[7]) if len(location_line) > 7 else 0.0
-            tz = float(location_line[8]) if len(location_line) > 8 else 0.0
-            elev = float(location_line[9]) if len(location_line) > 9 else 0.0
-
-        # Use mean of non-NaN pressure values from TMY data (Pressure_Pa column)
-        # Filter out EPW missing value code (999999) and calculate mean
-        valid_pressures = pressures[(pressures < 999999) & (~np.isnan(pressures))]
-
-        if len(valid_pressures) > 0:
-            pressure_pa = np.mean(valid_pressures)
-            print(f"  Using mean pressure from TMY data: {pressure_pa:.0f} Pa ({len(valid_pressures)} valid readings)")
-        else:
-            # Fallback: calculate from elevation if no valid pressure data
-            pressure_pa = 101325 * (1 - 2.25577e-5 * elev) ** 5.25588
-            print(f"  Warning: No valid pressure data in TMY, using elevation-based estimate: {pressure_pa:.0f} Pa")
-
-        # Format location name
-        if state:
-            location_name = f"{city}_{state}_{country} Design_Conditions"
-        else:
-            location_name = f"{city}_{country} Design_Conditions"
-
-        # Generate DDY content with standard format
-        ddy_content = f""" ! The following Location and Design Day data are produced as possible from the indicated data source.
- ! Wind Speeds follow the indicated design conditions rather than traditional values (6.7 m/s heating, 3.35 m/s cooling)
- ! No special attempts at re-creating or determining missing data parts (e.g. Wind speed or direction)
- ! are done.  Therefore, you should look at the data and fill in any incorrect values as you desire.
-  
- Site:Location,
-  {location_name},     !- Location Name
-      {lat:.2f},     !- Latitude {{N+ S-}}
-    {lon:.2f},     !- Longitude {{W- E+}}
-      {tz:.2f},     !- Time Zone Relative to GMT {{GMT+/-}}
-      {elev:.2f};     !- Elevation {{m}}
- 
- !  Data Source=TMY 1991-2020
- RunPeriodControl:DaylightSavingTime,
-   2nd Sunday in March,    !- StartDate
-   2nd Sunday in November;    !- EndDate
-  
- ! Using Design Conditions calculated from TMY weather data
- ! {city} Extreme Annual Wind Speeds, 1%={wspd_1pct:.1f}m/s, 2.5%={wspd_2_5pct:.1f}m/s, 5%={wspd_5pct:.1f}m/s
- ! {city} Extreme Annual Temperatures, Max Drybulb={temp_max:.1f}°C Min Drybulb={temp_min:.1f}°C
-  
- ! {city} Annual Heating Design Conditions Wind Speed={heat_windspeed:.1f}m/s Wind Dir=0
- ! Coldest Month=JAN
- ! {city} Annual Heating 99.6%, MaxDB={heat_99_6:.1f}°C
- SizingPeriod:DesignDay,
-  {city} Ann Htg 99.6% Condns DB,     !- Name
-          1,      !- Month
-         21,      !- Day of Month
-  WinterDesignDay,!- Day Type
-        {heat_99_6:.1f},      !- Maximum Dry-Bulb Temperature {{C}}
-        0.0,      !- Daily Dry-Bulb Temperature Range {{C}}
- DefaultMultipliers, !- Dry-Bulb Temperature Range Modifier Type
-           ,      !- Dry-Bulb Temperature Range Modifier Schedule Name
-    Wetbulb,      !- Humidity Condition Type
-        {heat_wetbulb:.1f},      !- Wetbulb at Maximum Dry-Bulb {{C}}
-           ,      !- Humidity Indicating Day Schedule Name
-           ,      !- Humidity Ratio at Maximum Dry-Bulb {{kgWater/kgDryAir}}
-           ,      !- Enthalpy at Maximum Dry-Bulb {{J/kg}}
-           ,      !- Daily Wet-Bulb Temperature Range {{deltaC}}
-    {pressure_pa:.0f}.,      !- Barometric Pressure {{Pa}}
-        {heat_windspeed:.1f},      !- Wind Speed {{m/s}} design conditions vs. traditional 6.71 m/s (15 mph)
-          0,      !- Wind Direction {{Degrees; N=0, S=180}}
-         No,      !- Rain {{Yes/No}}
-         No,      !- Snow on ground {{Yes/No}}
-         No,      !- Daylight Savings Time Indicator
-  ASHRAEClearSky, !- Solar Model Indicator
-           ,      !- Beam Solar Day Schedule Name
-           ,      !- Diffuse Solar Day Schedule Name
-           ,      !- ASHRAE Clear Sky Optical Depth for Beam Irradiance (taub)
-           ,      !- ASHRAE Clear Sky Optical Depth for Diffuse Irradiance (taud)
-       0.00;      !- Clearness {{0.0 to 1.1}}
-
- ! {city} Annual Cooling Design Conditions Wind Speed={cool_windspeed:.1f}m/s Wind Dir=0
- ! Hottest Month=JUL
- ! {city} Annual Cooling (DB=>MWB) 0.4%, MaxDB={cool_0_4:.1f}°C MWB={cool_wetbulb:.1f}°C
- SizingPeriod:DesignDay,
-  {city} Ann Clg 0.4% Condns DB=>MWB,     !- Name
-          7,      !- Month
-         21,      !- Day of Month
-  SummerDesignDay,!- Day Type
-        {cool_0_4:.1f},      !- Maximum Dry-Bulb Temperature {{C}}
-       10.0,      !- Daily Dry-Bulb Temperature Range {{C}}
- DefaultMultipliers, !- Dry-Bulb Temperature Range Modifier Type
-           ,      !- Dry-Bulb Temperature Range Modifier Day Schedule Name
-    Wetbulb,      !- Humidity Condition Type
-        {cool_wetbulb:.1f},      !- Wetbulb at Maximum Dry-Bulb {{C}}
-           ,      !- Humidity Indicating Day Schedule Name
-           ,      !- Humidity Ratio at Maximum Dry-Bulb {{kgWater/kgDryAir}}
-           ,      !- Enthalpy at Maximum Dry-Bulb {{J/kg}}
-           ,      !- Daily Wet-Bulb Temperature Range {{deltaC}}
-    {pressure_pa:.0f}.,      !- Barometric Pressure {{Pa}}
-        {cool_windspeed:.1f},      !- Wind Speed {{m/s}} design conditions vs. traditional 3.35 m/s (7mph)
-          0,      !- Wind Direction {{Degrees; N=0, S=180}}
-         No,      !- Rain {{Yes/No}}
-         No,      !- Snow on ground {{Yes/No}}
-         No,      !- Daylight Savings Time Indicator
-  ASHRAEClearSky, !- Solar Model Indicator
-           ,      !- Beam Solar Day Schedule Name
-           ,      !- Diffuse Solar Day Schedule Name
-           ,      !- ASHRAE Clear Sky Optical Depth for Beam Irradiance (taub)
-           ,      !- ASHRAE Clear Sky Optical Depth for Diffuse Irradiance (taud)
-       1.00;      !- Clearness {{0.0 to 1.1}}
-"""
-        # Write DDY file
-        ddy_path = epw_path.with_suffix('.ddy')
-        with open(ddy_path, 'w') as f:
-            f.write(ddy_content)
-
         print(f"  ✓ Created DDY: {ddy_path.name}")
-        print(f"    Heating 99.6%: DB={heat_99_6:.1f}°C MWB={heat_wetbulb:.1f}°C")
-        print(f"    Cooling  0.4%: DB={cool_0_4:.1f}°C MWB={cool_wetbulb:.1f}°C")
         return True
 
     except Exception as e:

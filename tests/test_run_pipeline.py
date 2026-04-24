@@ -199,6 +199,70 @@ class TestEnsurePipelineInputs:
         assert captured["experiments"] == ["historical", "ssp2_4_5"]
 
 
+class TestDeterministicArtifacts:
+    def test_output_historical_epw_requires_actual_2000(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _output_historical_epw
+
+        merged_csv = tmp_path / "2_isd_solar_lst.csv"
+        df = pd.DataFrame(
+            {"DATE": pd.date_range("1999-01-01", periods=24, freq="h"), "temp": [1.0] * 24, "dewpoint": [0.0] * 24}
+        )
+        df.to_csv(merged_csv, index=False)
+
+        with pytest.raises(SystemExit, match="does not contain year 2000"):
+            _output_historical_epw(
+                merged_csv=merged_csv,
+                city="Miami",
+                meta={"lat": 1.0, "lon": 2.0, "tz": -5.0, "country": "US", "elevation_m": 0.0},
+                out_dir=tmp_path,
+                overwrite=True,
+            )
+
+    def test_output_ddy_files_uses_expected_period_slices(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _output_ddy_files
+
+        merged_csv = tmp_path / "2_isd_solar_lst.csv"
+        historical = pd.DataFrame(
+            {
+                "DATE": pd.date_range("1991-01-01", "2010-12-31 23:00:00", freq="h"),
+                "temp": 20.0,
+                "dewpoint": 15.0,
+                "pressure": 101325.0,
+                "wind_speed": 3.0,
+            }
+        )
+        historical.to_csv(merged_csv, index=False)
+
+        future_index = pd.date_range("2021-01-01", "2090-12-31 23:00:00", freq="h")
+        future_df = pd.DataFrame(
+            {
+                "temp": 28.0,
+                "dewpoint": 22.0,
+                "pressure": 101325.0,
+                "wind_speed": 4.0,
+            },
+            index=future_index,
+        )
+
+        written = _output_ddy_files(
+            merged_csv=merged_csv,
+            output_df=future_df,
+            city="Miami",
+            ssp="ssp245",
+            meta={"lat": 25.76, "lon": -80.19, "tz": -5.0, "country": "US", "elevation_m": 2.0},
+            baseline_start=1991,
+            baseline_end=2010,
+            out_dir=tmp_path,
+            overwrite=True,
+        )
+
+        names = {path.name for path in written}
+        assert names == {
+            "Miami_baseline_1991_2010.ddy",
+            "Miami_ssp245_2030_2021_2040.ddy",
+            "Miami_ssp245_2050_2041_2060.ddy",
+            "Miami_ssp245_2080_2071_2090.ddy",
+        }
 
 
 class TestEPWHumidityFallback:

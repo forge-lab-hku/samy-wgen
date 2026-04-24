@@ -61,6 +61,12 @@ SSP_TO_CMIP6_EXPERIMENT = {
     "ssp585": "ssp5_8_5",
 }
 
+FUTURE_DDY_PERIODS = {
+    2030: (2021, 2040),
+    2050: (2041, 2060),
+    2080: (2071, 2090),
+}
+
 
 def _print_title(title: str) -> None:
     print(f"\n{'-' * 12} {title} {'-' * 12}")
@@ -483,6 +489,42 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
     return output_df
 
 
+def _load_hourly_csv(csv_path: Path, datetime_col: str) -> pd.DataFrame:
+    return pd.read_csv(csv_path, parse_dates=[datetime_col]).set_index(datetime_col)
+
+
+def _output_historical_epw(merged_csv: Path, city: str, meta: dict, out_dir: Path, overwrite: bool) -> Path:
+    """Write the actual historical 2000 EPW from the merged ISD+NSRDB sequence."""
+    from samy_wgen.pipeline.gen_samy import _write_epw_for_year
+
+    historical_df = _load_hourly_csv(merged_csv, "DATE")
+    epw_dir = out_dir / "EPW"
+    epw_dir.mkdir(parents=True, exist_ok=True)
+    epw_path = epw_dir / f"{city}_historical_2000.epw"
+
+    if epw_path.exists() and not overwrite:
+        print(f"  [EPW] Cache hit: {epw_path.name}")
+        return epw_path
+
+    if (historical_df.index.year == 2000).sum() == 0:
+        raise SystemExit(
+            f"ERROR: historical merged sequence for {city} does not contain year 2000; cannot write {epw_path.name}"
+        )
+
+    _write_epw_for_year(
+        df=historical_df,
+        year=2000,
+        out_path=epw_path,
+        location=f"{city}-{meta.get('country', 'XX')}",
+        lat=meta["lat"],
+        lon=meta["lon"],
+        tz=meta["tz"],
+        elevation_m=meta.get("elevation_m", 0.0),
+    )
+    print(f"  [EPW] {epw_path.name}")
+    return epw_path
+
+
 def _output_epw(output_df: pd.DataFrame, epw_years: list[int],
                 city: str, ssp: str, meta: dict,
                 out_dir: Path, overwrite: bool) -> list[Path]:
@@ -515,6 +557,56 @@ def _output_epw(output_df: pd.DataFrame, epw_years: list[int],
         )
         print(f"  [EPW] {epw_path.name}")
         written.append(epw_path)
+    return written
+
+
+def _output_ddy_files(merged_csv: Path, output_df: pd.DataFrame,
+                      city: str, ssp: str, meta: dict,
+                      baseline_start: int, baseline_end: int,
+                      out_dir: Path, overwrite: bool) -> list[Path]:
+    """Write baseline and future DDYs from their multi-year period slices."""
+    from samy_wgen.utils.create_epw_ddy import write_ddy_from_dataframe
+
+    historical_df = _load_hourly_csv(merged_csv, "DATE")
+    ddy_dir = out_dir / "DDY"
+    ddy_dir.mkdir(parents=True, exist_ok=True)
+
+    period_specs = [("baseline", baseline_start, baseline_end, historical_df, f"{city} baseline {baseline_start}-{baseline_end}")]
+    for rep_year, (start_year, end_year) in FUTURE_DDY_PERIODS.items():
+        label = f"{city} {ssp} {rep_year}"
+        period_specs.append((str(rep_year), start_year, end_year, output_df, label))
+
+    written: list[Path] = []
+    for key, start_year, end_year, df, label in period_specs:
+        period_df = df[(df.index.year >= start_year) & (df.index.year <= end_year)].copy()
+        if period_df.empty:
+            print(f"  [DDY] WARNING: no data for {key} period {start_year}-{end_year}, skipping")
+            continue
+
+        if key == "baseline":
+            ddy_path = ddy_dir / f"{city}_baseline_{start_year}_{end_year}.ddy"
+        else:
+            ddy_path = ddy_dir / f"{city}_{ssp}_{key}_{start_year}_{end_year}.ddy"
+
+        if ddy_path.exists() and not overwrite:
+            print(f"  [DDY] Cache hit: {ddy_path.name}")
+            written.append(ddy_path)
+            continue
+
+        write_ddy_from_dataframe(
+            period_df,
+            ddy_path,
+            city=city,
+            country=meta.get("country", "XX"),
+            lat=meta["lat"],
+            lon=meta["lon"],
+            tz=meta["tz"],
+            elevation_m=meta.get("elevation_m", 0.0),
+            label=label,
+        )
+        print(f"  [DDY] {ddy_path.name}")
+        written.append(ddy_path)
+
     return written
 
 
@@ -617,8 +709,16 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             out_dir=out_dir,
             overwrite=ow,
         )
-        print(f"\n[output] Writing EPW files for years: {epw_years}")
-        written = _output_epw(
+        print(f"\n[output] Writing historical EPW for 2000")
+        historical_epw = _output_historical_epw(
+            merged_csv=merged_csv,
+            city=city,
+            meta=meta,
+            out_dir=out_dir,
+            overwrite=ow,
+        )
+        print(f"\n[output] Writing future EPW files for years: {epw_years}")
+        future_epws = _output_epw(
             output_df=output_df,
             epw_years=epw_years,
             city=city,
@@ -627,8 +727,23 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             out_dir=out_dir,
             overwrite=ow,
         )
+        print(f"\n[output] Writing baseline/future DDY files")
+        ddys = _output_ddy_files(
+            merged_csv=merged_csv,
+            output_df=output_df,
+            city=city,
+            ssp=args.ssp,
+            meta=meta,
+            baseline_start=args.baseline_start,
+            baseline_end=args.baseline_end,
+            out_dir=out_dir,
+            overwrite=ow,
+        )
         print(f"\n{'='*70}")
-        print(f"DONE — {len(written)} EPW file(s) in {out_dir / 'EPW'}")
+        print(
+            f"DONE — {1 + len(future_epws)} EPW file(s) in {out_dir / 'EPW'} "
+            f"and {len(ddys)} DDY file(s) in {out_dir / 'DDY'}"
+        )
     else:
         ens_dir = _stage3_ensemble(
             merged_csv=merged_csv,

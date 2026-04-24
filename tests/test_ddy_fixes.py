@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-Tests for two fixes in utils/create_epw_ddy.py and utils/calculate_weather_var.py:
-
-Fix 1 (calculate_weather_var): calc_wetbulb() — Stull (2011) formula
-Fix 2 (create_epw_ddy): generate_ddy_from_epw() now uses wet-bulb (not dewpoint)
-                         and filters EPW missing-value codes before computing percentiles
+Tests for wet-bulb calculations and generalized 18-condition DDY generation.
 """
 
 import tempfile
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from samy_wgen.utils.calculate_weather_var import calc_wetbulb
@@ -124,7 +121,7 @@ def _make_epw(path: Path, temps, rhs, dewpoints=None, windspeeds=None,
 
 
 def _parse_ddy_design_temps(ddy_path: Path):
-    """Extract DB and MWB from a generated DDY file."""
+    """Extract DB and humidity driver from DDY wet-bulb / dew-point objects."""
     text = ddy_path.read_text()
     import re
     # Find all SizingPeriod:DesignDay blocks
@@ -133,7 +130,7 @@ def _parse_ddy_design_temps(ddy_path: Path):
     for block in blocks:
         name_match = re.search(r"([^\n,]+),\s*!- Name", block)
         db_match = re.search(r"([-\d.]+),\s*!- Maximum Dry-Bulb Temperature", block)
-        mwb_match = re.search(r"([-\d.]+),\s*!- Wetbulb at Maximum Dry-Bulb", block)
+        mwb_match = re.search(r"([-\d.]+),\s*!- Wetbulb or DewPoint at Maximum Dry-Bulb", block)
         if name_match and db_match and mwb_match:
             name = name_match.group(1).strip()
             result[name] = {
@@ -144,6 +141,19 @@ def _parse_ddy_design_temps(ddy_path: Path):
 
 
 class TestGenerateDDYWetbulb:
+    def test_emits_full_18_condition_ddy(self, tmp_path):
+        temps = np.linspace(10, 35, 8760)
+        rhs = np.linspace(40, 80, 8760)
+
+        epw = tmp_path / "test.epw"
+        _make_epw(epw, temps, rhs)
+        generate_ddy_from_epw(epw, energyplus_path=None)
+
+        text = epw.with_suffix(".ddy").read_text()
+        assert text.count("SizingPeriod:DesignDay") == 18
+        assert "ASHRAETau" not in text
+        assert "taub" in text  # field label is still present but left blank for ClearSky
+
     def test_mwb_greater_than_dewpoint_for_dry_air(self, tmp_path):
         """For dry air (low RH), MWB in DDY should be clearly above the dewpoint."""
         from samy_wgen.utils.calculate_weather_var import calc_dewpoint_from_RH
@@ -164,7 +174,7 @@ class TestGenerateDDYWetbulb:
         ddy = epw.with_suffix(".ddy")
         assert ddy.exists()
         conditions = _parse_ddy_design_temps(ddy)
-        clg = next((v for k, v in conditions.items() if "Clg" in k), None)
+        clg = next((v for k, v in conditions.items() if "Clg .4% Condns DB=>MWB" in k), None)
         assert clg is not None, "No cooling design day found in DDY"
 
         cool_db = clg["db"]
@@ -202,7 +212,7 @@ class TestGenerateDDYWetbulb:
         conds_dirty = _parse_ddy_design_temps(epw_dirty.with_suffix(".ddy"))
 
         # Design temps should be virtually identical after filtering
-        for day_type in ["Htg", "Clg"]:
+        for day_type in ["Ann Htg 99.6% Condns DB", "Ann Clg .4% Condns DB=>MWB"]:
             key_clean = next(k for k in conds_clean if day_type in k)
             key_dirty = next(k for k in conds_dirty if day_type in k)
             db_clean = conds_clean[key_clean]["db"]
@@ -230,6 +240,27 @@ class TestGenerateDDYWetbulb:
             assert mwb <= db + 1e-3, f"{name}: MWB {mwb:.1f} > DB {db:.1f}"
             # MWB >= dewpoint is implicitly guaranteed by calc_wetbulb; just check > -60
             assert mwb > -60, f"{name}: MWB {mwb:.1f} unreasonably low"
+
+    def test_cooling_daily_range_is_not_hardcoded(self, tmp_path):
+        index = pd.date_range("2041-01-01 00:00:00", periods=8760, freq="h")
+        base = 24 + 6 * np.sin(2 * np.pi * index.dayofyear / 365)
+        diurnal = 1.8 * np.sin(2 * np.pi * index.hour / 24)
+        temps = base + diurnal
+        rhs = np.full(8760, 65.0)
+
+        epw = tmp_path / "daily_range.epw"
+        _make_epw(epw, temps, rhs)
+        generate_ddy_from_epw(epw, energyplus_path=None)
+        text = epw.with_suffix(".ddy").read_text()
+
+        import re
+        match = re.search(
+            r"Ann Clg \.4% Condns DB=>MWB,.*?([-\d.]+),\s*!- Daily Dry-Bulb Temperature Range",
+            text,
+            flags=re.S,
+        )
+        assert match is not None
+        assert abs(float(match.group(1)) - 10.0) > 3.0
 
 
 if __name__ == "__main__":
