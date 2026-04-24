@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 import calendar
 
-from samy_wgen.utils.calculate_weather_var import calc_dewpoint_from_RH
+from samy_wgen.utils.calculate_weather_var import calc_RH_from_dewpoint, calc_dewpoint_from_RH
 
 
 def _infer_pressure_pa(series: pd.Series) -> pd.Series:
@@ -12,6 +12,38 @@ def _infer_pressure_pa(series: pd.Series) -> pd.Series:
     if s.dropna().mean() < 2000:  # likely hPa
         s = s * 100.0
     return s
+
+
+def _resolve_rh_and_dewpoint(year_df: pd.DataFrame, temp_c: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Resolve RH/dewpoint from the available humidity columns.
+
+    Priority:
+      1. Use provided relative humidity and back-calculate dewpoint.
+      2. If RH is absent but dewpoint exists, back-calculate RH.
+      3. Fallback to 50% RH and infer dewpoint from that.
+    """
+    rh = year_df.get("relative_humidity")
+    dew_c = year_df.get("dewpoint")
+
+    if rh is not None:
+        rh = pd.to_numeric(rh, errors="coerce").clip(0, 100)
+        dew_values = calc_dewpoint_from_RH(temp_c.to_numpy(dtype=float), rh.to_numpy(dtype=float))
+        dew_c = pd.Series(dew_values, index=year_df.index)
+        return rh, dew_c
+
+    if dew_c is not None:
+        dew_c = pd.to_numeric(dew_c, errors="coerce")
+        rh_values = calc_RH_from_dewpoint(
+            temp_c.to_numpy(dtype=float),
+            dew_c.to_numpy(dtype=float),
+        )
+        rh = pd.Series(rh_values, index=year_df.index).clip(0, 100)
+        return rh, dew_c
+
+    rh = pd.Series(50.0, index=year_df.index)
+    dew_values = calc_dewpoint_from_RH(temp_c.to_numpy(dtype=float), rh.to_numpy(dtype=float))
+    dew_c = pd.Series(dew_values, index=year_df.index)
+    return rh, dew_c
 
 def _epw_header(location: str = "LosAngeles-CA-USA", lat: float = 34.05, lon: float = -118.25,
                 tz: float = -8.0, elevation_m: float = 89.0) -> str:
@@ -63,15 +95,7 @@ def _write_epw_for_year(
     if temp_c is None:
         raise ValueError("Forecast output missing 'temp' column.")
 
-    rh = year_df.get("relative_humidity")
-    if rh is None:
-        # fallback: assume 50% if RH not available
-        rh = pd.Series(50.0, index=year_df.index)
-    # Basic validation: relative humidity 0-100%
-    rh = rh.clip(0, 100)
-
-    # Dewpoint from T & RH (°C)
-    dew_c = pd.Series(calc_dewpoint_from_RH(temp_c.values, rh.values), index=year_df.index)
+    rh, dew_c = _resolve_rh_and_dewpoint(year_df, temp_c)
 
     # Pressure in Pa - no artificial limits, just unit conversion if needed
     pressure_pa = year_df.get("pressure")
