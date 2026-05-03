@@ -21,6 +21,8 @@ Climate delta calculation:
 """
 
 import argparse
+import contextlib
+import io
 import os
 from pathlib import Path
 import pandas as pd
@@ -64,6 +66,10 @@ DEFAULT_OUT_DIR = Path("output") / "RSVAR_cd"
 DEFAULT_OUT_DIR_MONTHLY = Path("output") / "RSVAR_cd_monthly"
 DEFAULT_CMIP6_DIR = Path("data") / "CMIP6"
 DEFAULT_CORDEX_CMIP5_DIR = Path("data") / "CORDEX_CMIP5"
+
+
+def _stdout_context(verbose: bool):
+    return contextlib.nullcontext() if verbose else contextlib.redirect_stdout(io.StringIO())
 
 
 def _load_cities_config(path: Path) -> pd.DataFrame:
@@ -116,7 +122,7 @@ def _resolve_city_dir(base_path: Path, city: str) -> Path:
     return Path(base_path) / _slug_city(city)
 
 
-def _load_isd_baseline_mean(isd_path: Path, baseline_start: int, baseline_end: int) -> float:
+def _load_isd_baseline_mean(isd_path: Path, baseline_start: int, baseline_end: int, verbose: bool = True) -> float:
     """
     Load ISD baseline mean temperature using same preprocessing as RS-VAR pipeline.
 
@@ -131,34 +137,37 @@ def _load_isd_baseline_mean(isd_path: Path, baseline_start: int, baseline_end: i
         Mean temperature (°C) over baseline period, or np.nan if unavailable
     """
     if not isd_path or not isd_path.exists():
-        print(f"[WARNING] ISD path not provided or does not exist: {isd_path}")
+        if verbose:
+            print(f"[WARNING] ISD path not provided or does not exist: {isd_path}")
         return np.nan
 
     try:
-        print(f"[DEBUG] Loading ISD baseline from: {isd_path}")
-        # Use ForecastTo2100V5 to ensure consistent preprocessing
-        from samy_wgen.model.rsvar import ForecastTo2100V5
+        with _stdout_context(verbose):
+            print(f"[DEBUG] Loading ISD baseline from: {isd_path}")
+            from samy_wgen.model.rsvar import ForecastTo2100V5
 
-        temp_pipeline = ForecastTo2100V5(
-            isd_solar_path=str(isd_path),
-            cordex_rcp85_path=os.devnull,  # Not used for baseline calculation
-            lat=0.0,  # Not critical for baseline calculation
-            baseline_start=baseline_start,
-            baseline_end=baseline_end,
-        )
-        temp_pipeline.load_isd_data()
+            temp_pipeline = ForecastTo2100V5(
+                isd_solar_path=str(isd_path),
+                cordex_rcp85_path=os.devnull,
+                lat=0.0,
+                baseline_start=baseline_start,
+                baseline_end=baseline_end,
+                verbose=verbose,
+            )
+            temp_pipeline.load_isd_data()
 
-        if temp_pipeline.isd_baseline is not None and not temp_pipeline.isd_baseline.empty:
-            if 'temp' in temp_pipeline.isd_baseline.columns:
-                isd_baseline_mean = temp_pipeline.isd_baseline['temp'].mean()
-                print(f"[DEBUG] Found {len(temp_pipeline.isd_baseline)} baseline records (after preprocessing)")
-                return isd_baseline_mean
+            if temp_pipeline.isd_baseline is not None and not temp_pipeline.isd_baseline.empty:
+                if 'temp' in temp_pipeline.isd_baseline.columns:
+                    isd_baseline_mean = temp_pipeline.isd_baseline['temp'].mean()
+                    print(f"[DEBUG] Found {len(temp_pipeline.isd_baseline)} baseline records (after preprocessing)")
+                    return isd_baseline_mean
+                else:
+                    print(f"[WARNING] 'temp' column not found in ISD baseline")
             else:
-                print(f"[WARNING] 'temp' column not found in ISD baseline")
-        else:
-            print(f"[WARNING] No baseline data found in ISD file for {baseline_start}-{baseline_end}")
+                print(f"[WARNING] No baseline data found in ISD file for {baseline_start}-{baseline_end}")
     except Exception as e:
-        print(f"[WARNING] Could not load ISD baseline: {e}")
+        if verbose:
+            print(f"[WARNING] Could not load ISD baseline: {e}")
 
     return np.nan
 
@@ -182,7 +191,8 @@ def _print_temperature_statistics_by_window(
     output_df: pd.DataFrame,
     baseline_start: int,
     baseline_end: int,
-    isd_path: Path = None
+    isd_path: Path = None,
+    verbose: bool = True,
 ):
     """Print temperature statistics for different time windows.
 
@@ -204,7 +214,7 @@ def _print_temperature_statistics_by_window(
     print("="*80)
 
     # Load ISD baseline using same method as RS-VAR pipeline for consistency
-    isd_baseline_mean = _load_isd_baseline_mean(isd_path, baseline_start, baseline_end)
+    isd_baseline_mean = _load_isd_baseline_mean(isd_path, baseline_start, baseline_end, verbose=verbose)
 
     print(f"\nISD Baseline ({baseline_start}-{baseline_end}) Mean Temperature: {isd_baseline_mean:.2f}°C")
 
@@ -523,7 +533,13 @@ def _load_and_merge_climate_data(file_pairs: list[tuple[Path, Path]], required: 
     return pd.DataFrame(), "None"
 
 
-def load_cmip6_projection(base_path: Path, city: str, ssp: str, scenario_id: str = None) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+def load_cmip6_projection(
+    base_path: Path,
+    city: str,
+    ssp: str,
+    scenario_id: str = None,
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Load CMIP6 data with auto-detection of supported model file names.
 
     Args:
@@ -559,20 +575,18 @@ def load_cmip6_projection(base_path: Path, city: str, ssp: str, scenario_id: str
 
     # Determine loading priority based on scenario_id
     # If scenario contains "CNRM", prioritize CNRM model files
-    if scenario_id and "CNRM" in scenario_id:
-        daily_pairs = cnrm_daily_pairs + cmip6_daily_pairs
-        monthly_pairs = cnrm_monthly_pairs + cmip6_monthly_pairs
-        print(f"  [Model Priority] Using CNRM model priority for scenario: {scenario_id}")
-    else:
-        daily_pairs = cmip6_daily_pairs + cnrm_daily_pairs
-        monthly_pairs = cmip6_monthly_pairs + cnrm_monthly_pairs
+    with _stdout_context(verbose):
+        if scenario_id and "CNRM" in scenario_id:
+            daily_pairs = cnrm_daily_pairs + cmip6_daily_pairs
+            monthly_pairs = cnrm_monthly_pairs + cmip6_monthly_pairs
+            print(f"  [Model Priority] Using CNRM model priority for scenario: {scenario_id}")
+        else:
+            daily_pairs = cmip6_daily_pairs + cnrm_daily_pairs
+            monthly_pairs = cmip6_monthly_pairs + cnrm_monthly_pairs
 
-    # Try loading daily data (required)
-    daily_df, model_name = _load_and_merge_climate_data(daily_pairs, required=True)
-    print(f"  [Model Detected] Loaded {model_name} for {city}/{scenario_id or ssp}")
-
-    # Try loading monthly data (optional)
-    monthly_df, _ = _load_and_merge_climate_data(monthly_pairs, required=False)
+        daily_df, model_name = _load_and_merge_climate_data(daily_pairs, required=True)
+        print(f"  [Model Detected] Loaded {model_name} for {city}/{scenario_id or ssp}")
+        monthly_df, _ = _load_and_merge_climate_data(monthly_pairs, required=False)
 
     meta = {
         'base_path': str(base_path),
@@ -584,9 +598,21 @@ def load_cmip6_projection(base_path: Path, city: str, ssp: str, scenario_id: str
     return daily_df, monthly_df, meta
 
 
-def load_cmip6_or_cordex6(base_path: Path, city: str, ssp: str, scenario_id: str = None) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+def load_cmip6_or_cordex6(
+    base_path: Path,
+    city: str,
+    ssp: str,
+    scenario_id: str = None,
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Backward-compatible wrapper retained for samy-run and existing tests."""
-    return load_cmip6_projection(base_path=base_path, city=city, ssp=ssp, scenario_id=scenario_id)
+    return load_cmip6_projection(
+        base_path=base_path,
+        city=city,
+        ssp=ssp,
+        scenario_id=scenario_id,
+        verbose=verbose,
+    )
 
 
 def _cordex_daily_view(cordex: pd.DataFrame) -> pd.DataFrame:
@@ -1018,7 +1044,20 @@ def compute_mixed_resolution_delta(daily_df, monthly_df, baseline, target_date):
     return deltas
 
 
-def apply_climate_delta(rsvar_df, cordex, baseline, gcm: str, rcm: str | None, lat: float, baseline_start: int = BASELINE_START, baseline_end: int = BASELINE_END, isd_path: Path = None, debug: bool = False, delta_mode: str = "daily"):
+def apply_climate_delta(
+    rsvar_df,
+    cordex,
+    baseline,
+    gcm: str,
+    rcm: str | None,
+    lat: float,
+    baseline_start: int = BASELINE_START,
+    baseline_end: int = BASELINE_END,
+    isd_path: Path = None,
+    debug: bool = False,
+    delta_mode: str = "daily",
+    verbose: bool = True,
+):
     """
     Apply climate delta to RS-VAR output.
 
@@ -1029,123 +1068,115 @@ def apply_climate_delta(rsvar_df, cordex, baseline, gcm: str, rcm: str | None, l
     Also enforces solar constraints after applying delta (consistent with V5 pipeline).
     """
     model_name = f"{gcm}_{rcm}" if rcm else gcm
-    print("\n" + "="*80)
-    print(f"APPLYING CLIMATE DELTA: {model_name}")
-    print("="*80)
+    with _stdout_context(verbose):
+        print("\n" + "="*80)
+        print(f"APPLYING CLIMATE DELTA: {model_name}")
+        print("="*80)
 
-    output_df = rsvar_df.copy()
+        output_df = rsvar_df.copy()
 
-    if debug:
-        print("\n[DEBUG] RS-VAR columns:")
-        print("  ", sorted(map(str, output_df.columns.tolist())))
-        print("[DEBUG] Baseline keys:")
-        print("  ", sorted(map(str, baseline.keys())))
-        needed = [VAR_TO_CORDEX['temp'], VAR_TO_CORDEX['pressure']]
-        for k in needed:
-            print(f"[DEBUG] baseline has {k}? {k in baseline}")
+        if debug:
+            print("\n[DEBUG] RS-VAR columns:")
+            print("  ", sorted(map(str, output_df.columns.tolist())))
+            print("[DEBUG] Baseline keys:")
+            print("  ", sorted(map(str, baseline.keys())))
+            needed = [VAR_TO_CORDEX['temp'], VAR_TO_CORDEX['pressure']]
+            for k in needed:
+                print(f"[DEBUG] baseline has {k}? {k in baseline}")
 
-    if delta_mode not in {"daily", "monthly"}:
-        raise ValueError(f"Invalid delta_mode: {delta_mode}. Expected 'daily' or 'monthly'.")
+        if delta_mode not in {"daily", "monthly"}:
+            raise ValueError(f"Invalid delta_mode: {delta_mode}. Expected 'daily' or 'monthly'.")
 
-    # Get unique dates in forecast
-    dates = pd.to_datetime(output_df.index.date).unique()
-    mode_label = "daily" if delta_mode == "daily" else "monthly"
-    print(f"\nComputing {mode_label} deltas for {len(dates):,} days...")
+        dates = pd.to_datetime(output_df.index.date).unique()
+        mode_label = "daily" if delta_mode == "daily" else "monthly"
+        print(f"\nComputing {mode_label} deltas for {len(dates):,} days...")
 
-    # Precompute daily/monthly views once (not once per day)
-    cordex_daily_view = None
-    cordex_monthly = None
-    if delta_mode == "daily":
-        cordex_daily_view = _cordex_daily_view(cordex)
-    else:
-        cordex_monthly = _cordex_monthly_view(cordex)
-
-    # Precompute all daily deltas
-    daily_deltas = {}
-    missing_days = 0
-
-    # Debug counters: how often each CORDEX var shows up in computed deltas
-    delta_key_hits: dict[str, int] = {}
-
-    for date in dates:
+        cordex_daily_view = None
+        cordex_monthly = None
         if delta_mode == "daily":
-            d = compute_daily_delta(cordex, baseline, date, cordex_daily=cordex_daily_view)
+            cordex_daily_view = _cordex_daily_view(cordex)
         else:
-            d = compute_monthly_delta(cordex_monthly, baseline, date)
-        if not d:
-            missing_days += 1
-        else:
-            if debug:
-                for k in d.keys():
-                    delta_key_hits[str(k)] = delta_key_hits.get(str(k), 0) + 1
-        daily_deltas[date.date()] = d
+            cordex_monthly = _cordex_monthly_view(cordex)
 
-    if missing_days:
-        print(f"  WARNING: {missing_days:,}/{len(dates):,} forecast days not found in CORDEX; leaving unchanged for those days")
+        daily_deltas = {}
+        missing_days = 0
+        delta_key_hits: dict[str, int] = {}
 
-    if debug:
-        print("\n[DEBUG] Daily delta key hit counts (top 20):")
-        items = sorted(delta_key_hits.items(), key=lambda kv: kv[1], reverse=True)
-        for k, v in items[:20]:
-            print(f"  {k}: {v:,} days")
-        for k in [VAR_TO_CORDEX['temp'], VAR_TO_CORDEX['pressure']]:
-            print(f"[DEBUG] daily deltas include {k}? hits={delta_key_hits.get(k, 0):,} days")
+        for date in dates:
+            if delta_mode == "daily":
+                d = compute_daily_delta(cordex, baseline, date, cordex_daily=cordex_daily_view)
+            else:
+                d = compute_monthly_delta(cordex_monthly, baseline, date)
+            if not d:
+                missing_days += 1
+            else:
+                if debug:
+                    for k in d.keys():
+                        delta_key_hits[str(k)] = delta_key_hits.get(str(k), 0) + 1
+            daily_deltas[date.date()] = d
 
-    output_df['_date'] = output_df.index.date
+        if missing_days:
+            print(f"  WARNING: {missing_days:,}/{len(dates):,} forecast days not found in CORDEX; leaving unchanged for those days")
 
-    # Track delta statistics
-    delta_stats = {var: [] for var in VAR_TO_CORDEX.keys()}
+        if debug:
+            print("\n[DEBUG] Daily delta key hit counts (top 20):")
+            items = sorted(delta_key_hits.items(), key=lambda kv: kv[1], reverse=True)
+            for k, v in items[:20]:
+                print(f"  {k}: {v:,} days")
+            for k in [VAR_TO_CORDEX['temp'], VAR_TO_CORDEX['pressure']]:
+                print(f"[DEBUG] daily deltas include {k}? hits={delta_key_hits.get(k, 0):,} days")
 
-    for date, group_idx in output_df.groupby('_date').groups.items():
-        deltas = daily_deltas.get(date, {})
+        output_df['_date'] = output_df.index.date
+        delta_stats = {var: [] for var in VAR_TO_CORDEX.keys()}
 
-        for var, cordex_var in VAR_TO_CORDEX.items():
-            if var not in output_df.columns:
-                continue
-            if cordex_var not in deltas:
-                continue
+        for date, group_idx in output_df.groupby('_date').groups.items():
+            deltas = daily_deltas.get(date, {})
 
-            delta_or_ratio = deltas[cordex_var]
-            delta_stats[var].append(delta_or_ratio)
+            for var, cordex_var in VAR_TO_CORDEX.items():
+                if var not in output_df.columns:
+                    continue
+                if cordex_var not in deltas:
+                    continue
 
-            if var in ADDITIVE_VARS:
-                output_df.loc[group_idx, var] += delta_or_ratio
-            elif var in MULTIPLICATIVE_VARS:
-                output_df.loc[group_idx, var] *= delta_or_ratio
+                delta_or_ratio = deltas[cordex_var]
+                delta_stats[var].append(delta_or_ratio)
 
-    # Clean up
-    output_df.drop('_date', axis=1, inplace=True)
+                if var in ADDITIVE_VARS:
+                    output_df.loc[group_idx, var] += delta_or_ratio
+                elif var in MULTIPLICATIVE_VARS:
+                    output_df.loc[group_idx, var] *= delta_or_ratio
 
-    if debug:
-        print("\n[DEBUG] delta_stats counts:")
-        for var in VAR_TO_CORDEX.keys():
-            print(f"  {var}: n={len(delta_stats.get(var, [])):,}")
-        # Explain the most common reasons for missing temp/pressure
-        for var in ['temp', 'pressure']:
-            cordex_var = VAR_TO_CORDEX[var]
-            reasons = []
-            if var not in rsvar_df.columns:
-                reasons.append(f"RS-VAR missing column '{var}'")
-            if cordex_var not in baseline:
-                reasons.append(f"baseline missing '{cordex_var}'")
-            # if baseline has it but we still have no hits, likely target-date lookup mismatch
-            if cordex_var in baseline and delta_key_hits.get(cordex_var, 0) == 0:
-                reasons.append(f"computed daily deltas never contained '{cordex_var}' (target date lookup mismatch?)")
-            if reasons:
-                print(f"[DEBUG] why {var} might be missing: " + "; ".join(reasons))
+        output_df.drop('_date', axis=1, inplace=True)
 
-    # Apply legacy end-of-pipeline physical QA (humidity bounds, dewpoint, solar closure)
-    print(f"\nApplying physics QA...")
-    output_df = apply_physics_qa(output_df, lat, preserve="GHI")
+        if debug:
+            print("\n[DEBUG] delta_stats counts:")
+            for var in VAR_TO_CORDEX.keys():
+                print(f"  {var}: n={len(delta_stats.get(var, [])):,}")
+            for var in ['temp', 'pressure']:
+                cordex_var = VAR_TO_CORDEX[var]
+                reasons = []
+                if var not in rsvar_df.columns:
+                    reasons.append(f"RS-VAR missing column '{var}'")
+                if cordex_var not in baseline:
+                    reasons.append(f"baseline missing '{cordex_var}'")
+                if cordex_var in baseline and delta_key_hits.get(cordex_var, 0) == 0:
+                    reasons.append(f"computed daily deltas never contained '{cordex_var}' (target date lookup mismatch?)")
+                if reasons:
+                    print(f"[DEBUG] why {var} might be missing: " + "; ".join(reasons))
 
-    # Print delta statistics
-    _print_delta_statistics(delta_stats)
-
-    # Print temperature statistics by time window
-    _print_temperature_statistics_by_window(
-        rsvar_df, cordex, baseline, output_df,
-        baseline_start, baseline_end, isd_path
-    )
+        print(f"\nApplying physics QA...")
+        output_df = apply_physics_qa(output_df, lat, preserve="GHI")
+        _print_delta_statistics(delta_stats)
+        _print_temperature_statistics_by_window(
+            rsvar_df,
+            cordex,
+            baseline,
+            output_df,
+            baseline_start,
+            baseline_end,
+            isd_path,
+            verbose=verbose,
+        )
 
     return output_df, delta_stats
 

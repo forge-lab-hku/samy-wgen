@@ -20,6 +20,8 @@ Where:
 """
 
 import argparse
+import contextlib
+import io
 import os
 import pandas as pd
 import numpy as np
@@ -55,10 +57,14 @@ class ForecastTo2100V5:
     ADDITIVE_VARS = {'temp', 'pressure', 'dewpoint'}
     MULTIPLICATIVE_VARS = {'wind_speed', 'GHI', 'DNI', 'DHI', 'relative_humidity', 'specific_humidity'}
 
+    @staticmethod
+    def _stdout_context(verbose: bool):
+        return contextlib.nullcontext() if verbose else contextlib.redirect_stdout(io.StringIO())
+
     def __init__(self, isd_solar_path, cordex_rcp85_path, lat=34.0,
                  baseline_start=1991, baseline_end=2010,
                  validation_start=2011, validation_end=2025,
-                 baseline_mode='fixed', seed=42):
+                 baseline_mode='fixed', seed=42, verbose=True):
         """
         Initialize the forecaster.
 
@@ -84,6 +90,7 @@ class ForecastTo2100V5:
         self.validation_end = validation_end
         self.baseline_mode = baseline_mode
         self.seed = seed
+        self.verbose = bool(verbose)
 
         # Data containers
         self.isd_data = None
@@ -105,66 +112,61 @@ class ForecastTo2100V5:
 
     def load_isd_data(self):
         """Load ISD + solar data and extract baseline period."""
-        print("="*80)
-        print("STEP 1: LOADING ISD + SOLAR DATA")
-        print("="*80)
+        with self._stdout_context(self.verbose):
+            print("="*80)
+            print("STEP 1: LOADING ISD + SOLAR DATA")
+            print("="*80)
 
-        self.isd_data = pd.read_csv(self.isd_path, parse_dates=['DATE'])
-        self.isd_data.set_index('DATE', inplace=True)
+            self.isd_data = pd.read_csv(self.isd_path, parse_dates=['DATE'])
+            self.isd_data.set_index('DATE', inplace=True)
 
-        if self.isd_data.index.duplicated().any():
-            n_dups = self.isd_data.index.duplicated().sum()
-            print(f"  Removing {n_dups:,} duplicate timestamps")
-            self.isd_data = self.isd_data[~self.isd_data.index.duplicated(keep='first')]
+            if self.isd_data.index.duplicated().any():
+                n_dups = self.isd_data.index.duplicated().sum()
+                print(f"  Removing {n_dups:,} duplicate timestamps")
+                self.isd_data = self.isd_data[~self.isd_data.index.duplicated(keep='first')]
 
-        print(f"Loaded {len(self.isd_data):,} hourly records")
-        print(f"Full period: {self.isd_data.index.min()} to {self.isd_data.index.max()}")
+            print(f"Loaded {len(self.isd_data):,} hourly records")
+            print(f"Full period: {self.isd_data.index.min()} to {self.isd_data.index.max()}")
 
-        # Handle missing values
-        solar_vars = ['GHI', 'DNI', 'DHI']
-        if all(v in self.isd_data.columns for v in solar_vars):
-            print(f"\n✓ Solar radiation data found")
+            solar_vars = ['GHI', 'DNI', 'DHI']
+            if all(v in self.isd_data.columns for v in solar_vars):
+                print(f"\n✓ Solar radiation data found")
 
-        for col in ['precip_depth', 'precip_duration']:
-            if col in self.isd_data.columns:
-                self.isd_data[col].fillna(0, inplace=True)
+            for col in ['precip_depth', 'precip_duration']:
+                if col in self.isd_data.columns:
+                    self.isd_data[col].fillna(0, inplace=True)
 
-        for col in solar_vars:
-            if col in self.isd_data.columns:
-                self.isd_data.loc[self.isd_data[col] < 0, col] = 0
+            for col in solar_vars:
+                if col in self.isd_data.columns:
+                    self.isd_data.loc[self.isd_data[col] < 0, col] = 0
 
-        # Limit forward/backward fill to 6 hours to avoid propagating bad data across long gaps
-        self.isd_data.ffill(limit=6, inplace=True)
-        self.isd_data.bfill(limit=6, inplace=True)
-        self.isd_data.dropna(inplace=True)
+            self.isd_data.ffill(limit=6, inplace=True)
+            self.isd_data.bfill(limit=6, inplace=True)
+            self.isd_data.dropna(inplace=True)
 
-        # Calculate humidity variables
-        print(f"\nCalculating humidity variables...")
-        self._calculate_humidity_variables()
+            print(f"\nCalculating humidity variables...")
+            self._calculate_humidity_variables()
 
-        # Extract baseline period (for climate delta reference)
-        baseline_mask = (
-            (self.isd_data.index.year >= self.baseline_start) &
-            (self.isd_data.index.year <= self.baseline_end)
-        )
-        self.isd_baseline = self.isd_data.loc[baseline_mask].copy()
+            baseline_mask = (
+                (self.isd_data.index.year >= self.baseline_start) &
+                (self.isd_data.index.year <= self.baseline_end)
+            )
+            self.isd_baseline = self.isd_data.loc[baseline_mask].copy()
 
-        print(f"\n*** BASELINE PERIOD: {self.baseline_start}-{self.baseline_end} ***")
-        print(f"    ISD baseline records: {len(self.isd_baseline):,} hours")
-        print(f"    ISD baseline coverage: {self.isd_baseline.index.min()} to {self.isd_baseline.index.max()}")
+            print(f"\n*** BASELINE PERIOD: {self.baseline_start}-{self.baseline_end} ***")
+            print(f"    ISD baseline records: {len(self.isd_baseline):,} hours")
+            print(f"    ISD baseline coverage: {self.isd_baseline.index.min()} to {self.isd_baseline.index.max()}")
 
-        if len(self.isd_baseline) < 8760 * 5:  # Less than 5 years
-            print(f"  ⚠️  WARNING: Baseline period has less than 5 years of data!")
+            if len(self.isd_baseline) < 8760 * 5:
+                print("  WARNING: Baseline period has less than 5 years of data!")
 
-        # Create training dataset: ALL ISD EXCEPT validation period (2011-2020)
-        # This prevents data leakage when validating against 2011-2020
-        training_mask = self.isd_data.index.year <= 2010
-        self.isd_training = self.isd_data.loc[training_mask].copy()
+            training_mask = self.isd_data.index.year <= 2010
+            self.isd_training = self.isd_data.loc[training_mask].copy()
 
-        print(f"\n*** TRAINING PERIOD (RS-VAR): ALL DATA UP TO 2010 ***")
-        print(f"    ISD training records: {len(self.isd_training):,} hours")
-        print(f"    ISD training coverage: {self.isd_training.index.min()} to {self.isd_training.index.max()}")
-        print(f"    Training years: {self.isd_training.index.year.max() - self.isd_training.index.year.min() + 1}")
+            print(f"\n*** TRAINING PERIOD (RS-VAR): ALL DATA UP TO 2010 ***")
+            print(f"    ISD training records: {len(self.isd_training):,} hours")
+            print(f"    ISD training coverage: {self.isd_training.index.min()} to {self.isd_training.index.max()}")
+            print(f"    Training years: {self.isd_training.index.year.max() - self.isd_training.index.year.min() + 1}")
 
         return self
 

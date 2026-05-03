@@ -42,6 +42,8 @@ USAGE:
 """
 
 import argparse
+import contextlib
+import io
 import os
 from pathlib import Path
 
@@ -83,7 +85,7 @@ ABS_LIMITS = {
 class EnsemblePipeline(ForecastTo2100V5):
     """ForecastTo2100V5 subclass that skips CORDEX loading (not needed for anomaly generation)."""
 
-    def __init__(self, isd_solar_path, lat=34.0, baseline_start=1991, baseline_end=2010, seed=42):
+    def __init__(self, isd_solar_path, lat=34.0, baseline_start=1991, baseline_end=2010, seed=42, verbose=True):
         super().__init__(
             isd_solar_path=isd_solar_path,
             cordex_rcp85_path=os.devnull,
@@ -91,6 +93,7 @@ class EnsemblePipeline(ForecastTo2100V5):
             baseline_start=baseline_start,
             baseline_end=baseline_end,
             seed=seed,
+            verbose=verbose,
         )
 
     def train(self, target_vars=None):
@@ -98,12 +101,14 @@ class EnsemblePipeline(ForecastTo2100V5):
         if target_vars is None:
             target_vars = TARGET_VARS
 
-        self.load_isd_data()
-        self.extract_seasonal_profiles(target_vars)
-        self.engineer_features()
-        self.standardize_features(target_vars)
-        self.train_regime_switching(k_regimes=3)
-        self.train_regime_conditional_vars(target_vars, k_regimes=3)
+        stdout_context = contextlib.nullcontext() if self.verbose else contextlib.redirect_stdout(io.StringIO())
+        with stdout_context:
+            self.load_isd_data()
+            self.extract_seasonal_profiles(target_vars)
+            self.engineer_features()
+            self.standardize_features(target_vars)
+            self.train_regime_switching(k_regimes=3)
+            self.train_regime_conditional_vars(target_vars, k_regimes=3)
         return self
 
 
@@ -143,6 +148,7 @@ def run_and_save_ensemble(
     centering_period: int = 365,
     seed: int = 0,
     target_vars: list[str] | None = None,
+    verbose: bool = True,
 ) -> Path:
     """
     Train RS-VAR and generate M ensemble members.
@@ -181,6 +187,7 @@ def run_and_save_ensemble(
         baseline_start=BASELINE_START,
         baseline_end=BASELINE_END,
         seed=seed,
+        verbose=verbose,
     )
     pipeline.train(target_vars)
 

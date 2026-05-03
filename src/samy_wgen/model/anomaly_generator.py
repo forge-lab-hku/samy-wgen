@@ -27,6 +27,8 @@ Layer 2 — residual_mode:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import numpy as np
 import pandas as pd
 from typing import TYPE_CHECKING
@@ -103,6 +105,10 @@ class AnomalyGenerator:
         self._residual_cov = {}       # regime -> (n_vars, n_vars) for parametric
         if residual_mode != 'deterministic':
             self._build_residual_structures()
+
+    def _stdout_context(self):
+        verbose = bool(getattr(self.model, "verbose", True))
+        return contextlib.nullcontext() if verbose else contextlib.redirect_stdout(io.StringIO())
 
     # ------------------------------------------------------------------
     # Internal setup
@@ -479,116 +485,117 @@ class AnomalyGenerator:
         This mirrors ForecastTo2100V5.forecast_without_climate_delta() but stays
         inside the generator rather than delegating to the legacy pipeline entrypoint.
         """
-        target_vars = [c.replace('_deviation', '') for c in self._deviation_vars]
-        n_steps = len(forecast_index)
-        chunk_size = chunk_years * 8760
-        n_chunks = int(np.ceil(n_steps / chunk_size))
+        with self._stdout_context():
+            target_vars = [c.replace('_deviation', '') for c in self._deviation_vars]
+            n_steps = len(forecast_index)
+            chunk_size = chunk_years * 8760
+            n_chunks = int(np.ceil(n_steps / chunk_size))
 
-        start_date = str(forecast_index[0])
-        end_date = str(forecast_index[-1])
-        daily_regime_probs = self.model._forecast_regime_probabilities(start_date, end_date)
-        regime_prob_cols = sorted(
-            [col for col in daily_regime_probs.columns if col.endswith('_prob')],
-            key=lambda name: int(name.split('_')[1]) if name.split('_')[1].isdigit() else name
-        )
-
-        recent_data = self.model.isd_baseline[target_vars].iloc[-1000:].copy()
-        recent_data['month'] = recent_data.index.month
-        recent_data['hour'] = recent_data.index.hour
-
-        deviation_vars = []
-        for var in target_vars:
-            if var not in self.model.seasonal_profiles:
-                continue
-            seasonal_vals = recent_data.apply(
-                lambda row: self.model.seasonal_profiles[var][(row['month'], row['hour'])],
-                axis=1,
+            start_date = str(forecast_index[0])
+            end_date = str(forecast_index[-1])
+            daily_regime_probs = self.model._forecast_regime_probabilities(start_date, end_date)
+            regime_prob_cols = sorted(
+                [col for col in daily_regime_probs.columns if col.endswith('_prob')],
+                key=lambda name: int(name.split('_')[1]) if name.split('_')[1].isdigit() else name
             )
-            recent_data[f'{var}_deviation'] = recent_data[var] - seasonal_vals
-            deviation_vars.append(f'{var}_deviation')
 
-        hourly_regime_probs = daily_regime_probs[regime_prob_cols].reindex(forecast_index, method='ffill')
-        hourly_regime_probs = hourly_regime_probs.div(hourly_regime_probs.sum(1), axis=0)
+            recent_data = self.model.isd_baseline[target_vars].iloc[-1000:].copy()
+            recent_data['month'] = recent_data.index.month
+            recent_data['hour'] = recent_data.index.hour
 
-        all_forecasts = []
-        for chunk_idx in range(n_chunks):
-            chunk_start = chunk_idx * chunk_size
-            chunk_end = min((chunk_idx + 1) * chunk_size, n_steps)
-            chunk_len = chunk_end - chunk_start
-            chunk_index = forecast_index[chunk_start:chunk_end]
-
-            chunk_df = pd.DataFrame(index=chunk_index, columns=target_vars, dtype=float)
-            chunk_df['month'] = chunk_index.month
-            chunk_df['hour'] = chunk_index.hour
-            chunk_df['year'] = chunk_index.year
-
+            deviation_vars = []
             for var in target_vars:
                 if var not in self.model.seasonal_profiles:
                     continue
-                seasonal_values = chunk_df.apply(
+                seasonal_vals = recent_data.apply(
                     lambda row: self.model.seasonal_profiles[var][(row['month'], row['hour'])],
                     axis=1,
                 )
-                chunk_df[var] = seasonal_values
+                recent_data[f'{var}_deviation'] = recent_data[var] - seasonal_vals
+                deviation_vars.append(f'{var}_deviation')
 
-            chunk_probs = hourly_regime_probs.loc[chunk_index]
-            blended_deviations = pd.DataFrame(
-                np.zeros((chunk_len, len(deviation_vars))),
-                index=chunk_index,
-                columns=deviation_vars,
-            )
-            regime_weights = pd.DataFrame(
-                0.0, index=chunk_index, columns=regime_prob_cols, dtype=float
-            )
+            hourly_regime_probs = daily_regime_probs[regime_prob_cols].reindex(forecast_index, method='ffill')
+            hourly_regime_probs = hourly_regime_probs.div(hourly_regime_probs.sum(1), axis=0)
 
-            for regime_i, var_model in sorted(self.model.regime_models.items()):
-                regime_prob_col = f'regime_{regime_i}_prob'
-                if regime_prob_col not in chunk_probs:
-                    continue
+            all_forecasts = []
+            for chunk_idx in range(n_chunks):
+                chunk_start = chunk_idx * chunk_size
+                chunk_end = min((chunk_idx + 1) * chunk_size, n_steps)
+                chunk_len = chunk_end - chunk_start
+                chunk_index = forecast_index[chunk_start:chunk_end]
 
-                last_deviation = recent_data[deviation_vars].iloc[-var_model.k_ar:].values
-                regime_deviation_forecast = var_model.forecast(y=last_deviation, steps=chunk_len)
-                regime_probs_vals = chunk_probs[regime_prob_col].values.reshape(-1, 1)
+                chunk_df = pd.DataFrame(index=chunk_index, columns=target_vars, dtype=float)
+                chunk_df['month'] = chunk_index.month
+                chunk_df['hour'] = chunk_index.hour
+                chunk_df['year'] = chunk_index.year
 
-                blended_deviations += regime_deviation_forecast * regime_probs_vals
-                regime_weights.loc[chunk_index, regime_prob_col] = chunk_probs[regime_prob_col].values
+                for var in target_vars:
+                    if var not in self.model.seasonal_profiles:
+                        continue
+                    seasonal_values = chunk_df.apply(
+                        lambda row: self.model.seasonal_profiles[var][(row['month'], row['hour'])],
+                        axis=1,
+                    )
+                    chunk_df[var] = seasonal_values
 
-            total_weights = regime_weights.sum(axis=1).clip(lower=1e-10)
-            blended_deviations = blended_deviations.div(total_weights, axis=0)
-
-            for dev_var in blended_deviations.columns:
-                dev_mean = blended_deviations[dev_var].mean()
-                blended_deviations[dev_var] = blended_deviations[dev_var] - dev_mean
-
-            for var in target_vars:
-                dev_var = f'{var}_deviation'
-                if dev_var in blended_deviations.columns:
-                    chunk_df[var] = chunk_df[var] + blended_deviations[dev_var]
-
-            chunk_df = chunk_df[target_vars]
-
-            recent_deviation_update = chunk_df.copy()
-            recent_deviation_update['month'] = chunk_index.month
-            recent_deviation_update['hour'] = chunk_index.hour
-            for var in target_vars:
-                if var not in self.model.seasonal_profiles:
-                    continue
-                profile = self.model.seasonal_profiles[var]
-                seasonal_vals = pd.Series(
-                    [float(profile.get((m, h), np.nan)) for m, h in zip(
-                        recent_deviation_update['month'],
-                        recent_deviation_update['hour'],
-                    )],
-                    index=recent_deviation_update.index,
+                chunk_probs = hourly_regime_probs.loc[chunk_index]
+                blended_deviations = pd.DataFrame(
+                    np.zeros((chunk_len, len(deviation_vars))),
+                    index=chunk_index,
+                    columns=deviation_vars,
                 )
-                recent_deviation_update[f'{var}_deviation'] = chunk_df[var] - seasonal_vals
+                regime_weights = pd.DataFrame(
+                    0.0, index=chunk_index, columns=regime_prob_cols, dtype=float
+                )
 
-            recent_data = pd.concat([recent_data, recent_deviation_update]).iloc[-1000:]
-            all_forecasts.append(chunk_df)
+                for regime_i, var_model in sorted(self.model.regime_models.items()):
+                    regime_prob_col = f'regime_{regime_i}_prob'
+                    if regime_prob_col not in chunk_probs:
+                        continue
 
-        forecast_df = pd.concat(all_forecasts)
-        forecast_df = self.model._enforce_solar_constraints(forecast_df)
-        return forecast_df
+                    last_deviation = recent_data[deviation_vars].iloc[-var_model.k_ar:].values
+                    regime_deviation_forecast = var_model.forecast(y=last_deviation, steps=chunk_len)
+                    regime_probs_vals = chunk_probs[regime_prob_col].values.reshape(-1, 1)
+
+                    blended_deviations += regime_deviation_forecast * regime_probs_vals
+                    regime_weights.loc[chunk_index, regime_prob_col] = chunk_probs[regime_prob_col].values
+
+                total_weights = regime_weights.sum(axis=1).clip(lower=1e-10)
+                blended_deviations = blended_deviations.div(total_weights, axis=0)
+
+                for dev_var in blended_deviations.columns:
+                    dev_mean = blended_deviations[dev_var].mean()
+                    blended_deviations[dev_var] = blended_deviations[dev_var] - dev_mean
+
+                for var in target_vars:
+                    dev_var = f'{var}_deviation'
+                    if dev_var in blended_deviations.columns:
+                        chunk_df[var] = chunk_df[var] + blended_deviations[dev_var]
+
+                chunk_df = chunk_df[target_vars]
+
+                recent_deviation_update = chunk_df.copy()
+                recent_deviation_update['month'] = chunk_index.month
+                recent_deviation_update['hour'] = chunk_index.hour
+                for var in target_vars:
+                    if var not in self.model.seasonal_profiles:
+                        continue
+                    profile = self.model.seasonal_profiles[var]
+                    seasonal_vals = pd.Series(
+                        [float(profile.get((m, h), np.nan)) for m, h in zip(
+                            recent_deviation_update['month'],
+                            recent_deviation_update['hour'],
+                        )],
+                        index=recent_deviation_update.index,
+                    )
+                    recent_deviation_update[f'{var}_deviation'] = chunk_df[var] - seasonal_vals
+
+                recent_data = pd.concat([recent_data, recent_deviation_update]).iloc[-1000:]
+                all_forecasts.append(chunk_df)
+
+            forecast_df = pd.concat(all_forecasts)
+            forecast_df = self.model._enforce_solar_constraints(forecast_df)
+            return forecast_df
 
     # ------------------------------------------------------------------
     # Public API
@@ -619,33 +626,32 @@ class AnomalyGenerator:
             with columns = target variable names.
             Values = seasonal_profile + anomaly  (no climate delta).
         """
-        base_seed = seed if seed is not None else 0
-        forecast_index = pd.date_range(start=start_date, end=end_date, freq='h')
-        n_hours = len(forecast_index)
-        n_days = int(np.ceil(n_hours / 24))
+        with self._stdout_context():
+            base_seed = seed if seed is not None else 0
+            forecast_index = pd.date_range(start=start_date, end=end_date, freq='h')
+            n_hours = len(forecast_index)
+            n_days = int(np.ceil(n_hours / 24))
 
-        # Pre-compute seasonal profile for the forecast period
-        seasonal = self._compute_seasonal(forecast_index)
-        initial_y = self._get_initial_y()
+            seasonal = self._compute_seasonal(forecast_index)
+            initial_y = self._get_initial_y()
 
-        members = []
-        if self.regime_mode == 'soft' and self.residual_mode == 'deterministic':
-            compatible = self._generate_soft_deterministic_compatible(forecast_index)
-            return [compatible.copy() for _ in range(n_members)]
+            members = []
+            if self.regime_mode == 'soft' and self.residual_mode == 'deterministic':
+                compatible = self._generate_soft_deterministic_compatible(forecast_index)
+                return [compatible.copy() for _ in range(n_members)]
 
-        for m in range(n_members):
-            rng = np.random.default_rng(base_seed + m)
+            for m in range(n_members):
+                rng = np.random.default_rng(base_seed + m)
 
-            sampled_path, soft_probs = self._get_regime_path(n_days, rng)
-            anomaly = self._propagate(sampled_path, soft_probs, initial_y, rng, forecast_index)
+                sampled_path, soft_probs = self._get_regime_path(n_days, rng)
+                anomaly = self._propagate(sampled_path, soft_probs, initial_y, rng, forecast_index)
 
-            output = seasonal + anomaly  # (n_hours, n_vars)
-            df = pd.DataFrame(output, index=forecast_index, columns=self._deviation_vars)
-            # Rename deviation columns to plain variable names
-            df.columns = [c.replace('_deviation', '') for c in df.columns]
-            members.append(df)
+                output = seasonal + anomaly
+                df = pd.DataFrame(output, index=forecast_index, columns=self._deviation_vars)
+                df.columns = [c.replace('_deviation', '') for c in df.columns]
+                members.append(df)
 
-        return members
+            return members
 
     def _compute_seasonal(self, forecast_index: pd.DatetimeIndex) -> np.ndarray:
         """

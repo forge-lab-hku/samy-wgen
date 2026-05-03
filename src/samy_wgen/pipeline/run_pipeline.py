@@ -432,7 +432,7 @@ def _stage3_rsvar(merged_csv: Path, lat: float, city: str,
         _rsvar_mod.BASELINE_END   = baseline_end
         _rsvar_mod.FORECAST_START = forecast_start
         _rsvar_mod.FORECAST_END   = forecast_end
-        run_and_save_rsvar(isd_path=merged_csv, lat=lat, output_path=xlsx_path, city=city)
+        run_and_save_rsvar(isd_path=merged_csv, lat=lat, output_path=xlsx_path, city=city, verbose=False)
     finally:
         _rsvar_mod.BASELINE_START = _orig_start
         _rsvar_mod.BASELINE_END   = _orig_end
@@ -464,7 +464,7 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
     _print_title("Stage 4 Apply Climate Delta")
     print(f"[stage 4] Applying CMIP6 climate delta ({ssp})")
     daily_df, _monthly_df, meta = load_cmip6_or_cordex6(
-        base_path=cmip6_dir, city=city, ssp=ssp
+        base_path=cmip6_dir, city=city, ssp=ssp, verbose=False
     )
     gcm = meta.get("model_name", "unknown")
     print(f"  GCM: {gcm}, {len(daily_df):,} daily rows")
@@ -482,6 +482,7 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
         baseline_start=baseline_start,
         baseline_end=baseline_end,
         delta_mode="daily",
+        verbose=False,
     )
     output_df.index.name = "datetime"
     output_df.to_csv(csv_path)
@@ -632,6 +633,7 @@ def _stage3_ensemble(merged_csv: Path, lat: float,
         regime_mode=regime_mode,
         residual_mode=residual_mode,
         seed=seed,
+        verbose=False,
     )
     return out_dir / "ensemble"
 

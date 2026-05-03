@@ -46,6 +46,8 @@ NOTE:
 
 import sys
 import argparse
+import contextlib
+import io
 import os
 from pathlib import Path
 import pandas as pd
@@ -75,6 +77,10 @@ DEFAULT_ISD_MERGED_DIR = Path("data") / "ISD_complete_solar"
 DEFAULT_OUTPUT_DIR = Path("output") / "RSVAR"
 
 
+def _stdout_context(verbose: bool):
+    return contextlib.nullcontext() if verbose else contextlib.redirect_stdout(io.StringIO())
+
+
 # ==========================================================================
 # HELPER FUNCTIONS
 # ==========================================================================
@@ -95,7 +101,7 @@ def _normalize_city_args(requested: list[str] | None, available_cities: list[str
 class RSVAROnlyPipeline(ForecastTo2100V5):
     """Modified pipeline that outputs RS-VAR results WITHOUT climate delta."""
 
-    def __init__(self, isd_solar_path, lat=34.0, baseline_start=1991, baseline_end=2010, seed=42):
+    def __init__(self, isd_solar_path, lat=34.0, baseline_start=1991, baseline_end=2010, seed=42, verbose=True):
         # ForecastTo2100V5 requires a CORDEX path, but RSVAR-only runs never load or use CORDEX.
         # Provide a safe dummy value to satisfy the base class constructor.
         dummy_cordex = os.devnull
@@ -106,6 +112,7 @@ class RSVAROnlyPipeline(ForecastTo2100V5):
             baseline_start=baseline_start,
             baseline_end=baseline_end,
             seed=seed,
+            verbose=verbose,
         )
 
     def forecast_rsvar_only(self, target_vars, start_date='2025-01-01',
@@ -264,7 +271,7 @@ class RSVAROnlyPipeline(ForecastTo2100V5):
         return forecast_df
 
 
-def run_and_save_rsvar(isd_path, lat, output_path, city):
+def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True):
     """Run RS-VAR pipeline and save output to Excel.
 
     Args:
@@ -273,105 +280,97 @@ def run_and_save_rsvar(isd_path, lat, output_path, city):
         output_path: Output file path
         city: City name
     """
-    print("=" * 80)
-    print("V5 RS-VAR PIPELINE (SAVE FOR REUSE)")
-    print("=" * 80)
-    print(f"\nCity: {city}")
-    print(f"Inputs:")
-    print(f"  ISD data:    {isd_path}")
-    print(f"  Latitude:    {lat}°N")
-    print(f"  Note:        ISD data assumed to be in LST (Local Standard Time)")
-    print(f"\nBaseline period: {BASELINE_START}-{BASELINE_END}")
-    print(f"Forecast period: {FORECAST_START} to {FORECAST_END}")
+    with _stdout_context(verbose):
+        print("=" * 80)
+        print("V5 RS-VAR PIPELINE (SAVE FOR REUSE)")
+        print("=" * 80)
+        print(f"\nCity: {city}")
+        print(f"Inputs:")
+        print(f"  ISD data:    {isd_path}")
+        print(f"  Latitude:    {lat}°N")
+        print(f"  Note:        ISD data assumed to be in LST (Local Standard Time)")
+        print(f"\nBaseline period: {BASELINE_START}-{BASELINE_END}")
+        print(f"Forecast period: {FORECAST_START} to {FORECAST_END}")
 
-    # Initialize pipeline
-    pipeline = RSVAROnlyPipeline(
-        isd_solar_path=str(isd_path),
-        lat=lat,
-        baseline_start=BASELINE_START,
-        baseline_end=BASELINE_END,
-    )
+        pipeline = RSVAROnlyPipeline(
+            isd_solar_path=str(isd_path),
+            lat=lat,
+            baseline_start=BASELINE_START,
+            baseline_end=BASELINE_END,
+            verbose=verbose,
+        )
 
-    # Load data and train models
-    pipeline.load_isd_data()
+        pipeline.load_isd_data()
 
-    # Define target variables
-    target_vars = ['temp', 'pressure', 'wind_speed', 'GHI', 'DHI', 'DNI',
-                   'relative_humidity', 'specific_humidity']
-    target_vars = [v for v in target_vars if v in pipeline.isd_baseline.columns]
+        target_vars = ['temp', 'pressure', 'wind_speed', 'GHI', 'DHI', 'DNI',
+                       'relative_humidity', 'specific_humidity']
+        target_vars = [v for v in target_vars if v in pipeline.isd_baseline.columns]
 
-    pipeline.extract_seasonal_profiles(target_vars)
-    pipeline.engineer_features()
-    pipeline.standardize_features(target_vars)
-    pipeline.train_regime_switching(k_regimes=3)
-    pipeline.train_regime_conditional_vars(target_vars)
+        pipeline.extract_seasonal_profiles(target_vars)
+        pipeline.engineer_features()
+        pipeline.standardize_features(target_vars)
+        pipeline.train_regime_switching(k_regimes=3)
+        pipeline.train_regime_conditional_vars(target_vars)
 
-    # Generate RS-VAR output (no climate delta)
-    rsvar_output = pipeline.forecast_rsvar_only(
-        target_vars,
-        start_date=FORECAST_START,
-        end_date=FORECAST_END,
-        chunk_years=10
-    )
+        rsvar_output = pipeline.forecast_rsvar_only(
+            target_vars,
+            start_date=FORECAST_START,
+            end_date=FORECAST_END,
+            chunk_years=10
+        )
 
-    # Prepare output DataFrames
-    print("\n" + "="*80)
-    print("SAVING TO EXCEL")
-    print("="*80)
+        print("\n" + "="*80)
+        print("SAVING TO EXCEL")
+        print("="*80)
 
-    # 1. RS-VAR Output sheet
-    rsvar_df = rsvar_output.copy()
-    rsvar_df.insert(0, 'datetime', rsvar_df.index)
-    rsvar_df = rsvar_df.reset_index(drop=True)
+        rsvar_df = rsvar_output.copy()
+        rsvar_df.insert(0, 'datetime', rsvar_df.index)
+        rsvar_df = rsvar_df.reset_index(drop=True)
 
-    # 2. Metadata sheet
-    metadata = pd.DataFrame([
-        ['isd_path', str(isd_path)],
-        ['lat', lat],
-        ['baseline_start', BASELINE_START],
-        ['baseline_end', BASELINE_END],
-        ['forecast_start', FORECAST_START],
-        ['forecast_end', FORECAST_END],
-        ['isd_baseline_temp_mean', pipeline.isd_baseline['temp'].mean()],
-        ['isd_baseline_temp_std', pipeline.isd_baseline['temp'].std()],
-        ['n_hours', len(rsvar_output)],
-        ['target_vars', ', '.join(target_vars)],
-        ['note', 'RS-VAR output without climate delta. Use apply_climate_delta.py to add climate signal.'],
-    ], columns=['parameter', 'value'])
+        metadata = pd.DataFrame([
+            ['isd_path', str(isd_path)],
+            ['lat', lat],
+            ['baseline_start', BASELINE_START],
+            ['baseline_end', BASELINE_END],
+            ['forecast_start', FORECAST_START],
+            ['forecast_end', FORECAST_END],
+            ['isd_baseline_temp_mean', pipeline.isd_baseline['temp'].mean()],
+            ['isd_baseline_temp_std', pipeline.isd_baseline['temp'].std()],
+            ['n_hours', len(rsvar_output)],
+            ['target_vars', ', '.join(target_vars)],
+            ['note', 'RS-VAR output without climate delta. Use apply_climate_delta.py to add climate signal.'],
+        ], columns=['parameter', 'value'])
 
-    # 3. Seasonal Profile sheet
-    profile_data = []
-    for var in target_vars:
-        if var in pipeline.seasonal_profiles:
-            profile = pipeline.seasonal_profiles[var]
-            for (month, hour), value in profile.items():
-                profile_data.append({
-                    'variable': var,
-                    'month': month,
-                    'hour': hour,
-                    'value': value
-                })
-    profile_df = pd.DataFrame(profile_data)
+        profile_data = []
+        for var in target_vars:
+            if var in pipeline.seasonal_profiles:
+                profile = pipeline.seasonal_profiles[var]
+                for (month, hour), value in profile.items():
+                    profile_data.append({
+                        'variable': var,
+                        'month': month,
+                        'hour': hour,
+                        'value': value
+                    })
+        profile_df = pd.DataFrame(profile_data)
 
-    # Save to Excel
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        rsvar_df.to_excel(writer, sheet_name='RSVAR_Output', index=False)
-        metadata.to_excel(writer, sheet_name='Metadata', index=False)
-        profile_df.to_excel(writer, sheet_name='Seasonal_Profile', index=False)
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            rsvar_df.to_excel(writer, sheet_name='RSVAR_Output', index=False)
+            metadata.to_excel(writer, sheet_name='Metadata', index=False)
+            profile_df.to_excel(writer, sheet_name='Seasonal_Profile', index=False)
 
-    print(f"\n✓ Saved to: {output_path}")
-    print(f"  Sheets:")
-    print(f"    - RSVAR_Output: {len(rsvar_df):,} rows")
-    print(f"    - Metadata: Pipeline configuration")
-    print(f"    - Seasonal_Profile: Month-hour climatology")
+        print(f"\n✓ Saved to: {output_path}")
+        print(f"  Sheets:")
+        print(f"    - RSVAR_Output: {len(rsvar_df):,} rows")
+        print(f"    - Metadata: Pipeline configuration")
+        print(f"    - Seasonal_Profile: Month-hour climatology")
 
-    # Also save as CSV for convenience
-    csv_path = output_path.with_suffix('.csv')
-    rsvar_df.to_csv(csv_path, index=False)
-    print(f"\n✓ Also saved CSV: {csv_path}")
+        csv_path = output_path.with_suffix('.csv')
+        rsvar_df.to_csv(csv_path, index=False)
+        print(f"\n✓ Also saved CSV: {csv_path}")
 
     return rsvar_output, pipeline
 
