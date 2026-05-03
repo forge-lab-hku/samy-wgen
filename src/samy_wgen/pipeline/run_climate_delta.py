@@ -172,8 +172,10 @@ def _load_isd_baseline_mean(isd_path: Path, baseline_start: int, baseline_end: i
     return np.nan
 
 
-def _print_delta_statistics(delta_stats: dict[str, list]):
+def _print_delta_statistics(delta_stats: dict[str, list], verbose: bool = True):
     """Print climate delta statistics in a consistent format."""
+    if not verbose:
+        return
     print(f"\nClimate delta statistics:")
     for var, values in delta_stats.items():
         if len(values) > 0:
@@ -202,6 +204,8 @@ def _print_temperature_statistics_by_window(
     - RS-VAR warming signal (RSVAR output - baseline)
     - RS-VAR mean temp (final output)
     """
+    if not verbose:
+        return
     time_windows = [
         (2026, 2040),
         (2041, 2060),
@@ -285,12 +289,15 @@ def _print_temperature_statistics_by_window_mixed(
     output_df: pd.DataFrame,
     baseline_start: int,
     baseline_end: int,
-    isd_path: Path = None
+    isd_path: Path = None,
+    verbose: bool = True,
 ):
     """Print temperature statistics for mixed resolution data.
 
     Similar to _print_temperature_statistics_by_window but for mixed daily/monthly data.
     """
+    if not verbose:
+        return
     time_windows = [
         (2026, 2040),
         (2041, 2060),
@@ -303,7 +310,7 @@ def _print_temperature_statistics_by_window_mixed(
     print("="*80)
 
     # Load ISD baseline using same method as RS-VAR pipeline for consistency
-    isd_baseline_mean = _load_isd_baseline_mean(isd_path, baseline_start, baseline_end)
+    isd_baseline_mean = _load_isd_baseline_mean(isd_path, baseline_start, baseline_end, verbose=verbose)
 
     print(f"\nISD Baseline ({baseline_start}-{baseline_end}) Mean Temperature: {isd_baseline_mean:.2f}°C")
 
@@ -387,11 +394,12 @@ def apply_physics_qa(forecast_df: pd.DataFrame, lat: float, preserve: str = "GHI
     )
 
 
-def load_rsvar_output(rsvar_path: Path):
+def load_rsvar_output(rsvar_path: Path, verbose: bool = True):
     """Load RS-VAR output from Excel or CSV."""
     rsvar_path = Path(rsvar_path)
 
-    print(f"[DEBUG] Loading RS-VAR from: {rsvar_path}")
+    if verbose:
+        print(f"[DEBUG] Loading RS-VAR from: {rsvar_path}")
 
     if rsvar_path.suffix == '.xlsx':
         # Try Excel first, fall back to CSV if openpyxl issues
@@ -406,7 +414,8 @@ def load_rsvar_output(rsvar_path: Path):
             # Any excel engine/import/read error: try CSV fallback
             csv_path = rsvar_path.with_suffix('.csv')
             if csv_path.exists():
-                print(f"  (Using CSV fallback for RS-VAR)")
+                if verbose:
+                    print(f"  (Using CSV fallback for RS-VAR)")
                 rsvar_df = pd.read_csv(csv_path)
                 metadata = {}
             else:
@@ -422,7 +431,7 @@ def load_rsvar_output(rsvar_path: Path):
     return rsvar_df, metadata
 
 
-def load_and_merge_cordex_city_variant(variant_root: Path, city: str) -> tuple[pd.DataFrame, dict]:
+def load_and_merge_cordex_city_variant(variant_root: Path, city: str, verbose: bool = True) -> tuple[pd.DataFrame, dict]:
     """Load and concat historical+rcp85 for a given city under a given variant_root.
 
     Expects:
@@ -435,8 +444,9 @@ def load_and_merge_cordex_city_variant(variant_root: Path, city: str) -> tuple[p
     hist_path = city_dir / "historical.csv"
     rcp_path = city_dir / "rcp85.csv"
 
-    print(f"[DEBUG] Loading CORDEX historical from: {hist_path}")
-    print(f"[DEBUG] Loading CORDEX rcp85 from: {rcp_path}")
+    if verbose:
+        print(f"[DEBUG] Loading CORDEX historical from: {hist_path}")
+        print(f"[DEBUG] Loading CORDEX rcp85 from: {rcp_path}")
 
     if not hist_path.exists():
         raise FileNotFoundError(str(hist_path))
@@ -464,9 +474,9 @@ def load_and_merge_cordex_city_variant(variant_root: Path, city: str) -> tuple[p
     return merged, meta
 
 
-def load_cordex_cmip5_projection(base_path: Path, city: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+def load_cordex_cmip5_projection(base_path: Path, city: str, verbose: bool = True) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Load CORDEX-CMIP5 daily data and derive a monthly view from it."""
-    daily_df, meta = load_and_merge_cordex_city_variant(base_path, city)
+    daily_df, meta = load_and_merge_cordex_city_variant(base_path, city, verbose=verbose)
     monthly_df = _cordex_monthly_view(daily_df)
     meta = {
         **meta,
@@ -1192,7 +1202,8 @@ def apply_mixed_resolution_climate_delta(
     baseline_start: int = BASELINE_START,
     baseline_end: int = BASELINE_END,
     isd_path: Path = None,
-    debug: bool = False
+    debug: bool = False,
+    verbose: bool = True,
 ):
     """Apply climate delta from mixed daily/monthly resolution data to RS-VAR output.
 
@@ -1214,113 +1225,91 @@ def apply_mixed_resolution_climate_delta(
         (output_df, delta_stats)
     """
     model_name = f"{gcm}_{rcm}" if rcm else gcm
-    print("\n" + "="*80)
-    print(f"APPLYING MIXED RESOLUTION CLIMATE DELTA: {model_name}")
-    print("="*80)
+    with _stdout_context(verbose):
+        print("\n" + "="*80)
+        print(f"APPLYING MIXED RESOLUTION CLIMATE DELTA: {model_name}")
+        print("="*80)
 
-    output_df = rsvar_df.copy()
+        output_df = rsvar_df.copy()
 
-    # Make copies and apply unit conversions
-    daily_df = daily_df.copy()
-    monthly_df = monthly_df.copy()
+        daily_df = daily_df.copy()
+        monthly_df = monthly_df.copy()
 
-    daily_df = _apply_unit_conversions(daily_df)
-    monthly_df = _apply_unit_conversions(monthly_df)
+        daily_df = _apply_unit_conversions(daily_df)
+        monthly_df = _apply_unit_conversions(monthly_df)
 
+        if debug:
+            print("\n[DEBUG] RS-VAR columns:")
+            print("  ", sorted(map(str, output_df.columns.tolist())))
+            print("[DEBUG] Baseline keys:")
+            print("  ", sorted(map(str, baseline.keys())))
 
-    if debug:
-        print("\n[DEBUG] RS-VAR columns:")
-        print("  ", sorted(map(str, output_df.columns.tolist())))
-        print("[DEBUG] Baseline keys:")
-        print("  ", sorted(map(str, baseline.keys())))
+        daily_view = _cordex_daily_view(daily_df)
+        output_df['_date'] = output_df.index.normalize()
+        output_df['_doy'] = output_df.index.dayofyear
+        output_df['_month'] = output_df.index.month
 
-    # Prepare daily climate data (one row per day)
-    daily_view = _cordex_daily_view(daily_df)
+        print(f"\nApplying climate deltas (vectorized)...")
 
-    # Create date column for output
-    output_df['_date'] = output_df.index.normalize()
-    output_df['_doy'] = output_df.index.dayofyear
-    output_df['_month'] = output_df.index.month
+        delta_stats = {var: [] for var in VAR_TO_CORDEX.keys()}
 
-    print(f"\nApplying climate deltas (vectorized)...")
-
-    # Track delta statistics
-    delta_stats = {var: [] for var in VAR_TO_CORDEX.keys()}
-
-    for var, cordex_var in VAR_TO_CORDEX.items():
-        if var not in output_df.columns:
-            continue
-        if cordex_var not in baseline:
-            continue
-
-        baseline_info = baseline[cordex_var]
-        resolution = baseline_info.get('resolution', 'daily')
-        transform = baseline_info['transform']
-
-        if resolution == 'daily':
-            if cordex_var not in daily_view.columns:
+        for var, cordex_var in VAR_TO_CORDEX.items():
+            if var not in output_df.columns:
+                continue
+            if cordex_var not in baseline:
                 continue
 
-            # Get future values aligned by date
-            future_vals = daily_view[cordex_var].reindex(output_df['_date'])
+            baseline_info = baseline[cordex_var]
+            resolution = baseline_info.get('resolution', 'daily')
+            transform = baseline_info['transform']
 
-            # Get baseline values by DOY
-            baseline_doy = baseline_info['doy']
-            baseline_vals = output_df['_doy'].map(lambda d: baseline_doy.get(d, baseline_info['overall']))
+            if resolution == 'daily':
+                if cordex_var not in daily_view.columns:
+                    continue
 
-        elif resolution == 'monthly':
-            if monthly_df.empty or cordex_var not in monthly_df.columns:
+                future_vals = daily_view[cordex_var].reindex(output_df['_date'])
+                baseline_doy = baseline_info['doy']
+                baseline_vals = output_df['_doy'].map(lambda d: baseline_doy.get(d, baseline_info['overall']))
+
+            elif resolution == 'monthly':
+                if monthly_df.empty or cordex_var not in monthly_df.columns:
+                    continue
+
+                monthly_df_copy = monthly_df.copy()
+                monthly_df_copy['_ym'] = monthly_df_copy.index.to_period('M')
+                monthly_lookup = monthly_df_copy.groupby('_ym')[cordex_var].first()
+
+                output_ym = output_df.index.to_period('M')
+                future_vals = output_ym.map(lambda ym: monthly_lookup.get(ym, np.nan))
+                month_clim = baseline_info['month_clim']
+                baseline_vals = output_df['_month'].map(lambda m: month_clim.get(m, baseline_info['overall']))
+
+            else:
                 continue
 
-            # For monthly data, create a lookup by (year, month)
-            monthly_df_copy = monthly_df.copy()
-            monthly_df_copy['_ym'] = monthly_df_copy.index.to_period('M')
-            monthly_lookup = monthly_df_copy.groupby('_ym')[cordex_var].first()
+            future_vals = pd.to_numeric(future_vals, errors='coerce').values
+            baseline_vals = pd.to_numeric(baseline_vals, errors='coerce').values
 
-            # Get future values by year-month
-            output_ym = output_df.index.to_period('M')
-            future_vals = output_ym.map(lambda ym: monthly_lookup.get(ym, np.nan))
+            if transform == 'additive':
+                delta = future_vals - baseline_vals
+                valid_mask = ~np.isnan(delta)
+                output_df.loc[valid_mask, var] = output_df.loc[valid_mask, var].values + delta[valid_mask]
+                delta_stats[var] = delta[valid_mask].tolist()
+            else:
+                ratio = np.where(baseline_vals > 0, future_vals / baseline_vals, 1.0)
+                valid_mask = ~np.isnan(ratio)
+                output_df.loc[valid_mask, var] = output_df.loc[valid_mask, var].values * ratio[valid_mask]
+                delta_stats[var] = ratio[valid_mask].tolist()
 
-            # Get baseline values by month
-            month_clim = baseline_info['month_clim']
-            baseline_vals = output_df['_month'].map(lambda m: month_clim.get(m, baseline_info['overall']))
+        output_df.drop(['_date', '_doy', '_month'], axis=1, inplace=True)
 
-        else:
-            continue
-
-        # Convert to numpy arrays
-        future_vals = pd.to_numeric(future_vals, errors='coerce').values
-        baseline_vals = pd.to_numeric(baseline_vals, errors='coerce').values
-
-        # Compute delta/ratio
-        if transform == 'additive':
-            delta = future_vals - baseline_vals
-            # Apply delta
-            valid_mask = ~np.isnan(delta)
-            output_df.loc[valid_mask, var] = output_df.loc[valid_mask, var].values + delta[valid_mask]
-            delta_stats[var] = delta[valid_mask].tolist()
-        else:  # multiplicative
-            ratio = np.where(baseline_vals > 0, future_vals / baseline_vals, 1.0)
-            # Apply ratio
-            valid_mask = ~np.isnan(ratio)
-            output_df.loc[valid_mask, var] = output_df.loc[valid_mask, var].values * ratio[valid_mask]
-            delta_stats[var] = ratio[valid_mask].tolist()
-
-    # Clean up temp columns
-    output_df.drop(['_date', '_doy', '_month'], axis=1, inplace=True)
-
-    # Apply legacy end-of-pipeline physical QA (humidity bounds, dewpoint, solar closure)
-    print(f"Applying physics QA...")
-    output_df = apply_physics_qa(output_df, lat, preserve="GHI")
-
-    # Print delta statistics
-    _print_delta_statistics(delta_stats)
-
-    # Print temperature statistics by time window
-    _print_temperature_statistics_by_window_mixed(
-        rsvar_df, daily_df, monthly_df, baseline, output_df,
-        baseline_start, baseline_end, isd_path
-    )
+        print(f"Applying physics QA...")
+        output_df = apply_physics_qa(output_df, lat, preserve="GHI")
+        _print_delta_statistics(delta_stats, verbose=verbose)
+        _print_temperature_statistics_by_window_mixed(
+            rsvar_df, daily_df, monthly_df, baseline, output_df,
+            baseline_start, baseline_end, isd_path, verbose=verbose
+        )
 
     return output_df, delta_stats
 
@@ -1331,6 +1320,7 @@ def save_output(
     delta_stats: dict[str, list],
     output_path: Path,
     preview_first_year: bool = False,
+    verbose: bool = True,
 ):
     """Save output to Excel (if possible) + CSV."""
     output_path = Path(output_path)
@@ -1389,14 +1379,17 @@ def save_output(
             output_out.to_excel(writer, sheet_name='Output', index=False)
             delta_df.to_excel(writer, sheet_name=delta_sheet_name, index=False)
             metadata.to_excel(writer, sheet_name='Metadata', index=False)
-        print(f"  ✓ Saved Excel: {output_path}")
+        if verbose:
+            print(f"  ✓ Saved Excel: {output_path}")
     except Exception:
-        print(f"  (Skipping Excel write; saving CSV only)")
+        if verbose:
+            print(f"  (Skipping Excel write; saving CSV only)")
 
     # Also save CSV
     csv_path = output_path.with_suffix('.csv')
     output_out.to_csv(csv_path, index=False)
-    print(f"  ✓ Saved CSV:   {csv_path}")
+    if verbose:
+        print(f"  ✓ Saved CSV:   {csv_path}")
 
     # Optional: save first-year preview
     if preview_first_year:
@@ -1405,7 +1398,8 @@ def save_output(
         first_year_df = output_out[output_out['datetime'].dt.year == first_year]
         preview_path = output_path.with_name(f"{output_path.stem}_{first_year}.csv")
         first_year_df.to_csv(preview_path, index=False)
-        print(f"  ✓ Saved first-year preview: {preview_path}")
+        if verbose:
+            print(f"  ✓ Saved first-year preview: {preview_path}")
 
 
 def main():

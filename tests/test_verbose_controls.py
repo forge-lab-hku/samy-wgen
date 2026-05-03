@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from samy_wgen.pipeline.run_climate_delta import apply_climate_delta
+from samy_wgen.pipeline.run_climate_delta import apply_climate_delta, apply_mixed_resolution_climate_delta
 from samy_wgen.pipeline.run_ensemble import EnsemblePipeline
 
 
@@ -68,3 +68,44 @@ def test_apply_climate_delta_suppresses_stdout_when_verbose_false(monkeypatch, c
     assert captured.out == ""
     np.testing.assert_allclose(output_df["temp"].to_numpy(), np.array([21.5, 22.5]))
     assert delta_stats["temp"] == [1.5]
+
+
+def test_apply_mixed_resolution_climate_delta_suppresses_stdout_when_verbose_false(monkeypatch, capsys):
+    rsvar_df = pd.DataFrame(
+        {"temp": [20.0, 21.0]},
+        index=pd.to_datetime(["2030-01-01 00:00:00", "2030-01-01 01:00:00"]),
+    )
+    daily_df = pd.DataFrame(
+        {"tas_C": [11.5]},
+        index=pd.to_datetime(["2030-01-01"]),
+    )
+    monthly_df = pd.DataFrame()
+    baseline = {
+        "tas_C": {
+            "overall": 10.0,
+            "doy": pd.Series({1: 10.0}),
+            "transform": "additive",
+            "resolution": "daily",
+        }
+    }
+
+    monkeypatch.setattr(
+        "samy_wgen.pipeline.run_climate_delta.apply_physics_qa",
+        lambda df, lat, preserve="GHI": df,
+    )
+
+    output_df, delta_stats = apply_mixed_resolution_climate_delta(
+        rsvar_df=rsvar_df,
+        daily_df=daily_df,
+        monthly_df=monthly_df,
+        baseline=baseline,
+        gcm="test-model",
+        rcm=None,
+        lat=25.0,
+        verbose=False,
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    np.testing.assert_allclose(output_df["temp"].to_numpy(), np.array([21.5, 22.5]))
+    assert delta_stats["temp"] == [1.5, 1.5]
