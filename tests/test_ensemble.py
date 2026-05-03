@@ -188,3 +188,93 @@ def test_soft_residual_sampling_respects_weight_mixture():
         weights=np.array([0.0, 1.0], dtype=float),
     )
     assert np.isin(eps_other[:, 0], [10.0, 11.0, 13.0, 14.0]).all()
+
+
+def test_regime_paths_use_true_labels_for_noncontiguous_regimes():
+    idx = pd.date_range("2000-01-01 00:00:00", periods=4, freq="h")
+    regime_model = SimpleNamespace(
+        coefs=np.zeros((1, 1, 1), dtype=float),
+        intercept=np.zeros(1, dtype=float),
+        model=SimpleNamespace(endog_names=["temp_deviation"]),
+    )
+    fitted = SimpleNamespace(
+        regime_models={0: regime_model, 2: regime_model},
+        regime_residuals={
+            0: pd.DataFrame([[0.0], [0.0]], index=idx[:2], columns=["temp_deviation"]),
+            2: pd.DataFrame([[0.0], [0.0]], index=idx[2:], columns=["temp_deviation"]),
+        },
+        ms_result=SimpleNamespace(
+            regime_transition=np.array(
+                [
+                    [0.70, 0.20, 0.10],
+                    [0.15, 0.70, 0.15],
+                    [0.10, 0.25, 0.65],
+                ],
+                dtype=float,
+            )
+        ),
+        regime_probs=np.array([[0.80], [0.05], [0.15]], dtype=float),
+        isd_baseline=pd.DataFrame({"temp": [0.0] * 24}, index=pd.date_range("1999-12-31 00:00:00", periods=24, freq="h")),
+        seasonal_profiles={"temp": {(12, h): 0.0 for h in range(24)}},
+    )
+
+    hard_gen = AnomalyGenerator(
+        fitted_model=fitted,
+        regime_mode="hard",
+        residual_mode="deterministic",
+    )
+    hard_path, hard_probs = hard_gen._get_regime_path(n_days=8, rng=np.random.default_rng(0))
+    assert set(np.unique(hard_path)).issubset({0, 2})
+    hard_weights = hard_gen._day_weights(0, hard_path, hard_probs)
+    assert hard_weights.shape == (2,)
+
+    ens_gen = AnomalyGenerator(
+        fitted_model=fitted,
+        regime_mode="ensemble",
+        residual_mode="deterministic",
+    )
+    ens_path, ens_probs = ens_gen._get_regime_path(n_days=8, rng=np.random.default_rng(1))
+    assert set(np.unique(ens_path)).issubset({0, 2})
+    ens_weights = ens_gen._day_weights(0, ens_path, ens_probs)
+    assert ens_weights.shape == (2,)
+
+
+def test_generator_reconciles_dense_markov_space_to_available_regimes():
+    idx = pd.date_range("2000-01-01 00:00:00", periods=4, freq="h")
+    regime_model = SimpleNamespace(
+        coefs=np.zeros((1, 1, 1), dtype=float),
+        intercept=np.zeros(1, dtype=float),
+        model=SimpleNamespace(endog_names=["temp_deviation"]),
+    )
+    fitted = SimpleNamespace(
+        regime_models={1: regime_model, 3: regime_model},
+        regime_residuals={},
+        ms_result=SimpleNamespace(
+            regime_transition=np.array(
+                [
+                    [0.55, 0.15, 0.20, 0.10],
+                    [0.10, 0.70, 0.10, 0.10],
+                    [0.20, 0.20, 0.40, 0.20],
+                    [0.05, 0.15, 0.20, 0.60],
+                ],
+                dtype=float,
+            )
+        ),
+        regime_probs=np.array([[0.05], [0.70], [0.05], [0.20]], dtype=float),
+        isd_baseline=pd.DataFrame({"temp": [0.0] * 24}, index=pd.date_range("1999-12-31 00:00:00", periods=24, freq="h")),
+        seasonal_profiles={"temp": {(12, h): 0.0 for h in range(24)}},
+    )
+
+    gen = AnomalyGenerator(
+        fitted_model=fitted,
+        regime_mode="ensemble",
+        residual_mode="deterministic",
+    )
+    assert gen._regimes == [1, 3]
+    assert gen._k == 2
+    assert gen._transition.shape == (2, 2)
+    assert gen._last_posterior.shape == (2,)
+
+    path, probs = gen._get_regime_path(n_days=12, rng=np.random.default_rng(0))
+    assert set(np.unique(path)).issubset({1, 3})
+    assert probs.shape == (12, 2)

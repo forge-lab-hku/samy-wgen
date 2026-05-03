@@ -88,9 +88,9 @@ class AnomalyGenerator:
             )
 
         self._regimes = sorted(fitted_model.regime_models.keys())
-        self._k = len(self._regimes)
         self._transition = self._get_transition_matrix()
         self._last_posterior = self._get_last_posterior()
+        self._reconcile_regime_space()
 
         # Pre-extract VAR coefficients and intercepts per regime
         self._coefs = {}    # regime -> (n_vars, n_vars) coefficient matrix (lag-1)
@@ -127,9 +127,55 @@ class AnomalyGenerator:
         probs = np.maximum(probs, 1e-12)
         return probs / probs.sum()
 
+    def _reconcile_regime_space(self) -> None:
+        """
+        Align regime labels with the probability-space dimensions.
+
+        `regime_models` / `regime_residuals` are keyed by the original regime labels
+        (typically integers from the Markov model), while `ms_result.regime_transition`
+        and `regime_probs` always live in dense positional space. If some regimes were
+        dropped during downstream fitting, we must subset the dense matrices to the
+        surviving labels before any sampling happens.
+        """
+        transition = np.asarray(self._transition, dtype=float)
+        posterior = np.asarray(self._last_posterior, dtype=float)
+
+        if transition.ndim != 2 or transition.shape[0] != transition.shape[1]:
+            raise ValueError("regime_transition must be a square 2D matrix")
+        if posterior.ndim != 1:
+            posterior = posterior.reshape(-1)
+
+        valid_size = min(len(posterior), transition.shape[0], transition.shape[1])
+        regime_labels = [int(regime) for regime in self._regimes]
+        keep_labels = [label for label in regime_labels if 0 <= label < valid_size]
+        if not keep_labels:
+            raise RuntimeError(
+                "No overlapping regime labels found between fitted regime_models and "
+                "the Markov transition/posterior dimensions."
+            )
+
+        keep_idx = np.array(keep_labels, dtype=int)
+        transition_sub = transition[np.ix_(keep_idx, keep_idx)]
+        row_sums = transition_sub.sum(axis=1, keepdims=True)
+        transition_sub = np.divide(
+            transition_sub,
+            row_sums,
+            out=np.full_like(transition_sub, 1.0 / max(1, transition_sub.shape[1])),
+            where=row_sums > 0,
+        )
+
+        posterior_sub = np.maximum(posterior[keep_idx], 1e-12)
+        posterior_sub = posterior_sub / posterior_sub.sum()
+
+        self._regimes = keep_labels
+        self._k = len(self._regimes)
+        self._transition = transition_sub
+        self._last_posterior = posterior_sub
+
     def _build_var_params(self):
         """Extract coefficient matrices and intercepts from fitted VAR results."""
-        for regime_i, result in self.model.regime_models.items():
+        for regime_i in self._regimes:
+            result = self.model.regime_models[regime_i]
             # statsmodels VAR result: coefs shape (n_lags, n_vars, n_vars)
             # intercept shape (n_vars,). Keep statsmodels orientation so
             # A_t = intercept + coefs[0] @ A_{t-1} matches VARResults.forecast().
@@ -141,7 +187,10 @@ class AnomalyGenerator:
 
     def _build_residual_structures(self):
         """Build residual pools and contiguous block candidates from stored residuals."""
-        for regime_i, resid in self.model.regime_residuals.items():
+        for regime_i in self._regimes:
+            resid = self.model.regime_residuals.get(regime_i)
+            if resid is None:
+                continue
             if isinstance(resid, pd.DataFrame):
                 resid_df = resid.copy()
             else:
@@ -200,8 +249,8 @@ class AnomalyGenerator:
         soft_probs = np.empty((n_days, self._k), dtype=float)
 
         current_probs = self._last_posterior.copy()
-        # Sample initial regime
-        current_regime = int(rng.choice(self._k, p=current_probs))
+        # Sample initial regime position, then map to the stored regime label space.
+        current_regime_idx = int(rng.choice(self._k, p=current_probs))
 
         for d in range(n_days):
             # Propagate probability vector
@@ -210,14 +259,14 @@ class AnomalyGenerator:
             current_probs /= current_probs.sum()
             soft_probs[d] = current_probs
 
-            # Sample or assign regime label
+            # Sample or assign a regime position, then convert to the true regime label.
             if self.regime_mode == 'ensemble':
-                current_regime = int(rng.choice(self._k, p=current_probs))
+                current_regime_idx = int(rng.choice(self._k, p=current_probs))
             else:
                 # 'hard': argmax
-                current_regime = int(np.argmax(current_probs))
+                current_regime_idx = int(np.argmax(current_probs))
 
-            sampled_path[d] = current_regime
+            sampled_path[d] = int(self._regimes[current_regime_idx])
 
         return sampled_path, soft_probs
 
@@ -233,7 +282,8 @@ class AnomalyGenerator:
         For 'ensemble': sampled_path drawn from Categorical per step.
         """
         if self.regime_mode == 'soft':
-            # Deterministic probability propagation; sampled path is argmax (unused)
+            # Deterministic probability propagation; sampled path is unused in soft mode,
+            # but keep it in the same regime-label space as other modes.
             soft_probs = np.empty((n_days, self._k), dtype=float)
             current_probs = self._last_posterior.copy()
             for d in range(n_days):
@@ -241,7 +291,10 @@ class AnomalyGenerator:
                 current_probs = np.maximum(current_probs, 1e-12)
                 current_probs /= current_probs.sum()
                 soft_probs[d] = current_probs
-            sampled_path = np.argmax(soft_probs, axis=1).astype(int)
+            sampled_path = np.array(
+                [int(self._regimes[int(idx)]) for idx in np.argmax(soft_probs, axis=1)],
+                dtype=int,
+            )
             return sampled_path, soft_probs
         else:
             return self._propagate_markov(n_days, rng)
