@@ -896,6 +896,44 @@ def _candidate_isd_stations(
     return nearby
 
 
+def get_isd_station_coverage(
+    station_id: str,
+    cache_dir: str = "data/ISD",
+) -> dict[str, object]:
+    """Return metadata-derived year coverage for one ISD station."""
+    if "-" not in station_id:
+        raise ValueError("station_id must be USAF-WBAN (e.g. '722020-12839')")
+
+    usaf, wban = station_id.split("-", 1)
+    usaf = usaf.zfill(6)
+    wban = wban.zfill(5)
+
+    cache_path = Path(cache_dir) / "isd-history.csv"
+    history = _load_isd_history(cache_path)
+    match = history[
+        (history["USAF"].astype(str).str.zfill(6) == usaf)
+        & (history["WBAN"].astype(str).str.zfill(5) == wban)
+    ]
+    if match.empty:
+        raise ValueError(f"ISD station '{usaf}-{wban}' not found in {cache_path}")
+
+    row = match.iloc[0]
+    begin_year = _isd_year(row.get("BEGIN"))
+    end_year = _isd_year(row.get("END"))
+    coverage_years = None
+    if begin_year is not None and end_year is not None:
+        coverage_years = max(int(end_year) - int(begin_year) + 1, 0)
+
+    station_name = str(row.get("STATION NAME", "UNKNOWN")).replace("/", "_").replace(" ", "_")
+    return {
+        "station_id": f"{usaf}-{wban}",
+        "station_name": station_name,
+        "begin_year": begin_year,
+        "end_year": end_year,
+        "coverage_years": coverage_years,
+    }
+
+
 def _nc_bytes_to_point_df(nc_bytes: bytes, lat: float, lon: float) -> pd.DataFrame:
     """Extract a time-series DataFrame at the nearest grid point from NetCDF bytes.
 
@@ -1149,22 +1187,34 @@ def download_isd(
     output_dir: str = "data/ISD",
 ) -> None:
     """Download yearly ISD .gz files for *station_id* (format ``USAF-WBAN``)."""
-    if "-" not in station_id:
-        raise ValueError("station_id must be USAF-WBAN (e.g. '722020-12839')")
+    coverage = get_isd_station_coverage(station_id=station_id, cache_dir=output_dir)
+    station_id = str(coverage["station_id"])
+    station_name = str(coverage["station_name"])
+    begin_year = coverage["begin_year"]
+    end_year = coverage["end_year"]
     usaf, wban = station_id.split("-", 1)
-    usaf = usaf.zfill(6)
-    wban = wban.zfill(5)
 
-    cache_path = Path(output_dir) / "isd-history.csv"
-    history = _load_isd_history(cache_path)
-    match = history[
-        (history["USAF"].astype(str).str.zfill(6) == usaf)
-        & (history["WBAN"].astype(str).str.zfill(5) == wban)
-    ]
-    station_name = (
-        match.iloc[0]["STATION NAME"].replace("/", "_").replace(" ", "_")
-        if not match.empty else "UNKNOWN"
-    )
+    requested_years = sorted(int(year) for year in years)
+    valid_years = requested_years
+    if begin_year is not None and end_year is not None:
+        valid_years = [year for year in requested_years if int(begin_year) <= year <= int(end_year)]
+        skipped_years = [year for year in requested_years if year not in valid_years]
+        if skipped_years:
+            logger.warning(
+                "Requested ISD years outside metadata coverage for %s: %s (coverage=%s-%s)",
+                station_id,
+                skipped_years,
+                begin_year,
+                end_year,
+            )
+        if not valid_years:
+            logger.warning(
+                "No requested ISD years remain for %s after coverage filter (coverage=%s-%s)",
+                station_id,
+                begin_year,
+                end_year,
+            )
+            return
 
     station_dir = Path(output_dir) / city / f"{usaf}-{wban}_{station_name}"
     station_dir.mkdir(parents=True, exist_ok=True)
@@ -1173,11 +1223,11 @@ def download_isd(
     ftp = FTP(ISD_FTP_HOST)
     ftp.login()
     try:
-        with tqdm(sorted(years), desc=f"ISD {city}", unit="yr") as pbar:
+        with tqdm(valid_years, desc=f"ISD {city}", unit="yr") as pbar:
             for year in pbar:
                 pbar.set_postfix(year=year)
                 filename = f"{usaf}-{wban}-{year}.gz"
-                local    = station_dir / filename
+                local = station_dir / filename
                 if local.exists() and local.stat().st_size > 0:
                     logger.debug(f"  {year} already present, skipping")
                     continue
@@ -1194,7 +1244,12 @@ def download_isd(
     finally:
         ftp.quit()
 
-    logger.info(f"ISD download complete ({len(years)} years requested) → {station_dir}")
+    logger.info(
+        "ISD download complete (%s/%s years requested after coverage filter) → %s",
+        len(valid_years),
+        len(requested_years),
+        station_dir,
+    )
 
 
 def download_isd_for_cities(
@@ -1706,6 +1761,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--radius",  type=float, default=150, help="Search radius in km (default: 150)")
     p_list.add_argument("--isd-dir", default="data/ISD", help="Directory to cache isd-history.csv")
 
+    # ── check-station ──────────────────────────────────────────────────────────
+    p_cov = sub.add_parser("check-station", help="Inspect metadata year coverage for one ISD station")
+    p_cov.add_argument("--isd-station", required=True, metavar="USAF-WBAN", help="ISD station id to inspect")
+    p_cov.add_argument("--isd-dir", default="data/ISD", help="Directory containing cached isd-history.csv")
+    p_cov.add_argument(
+        "--years", nargs=2, type=int, metavar=("START", "END"), default=None,
+        help="Optional requested year range to compare with station metadata",
+    )
+
     # ── download ───────────────────────────────────────────────────────────────
     p_dl = sub.add_parser("download", help="Download weather data for one or more cities")
     p_dl.add_argument("--city", required=True, nargs="+", help="ASCII city code(s) from cities_config.csv")
@@ -1852,6 +1916,22 @@ def main() -> None:
     if args.command == "list-stations":
         meta = _city_meta(args.city)
         list_isd_stations(meta["lat"], meta["lon"], args.radius, args.isd_dir)
+        return
+
+    if args.command == "check-station":
+        coverage = get_isd_station_coverage(args.isd_station, cache_dir=args.isd_dir)
+        print(f"Station: {coverage['station_id']}")
+        print(f"Name: {coverage['station_name']}")
+        print(f"Coverage: {coverage['begin_year']}–{coverage['end_year']}")
+        print(f"Coverage years: {coverage['coverage_years']}")
+        if args.years:
+            requested_start, requested_end = args.years
+            overlap_start = max(int(requested_start), int(coverage['begin_year'])) if coverage['begin_year'] is not None else requested_start
+            overlap_end = min(int(requested_end), int(coverage['end_year'])) if coverage['end_year'] is not None else requested_end
+            if overlap_start <= overlap_end:
+                print(f"Requested overlap: {overlap_start}–{overlap_end}")
+            else:
+                print(f"Requested overlap: none within {requested_start}–{requested_end}")
         return
 
     # ── download ───────────────────────────────────────────────────────────────

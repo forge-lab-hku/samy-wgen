@@ -248,6 +248,23 @@ class TestDownloadIsdUnit:
         with pytest.raises(ValueError, match="USAF-WBAN"):
             download_isd("722020", "Miami", [2000], output_dir=str(tmp_path))
 
+    def test_get_isd_station_coverage_returns_begin_end_years(self, tmp_path):
+        from samy_wgen.pipeline.download_data import get_isd_station_coverage
+
+        fake_history = pd.DataFrame({
+            "USAF": ["722020"], "WBAN": ["12839"],
+            "STATION NAME": ["MIAMI INTL AP"], "BEGIN": [19700101], "END": [20241231],
+        })
+
+        with patch("samy_wgen.pipeline.download_data._load_isd_history", return_value=fake_history):
+            coverage = get_isd_station_coverage("722020-12839", cache_dir=str(tmp_path))
+
+        assert coverage["station_id"] == "722020-12839"
+        assert coverage["station_name"] == "MIAMI_INTL_AP"
+        assert coverage["begin_year"] == 1970
+        assert coverage["end_year"] == 2024
+        assert coverage["coverage_years"] == 55
+
     def test_skips_existing_files(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_isd
 
@@ -304,6 +321,34 @@ class TestDownloadIsdUnit:
 
         assert "722020-12839-2001.gz" in downloaded
         assert "722020-12839-2002.gz" in downloaded
+
+    def test_filters_requested_years_to_station_metadata_coverage(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_isd
+
+        fake_history = pd.DataFrame({
+            "USAF": ["722020"], "WBAN": ["12839"],
+            "STATION NAME": ["MIAMI INTL AP"], "BEGIN": [20000101], "END": [20011231],
+        })
+
+        downloaded: list[str] = []
+
+        def fake_retrbinary(cmd: str, callback):
+            filename = cmd.split()[-1]
+            downloaded.append(filename)
+            callback(b"fake gz")
+
+        ftp_mock = MagicMock()
+        ftp_mock.retrbinary.side_effect = fake_retrbinary
+
+        with (
+            patch("samy_wgen.pipeline.download_data._load_isd_history", return_value=fake_history),
+            patch("samy_wgen.pipeline.download_data.FTP", return_value=ftp_mock),
+        ):
+            download_isd(
+                "722020-12839", "Miami", [1999, 2000, 2001, 2002], output_dir=str(tmp_path)
+            )
+
+        assert downloaded == ["722020-12839-2000.gz", "722020-12839-2001.gz"]
 
 
 # ─── download_nsrdb (unit, mocked HTTP) ──────────────────────────────────────
@@ -531,6 +576,13 @@ class TestIsdStationSelection:
             station_id = select_best_isd_station("Miami", radius_km=50.0, cache_dir="data/ISD")
 
         assert station_id == "222222-22222"
+
+    def test_check_station_subcommand(self):
+        parser = self._parser()
+        args = parser.parse_args(["check-station", "--isd-station", "722020-12839"])
+        assert args.command == "check-station"
+        assert args.isd_station == "722020-12839"
+        assert args.years is None
 
     def test_list_models_subcommand(self):
         parser = self._parser()
