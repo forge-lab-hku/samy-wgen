@@ -101,15 +101,15 @@ CORDEX_EXP_YEARS = {
 NSRDB_SOURCES: dict[str, dict] = {
     "goes_aggregated": {
         "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download",
-        "year_range": (1998, 2023),
+        "year_range": (1998, 2024),
     },
     "goes_full_disc": {
         "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-full-disc-v4-0-0-download",
-        "year_range": (2018, 2023),
+        "year_range": (2018, 2024),
     },
     "meteosat": {
         "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-msg-v1-0-0-download",
-        "year_range": (2005, 2022),
+        "year_range": (2017, 2019),
     },
     # Himawari satellite covers East Asia, Southeast Asia, Australasia
     "himawari7": {
@@ -828,9 +828,97 @@ def _resolve_nsrdb_source(city: str) -> list[tuple[str, int, int]]:
             + ", ".join(d for d, keys in CORDEX_TO_NSRDB_SOURCE.items() if keys)
         )
     return [
-        (NSRDB_SOURCES[key]["url"], *NSRDB_SOURCES[key]["year_range"])
+        (
+            NSRDB_SOURCES[key]["url"],
+            NSRDB_SOURCES[key]["year_range"][0],
+            NSRDB_SOURCES[key]["year_range"][1],
+        )
         for key in source_keys
     ]
+
+
+def _extract_years(values: list[object] | None) -> list[int]:
+    years: list[int] = []
+    for value in values or []:
+        if isinstance(value, bool):
+            continue
+        try:
+            year = int(value)
+        except (TypeError, ValueError):
+            continue
+        years.append(year)
+    return sorted(set(years))
+
+
+def _query_nsrdb_available_years(
+    lat: float,
+    lon: float,
+    api_key: str,
+    session=None,
+) -> dict[str, list[int]]:
+    """Query NSRDB Data Query API and return endpoint_url -> available years."""
+    import requests
+
+    session = session or requests.Session()
+    response = session.get(
+        "https://developer.nlr.gov/api/solar/nsrdb_data_query.json",
+        params={"api_key": api_key, "lat": lat, "lon": lon},
+        timeout=120,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    outputs = payload.get("outputs", [])
+
+    years_by_url: dict[str, list[int]] = {}
+    for output in outputs:
+        links = output.get("links", [])
+        available_years = _extract_years(output.get("availableYears"))
+        if not available_years:
+            continue
+        for link in links:
+            link_url = str(link.get("link", ""))
+            if not link_url:
+                continue
+            base_url = link_url.split(".csv", 1)[0]
+            years_by_url[base_url] = available_years
+    return years_by_url
+
+
+def _resolve_nsrdb_sources_with_dynamic_years(
+    city: str,
+    lat: float,
+    lon: float,
+    api_key: str,
+    session=None,
+) -> list[tuple[str, int, int]]:
+    """Resolve NSRDB sources, preferring query-reported years over static fallback ranges."""
+    sources = _resolve_nsrdb_source(city)
+    years_by_url = _query_nsrdb_available_years(lat=lat, lon=lon, api_key=api_key, session=session)
+
+    resolved: list[tuple[str, int, int]] = []
+    for url, min_year, max_year in sources:
+        available_years = years_by_url.get(url, [])
+        if available_years:
+            filtered_years = [year for year in available_years if min_year <= year]
+            if filtered_years:
+                logger.info(
+                    "NSRDB query years for %s via %s: %s-%s",
+                    city,
+                    url.rsplit("/", 1)[-1],
+                    min(filtered_years),
+                    max(filtered_years),
+                )
+                resolved.append((url, min(filtered_years), max(filtered_years)))
+                continue
+        logger.warning(
+            "NSRDB query returned no years for %s via %s; falling back to static range %s-%s",
+            city,
+            url.rsplit("/", 1)[-1],
+            min_year,
+            max_year,
+        )
+        resolved.append((url, min_year, max_year))
+    return resolved
 
 
 def _load_isd_history(cache_path: Path) -> pd.DataFrame:
@@ -1298,18 +1386,27 @@ def download_nsrdb(
     """
     import requests
 
-    lat, lon = _resolve_coords(city, lat, lon)
-    sources = _resolve_nsrdb_source(city)
-    overall_min = min(mn for _, mn, _ in sources)
-    overall_max = max(mx for _, _, mx in sources)
-    if years is None:
-        years = list(range(overall_min, overall_max + 1))
     api_key, email = _load_nsrdb_credentials()
+    lat, lon = _resolve_coords(city, lat, lon)
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     city_lower = city.lower().replace(" ", "_")
-    valid_years = [y for y in sorted(years) if overall_min <= y <= overall_max]
+    session = requests.Session()
+    sources = _resolve_nsrdb_sources_with_dynamic_years(
+        city=city,
+        lat=lat,
+        lon=lon,
+        api_key=api_key,
+        session=session,
+    )
+    available_years = sorted({year for _, mn, mx in sources for year in range(mn, mx + 1)})
+    if years is None:
+        years = available_years
+    overall_min = min(available_years) if available_years else None
+    overall_max = max(available_years) if available_years else None
+    logger.info(f"NSRDB available years for {city}: {overall_min}–{overall_max}")
+    valid_years = [y for y in sorted(years) if y in set(available_years)]
     if not valid_years:
         logger.error(
             f"No valid NSRDB years for '{city}' in the requested range. "
@@ -1324,7 +1421,6 @@ def download_nsrdb(
         return None
 
     all_dfs: list[pd.DataFrame] = []
-    session = requests.Session()
     for i, year in enumerate(tqdm(valid_years, desc=f"NSRDB {city}", unit="yr")):
         if i > 0:
             time.sleep(2)  # respect NREL rate limit

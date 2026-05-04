@@ -384,6 +384,10 @@ class TestDownloadNsrdbUnit:
 
         with (
             patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
+            patch(
+                "samy_wgen.pipeline.download_data._resolve_nsrdb_sources_with_dynamic_years",
+                return_value=[("https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download", 1998, 2024)],
+            ),
             patch("requests.Session", return_value=mock_session),
         ):
             download_nsrdb(
@@ -396,18 +400,82 @@ class TestDownloadNsrdbUnit:
         assert "GHI" in df.columns
 
     def test_filters_years_outside_coverage(self, tmp_path, monkeypatch):
-        """Years outside 1998–2024 are silently skipped."""
+        """Years outside query-reported coverage are silently skipped."""
         from samy_wgen.pipeline.download_data import download_nsrdb
 
         with (
             patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
+            patch(
+                "samy_wgen.pipeline.download_data._resolve_nsrdb_sources_with_dynamic_years",
+                return_value=[("https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download", 1998, 2024)],
+            ),
             patch("requests.Session") as mock_session,
         ):
             download_nsrdb(
                 "Miami", 25.76, -80.19, [1980, 2030],  # both out of range
                 output_dir=str(tmp_path),
             )
-        mock_session.assert_not_called()
+        mock_session.return_value.get.assert_not_called()
+
+    def test_dynamic_year_query_updates_open_ended_goes_range(self):
+        from samy_wgen.pipeline.download_data import _resolve_nsrdb_sources_with_dynamic_years
+
+        payload = {
+            "outputs": [
+                {
+                    "availableYears": [1998, 1999, 2023, 2024, "tmy"],
+                    "links": [
+                        {
+                            "year": 2024,
+                            "interval": 30,
+                            "link": "https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download.csv?names=2024",
+                        }
+                    ],
+                }
+            ]
+        }
+        session = MagicMock()
+        session.get.return_value.raise_for_status = MagicMock()
+        session.get.return_value.json.return_value = payload
+
+        sources = _resolve_nsrdb_sources_with_dynamic_years(
+            city="Miami",
+            lat=25.76,
+            lon=-80.19,
+            api_key="test_key",
+            session=session,
+        )
+
+        assert sources == [
+            ("https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download", 1998, 2024)
+        ]
+
+    def test_dynamic_year_query_falls_back_to_static_closed_range_when_query_misses_source(self):
+        from samy_wgen.pipeline.download_data import _resolve_nsrdb_sources_with_dynamic_years
+
+        session = MagicMock()
+        session.get.return_value.raise_for_status = MagicMock()
+        session.get.return_value.json.return_value = {"outputs": []}
+
+        with patch(
+            "samy_wgen.pipeline.download_data._resolve_nsrdb_source",
+            return_value=[
+                ("https://developer.nlr.gov/api/nsrdb/v2/solar/himawari7-download", 2011, 2015),
+                ("https://developer.nlr.gov/api/nsrdb/v2/solar/himawari-download", 2016, 2020),
+            ],
+        ):
+            sources = _resolve_nsrdb_sources_with_dynamic_years(
+                city="AnyCity",
+                lat=35.68,
+                lon=139.76,
+                api_key="test_key",
+                session=session,
+            )
+
+        assert sources == [
+            ("https://developer.nlr.gov/api/nsrdb/v2/solar/himawari7-download", 2011, 2015),
+            ("https://developer.nlr.gov/api/nsrdb/v2/solar/himawari-download", 2016, 2020),
+        ]
 
     def test_retries_transient_failure_then_succeeds(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_nsrdb
@@ -421,6 +489,10 @@ class TestDownloadNsrdbUnit:
 
         with (
             patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
+            patch(
+                "samy_wgen.pipeline.download_data._resolve_nsrdb_sources_with_dynamic_years",
+                return_value=[("https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download", 1998, 2024)],
+            ),
             patch("requests.Session", return_value=session),
             patch("time.sleep"),
         ):
@@ -440,6 +512,10 @@ class TestDownloadNsrdbUnit:
 
         with (
             patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
+            patch(
+                "samy_wgen.pipeline.download_data._resolve_nsrdb_sources_with_dynamic_years",
+                return_value=[("https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download", 1998, 2024)],
+            ),
             patch("requests.Session", return_value=session),
             patch("time.sleep"),
         ):
