@@ -518,15 +518,36 @@ class ForecastTo2100V5:
                 print(f"Exogenous vars: {available}")
 
         try:
-            model = MarkovAutoregression(
-                endog,
-                k_regimes=k_regimes,
-                order=1,
-                exog=exog,
-                switching_variance=True
-            )
+            fit_method = 'nm'
 
-            result = model.fit(method='nm', maxiter=1000, disp=False)
+            def _build_model():
+                return MarkovAutoregression(
+                    endog,
+                    k_regimes=k_regimes,
+                    order=1,
+                    exog=exog,
+                    switching_variance=True
+                )
+
+            def _posterior_is_finite(fitted_result) -> bool:
+                probs = fitted_result.smoothed_marginal_probabilities
+                values = probs.to_numpy(dtype=float) if hasattr(probs, "to_numpy") else np.asarray(probs, dtype=float)
+                return bool(np.isfinite(values).all())
+
+            model = _build_model()
+            result = model.fit(method=fit_method, maxiter=1000, disp=False)
+            if (
+                not np.isfinite(result.aic)
+                or not np.isfinite(result.llf)
+                or not _posterior_is_finite(result)
+            ):
+                print(
+                    "  WARNING: non-finite regime fit detected "
+                    f"(method={fit_method}, aic={result.aic}, llf={result.llf}); "
+                    "retrying with multi-start search_reps=10"
+                )
+                model = _build_model()
+                result = model.fit(method=fit_method, maxiter=1000, disp=False, search_reps=10)
             print(f"✓ Markov-switching fitted - AIC: {result.aic:.2f}")
 
             regime_probs_daily = result.smoothed_marginal_probabilities
