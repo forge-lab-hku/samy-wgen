@@ -580,11 +580,19 @@ class ForecastTo2100V5:
         print("="*80)
 
         print("Training VAR on deviations from baseline seasonal profile...")
+        min_regime_samples = 100
 
         for regime_i in range(k_regimes):
             print(f"\n--- Regime {regime_i} ---")
 
             mask = self.regime_probs[regime_i] > 0.5
+            if mask.sum() < min_regime_samples:
+                print(
+                    "  Soft regime assignment yielded too few samples; "
+                    "falling back to argmax hard assignment"
+                )
+                hard_assignments = np.argmax(self.regime_probs, axis=0)
+                mask = hard_assignments == regime_i
             regime_indices = self.isd_training.index[mask]
 
             regime_data = self.isd_training.loc[regime_indices, target_vars].copy()
@@ -607,14 +615,19 @@ class ForecastTo2100V5:
                 regime_data[f'{var}_deviation'] = regime_data[var] - seasonal_values
 
             deviation_vars = [f'{v}_deviation' for v in target_vars if f'{v}_deviation' in regime_data.columns]
+            clean_regime_data = regime_data[deviation_vars].replace([np.inf, -np.inf], np.nan).dropna()
 
-            if len(deviation_vars) == 0 or len(regime_data) < 100:
+            if len(deviation_vars) == 0 or len(clean_regime_data) < min_regime_samples:
                 print(f"Skipping (insufficient data)")
                 continue
 
             try:
-                model = VAR(regime_data[deviation_vars])
-                result = model.fit(maxlags=1, ic='aic')
+                model = VAR(clean_regime_data)
+                try:
+                    result = model.fit(maxlags=1, ic='aic')
+                except Exception as fit_err:
+                    print(f"  AIC lag selection failed: {fit_err}; retrying with fixed lag=1")
+                    result = model.fit(1)
                 print(f"✓ VAR(1) fitted on deviations - {len(regime_data):,} obs, AIC: {result.aic:.2f}")
 
                 self.regime_models[regime_i] = result
