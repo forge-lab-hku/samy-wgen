@@ -120,6 +120,34 @@ NSRDB_SOURCES: dict[str, dict] = {
         "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/himawari-download",
         "year_range": (2016, 2020),
     },
+    "suny_india": {
+        "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/suny-india-download",
+        "year_range": (2000, 2014),
+    },
+}
+
+NSRDB_GROUPS: dict[str, tuple[str, ...]] = {
+    "goes_aggregated": ("goes_aggregated",),
+    "goes_full_disc": ("goes_full_disc",),
+    "meteosat": ("meteosat",),
+    "himawari_pair": ("himawari7", "himawari8"),
+    "suny_india": ("suny_india",),
+}
+
+NSRDB_GROUP_PRIORITY = [
+    "goes_aggregated",
+    "suny_india",
+    "himawari_pair",
+    "goes_full_disc",
+    "meteosat",
+]
+
+NSRDB_GROUP_LABELS = {
+    "goes_aggregated": "goes_aggregated",
+    "goes_full_disc": "goes_full_disc",
+    "meteosat": "meteosat",
+    "himawari_pair": "himawari7 + himawari8",
+    "suny_india": "suny_india",
 }
 
 # CORDEX domain → ordered list of NSRDB source keys covering that region.
@@ -133,6 +161,10 @@ CORDEX_TO_NSRDB_SOURCE: dict[str, list[str]] = {
     "EAS-22": ["himawari7", "himawari8"],
     "SEA-22": ["himawari7", "himawari8"],
     "AUS-22": ["himawari7", "himawari8"],
+}
+
+NSRDB_URL_TO_SOURCE_KEY = {
+    source["url"]: key for key, source in NSRDB_SOURCES.items()
 }
 
 NSRDB_ATTRS = [
@@ -737,6 +769,7 @@ def _city_meta(city: str) -> dict:
         "lat": r.latitude,
         "lon": r.longitude,
         "cordex_domain": r.cordex_domain,
+        "country_iso2": r.country_iso2,
     }
 
 
@@ -819,6 +852,17 @@ def _resolve_nsrdb_source(city: str) -> list[tuple[str, int, int]]:
     Raises ValueError when the city's region has no NSRDB coverage.
     """
     meta = _city_meta(city)
+    if meta["country_iso2"] == "IN":
+        source_keys = ["suny_india"]
+        return [
+            (
+                NSRDB_SOURCES[key]["url"],
+                NSRDB_SOURCES[key]["year_range"][0],
+                NSRDB_SOURCES[key]["year_range"][1],
+            )
+            for key in source_keys
+        ]
+
     cordex_domain = meta["cordex_domain"]
     source_keys = CORDEX_TO_NSRDB_SOURCE.get(cordex_domain, [])
     if not source_keys:
@@ -884,6 +928,195 @@ def _query_nsrdb_available_years(
     return years_by_url
 
 
+def _nsrdb_years_to_ranges(years: list[int]) -> str:
+    if not years:
+        return "none"
+    ordered = sorted(set(int(year) for year in years))
+    ranges: list[str] = []
+    start = prev = ordered[0]
+    for year in ordered[1:]:
+        if year == prev + 1:
+            prev = year
+            continue
+        ranges.append(f"{start}-{prev}" if start != prev else str(start))
+        start = prev = year
+    ranges.append(f"{start}-{prev}" if start != prev else str(start))
+    return ", ".join(ranges)
+
+
+def _nsrdb_group_sort_key(group: dict) -> tuple[int, int, int]:
+    years = group["years"]
+    start_year = min(years) if years else 9999
+    priority = len(NSRDB_GROUP_PRIORITY) - NSRDB_GROUP_PRIORITY.index(group["group_key"])
+    return (len(years), -start_year, priority)
+
+
+def _nsrdb_source_key_for_url(url: str) -> str | None:
+    return NSRDB_URL_TO_SOURCE_KEY.get(url)
+
+
+def _nsrdb_group_key_for_source(source_key: str) -> str:
+    if source_key in {"himawari7", "himawari8"}:
+        return "himawari_pair"
+    return source_key
+
+
+def _build_nsrdb_groups_from_source_years(source_years: dict[str, list[int]]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    for source_key, years in source_years.items():
+        if not years:
+            continue
+        group_key = _nsrdb_group_key_for_source(source_key)
+        payload = grouped.setdefault(
+            group_key,
+            {
+                "group_key": group_key,
+                "label": NSRDB_GROUP_LABELS[group_key],
+                "source_keys": [],
+                "years": set(),
+            },
+        )
+        payload["source_keys"].append(source_key)
+        payload["years"].update(int(year) for year in years)
+
+    groups = []
+    for payload in grouped.values():
+        years = sorted(payload["years"])
+        groups.append(
+            {
+                "group_key": payload["group_key"],
+                "label": payload["label"],
+                "source_keys": sorted(payload["source_keys"]),
+                "years": years,
+                "year_ranges": _nsrdb_years_to_ranges(years),
+                "coverage_years": len(years),
+            }
+        )
+    return sorted(groups, key=_nsrdb_group_sort_key, reverse=True)
+
+
+def _build_nsrdb_selected_sources(group: dict, source_years: dict[str, list[int]]) -> list[tuple[str, int, int]]:
+    selected: list[tuple[str, int, int]] = []
+    for source_key in NSRDB_GROUPS[group["group_key"]]:
+        years = sorted(set(int(year) for year in source_years.get(source_key, [])))
+        if not years:
+            continue
+        selected.append((NSRDB_SOURCES[source_key]["url"], min(years), max(years)))
+    return selected
+
+
+def _get_nsrdb_static_source_years(city: str) -> dict[str, list[int]]:
+    static_sources = _resolve_nsrdb_source(city)
+    source_years: dict[str, list[int]] = {}
+    for url, min_year, max_year in static_sources:
+        source_key = _nsrdb_source_key_for_url(url)
+        if source_key is None:
+            continue
+        source_years[source_key] = list(range(min_year, max_year + 1))
+    return source_years
+
+
+def _resolve_nsrdb_source_selection(
+    city: str,
+    lat: float,
+    lon: float,
+    api_key: str,
+    session=None,
+) -> dict[str, object]:
+    query_success = True
+    fallback_used = False
+    fallback_reason = ""
+    query_error = None
+
+    try:
+        raw_years_by_url = _query_nsrdb_available_years(lat=lat, lon=lon, api_key=api_key, session=session)
+    except Exception as exc:
+        raw_years_by_url = {}
+        query_success = False
+        fallback_used = True
+        fallback_reason = "query failed"
+        query_error = str(exc)
+
+    raw_discovered_sources = []
+    source_years: dict[str, list[int]] = {}
+    for url, years in sorted(raw_years_by_url.items()):
+        source_key = _nsrdb_source_key_for_url(url)
+        supported = source_key is not None
+        ordered_years = sorted(set(int(year) for year in years))
+        raw_discovered_sources.append(
+            {
+                "url": url,
+                "source_key": source_key,
+                "supported": supported,
+                "years": ordered_years,
+                "year_ranges": _nsrdb_years_to_ranges(ordered_years),
+            }
+        )
+        if supported and source_key is not None:
+            source_years[source_key] = ordered_years
+
+    if not source_years:
+        fallback_used = True
+        if not fallback_reason:
+            fallback_reason = "query returned no supported sources"
+        source_years = _get_nsrdb_static_source_years(city)
+
+    candidate_groups = _build_nsrdb_groups_from_source_years(source_years)
+    if not candidate_groups:
+        raise ValueError(f"No supported NSRDB sources available for city '{city}'.")
+
+    selected_group = candidate_groups[0]
+    selected_sources = _build_nsrdb_selected_sources(selected_group, source_years)
+    return {
+        "query_success": query_success,
+        "query_error": query_error,
+        "fallback_used": fallback_used,
+        "fallback_reason": fallback_reason,
+        "raw_discovered_sources": raw_discovered_sources,
+        "candidate_groups": candidate_groups,
+        "selected_group": selected_group,
+        "selected_sources": selected_sources,
+    }
+
+
+def _print_nsrdb_selection_summary(
+    city: str,
+    lat: float,
+    lon: float,
+    selection: dict[str, object],
+) -> None:
+    print(f"\nNSRDB source check for {city} ({lat:.4f}, {lon:.4f})")
+    print(f"  Data Query status: {'ok' if selection['query_success'] else 'failed'}")
+    if selection["query_error"]:
+        print(f"  Query error: {selection['query_error']}")
+
+    discovered = selection["raw_discovered_sources"]
+    if discovered:
+        print("  Raw query sources:")
+        for item in discovered:
+            support_label = item["source_key"] if item["supported"] else "unsupported"
+            print(f"    - {support_label}: {item['year_ranges']} ({item['url']})")
+    else:
+        print("  Raw query sources: none")
+
+    print("  Candidate groups:")
+    for group in selection["candidate_groups"]:
+        members = ", ".join(group["source_keys"])
+        print(
+            f"    - {group['label']}: {group['year_ranges']} "
+            f"({group['coverage_years']} years; members: {members})"
+        )
+
+    selected = selection["selected_group"]
+    print(
+        f"  Selected default: {selected['label']} "
+        f"({selected['year_ranges']}; {selected['coverage_years']} years)"
+    )
+    if selection["fallback_used"]:
+        print(f"  Fallback: {selection['fallback_reason']}")
+    print()
+
+
 def _resolve_nsrdb_sources_with_dynamic_years(
     city: str,
     lat: float,
@@ -891,34 +1124,15 @@ def _resolve_nsrdb_sources_with_dynamic_years(
     api_key: str,
     session=None,
 ) -> list[tuple[str, int, int]]:
-    """Resolve NSRDB sources, preferring query-reported years over static fallback ranges."""
-    sources = _resolve_nsrdb_source(city)
-    years_by_url = _query_nsrdb_available_years(lat=lat, lon=lon, api_key=api_key, session=session)
-
-    resolved: list[tuple[str, int, int]] = []
-    for url, min_year, max_year in sources:
-        available_years = years_by_url.get(url, [])
-        if available_years:
-            filtered_years = [year for year in available_years if min_year <= year]
-            if filtered_years:
-                logger.info(
-                    "NSRDB query years for %s via %s: %s-%s",
-                    city,
-                    url.rsplit("/", 1)[-1],
-                    min(filtered_years),
-                    max(filtered_years),
-                )
-                resolved.append((url, min(filtered_years), max(filtered_years)))
-                continue
-        logger.warning(
-            "NSRDB query returned no years for %s via %s; falling back to static range %s-%s",
-            city,
-            url.rsplit("/", 1)[-1],
-            min_year,
-            max_year,
-        )
-        resolved.append((url, min_year, max_year))
-    return resolved
+    """Resolve the selected NSRDB source group for download."""
+    selection = _resolve_nsrdb_source_selection(
+        city=city,
+        lat=lat,
+        lon=lon,
+        api_key=api_key,
+        session=session,
+    )
+    return selection["selected_sources"]
 
 
 def _load_isd_history(cache_path: Path) -> pd.DataFrame:
@@ -1241,6 +1455,26 @@ def list_isd_stations(
     return out
 
 
+def list_nsrdb_sources(
+    cities: list[str],
+) -> None:
+    """Print NSRDB Data Query results and the default source selection for one or more cities."""
+    api_key, _email = _load_nsrdb_credentials()
+    import requests
+
+    session = requests.Session()
+    for city in _normalize_city_args(cities):
+        meta = _city_meta(city)
+        selection = _resolve_nsrdb_source_selection(
+            city=city,
+            lat=meta["lat"],
+            lon=meta["lon"],
+            api_key=api_key,
+            session=session,
+        )
+        _print_nsrdb_selection_summary(city, meta["lat"], meta["lon"], selection)
+
+
 def select_best_isd_station(
     city: str,
     radius_km: float = 50.0,
@@ -1393,13 +1627,15 @@ def download_nsrdb(
     out_dir.mkdir(parents=True, exist_ok=True)
     city_lower = city.lower().replace(" ", "_")
     session = requests.Session()
-    sources = _resolve_nsrdb_sources_with_dynamic_years(
+    selection = _resolve_nsrdb_source_selection(
         city=city,
         lat=lat,
         lon=lon,
         api_key=api_key,
         session=session,
     )
+    _print_nsrdb_selection_summary(city, lat, lon, selection)
+    sources = selection["selected_sources"]
     available_years = sorted({year for _, mn, mx in sources for year in range(mn, mx + 1)})
     if years is None:
         years = available_years
@@ -1857,6 +2093,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--radius",  type=float, default=150, help="Search radius in km (default: 150)")
     p_list.add_argument("--isd-dir", default="data/ISD", help="Directory to cache isd-history.csv")
 
+    # ── list-nsrdb ─────────────────────────────────────────────────────────────
+    p_nsrdb = sub.add_parser("list-nsrdb", help="Inspect NSRDB sources and default coverage for one or more cities")
+    p_nsrdb.add_argument("--city", required=True, nargs="+", help="ASCII city code(s) from cities_config.csv")
+
     # ── check-station ──────────────────────────────────────────────────────────
     p_cov = sub.add_parser("check-station", help="Inspect metadata year coverage for one ISD station")
     p_cov.add_argument("--isd-station", required=True, metavar="USAF-WBAN", help="ISD station id to inspect")
@@ -2012,6 +2252,10 @@ def main() -> None:
     if args.command == "list-stations":
         meta = _city_meta(args.city)
         list_isd_stations(meta["lat"], meta["lon"], args.radius, args.isd_dir)
+        return
+
+    if args.command == "list-nsrdb":
+        list_nsrdb_sources(args.city)
         return
 
     if args.command == "check-station":

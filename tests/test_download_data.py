@@ -403,12 +403,38 @@ class TestDownloadNsrdbUnit:
         """Years outside query-reported coverage are silently skipped."""
         from samy_wgen.pipeline.download_data import download_nsrdb
 
+        selection = {
+            "query_success": True,
+            "query_error": None,
+            "fallback_used": False,
+            "fallback_reason": "",
+            "raw_discovered_sources": [],
+            "candidate_groups": [
+                {
+                    "group_key": "goes_aggregated",
+                    "label": "goes_aggregated",
+                    "source_keys": ["goes_aggregated"],
+                    "years": list(range(1998, 2025)),
+                    "year_ranges": "1998-2024",
+                    "coverage_years": 27,
+                }
+            ],
+            "selected_group": {
+                "group_key": "goes_aggregated",
+                "label": "goes_aggregated",
+                "source_keys": ["goes_aggregated"],
+                "years": list(range(1998, 2025)),
+                "year_ranges": "1998-2024",
+                "coverage_years": 27,
+            },
+            "selected_sources": [
+                ("https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download", 1998, 2024)
+            ],
+        }
+
         with (
             patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
-            patch(
-                "samy_wgen.pipeline.download_data._resolve_nsrdb_sources_with_dynamic_years",
-                return_value=[("https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download", 1998, 2024)],
-            ),
+            patch("samy_wgen.pipeline.download_data._resolve_nsrdb_source_selection", return_value=selection),
             patch("requests.Session") as mock_session,
         ):
             download_nsrdb(
@@ -477,6 +503,159 @@ class TestDownloadNsrdbUnit:
             ("https://developer.nlr.gov/api/nsrdb/v2/solar/himawari-download", 2016, 2020),
         ]
 
+    def test_selects_largest_coverage_group_from_query(self):
+        from samy_wgen.pipeline.download_data import _resolve_nsrdb_source_selection
+
+        payload = {
+            "outputs": [
+                {
+                    "availableYears": list(range(2011, 2016)),
+                    "links": [
+                        {"link": "https://developer.nlr.gov/api/nsrdb/v2/solar/himawari7-download.csv?names=2015"}
+                    ],
+                },
+                {
+                    "availableYears": list(range(2016, 2021)),
+                    "links": [
+                        {"link": "https://developer.nlr.gov/api/nsrdb/v2/solar/himawari-download.csv?names=2020"}
+                    ],
+                },
+                {
+                    "availableYears": list(range(2000, 2015)),
+                    "links": [
+                        {"link": "https://developer.nlr.gov/api/nsrdb/v2/solar/suny-india-download.csv?names=2014"}
+                    ],
+                },
+            ]
+        }
+        session = MagicMock()
+        session.get.return_value.raise_for_status = MagicMock()
+        session.get.return_value.json.return_value = payload
+
+        selection = _resolve_nsrdb_source_selection(
+            city="Chennai",
+            lat=13.08,
+            lon=80.27,
+            api_key="test_key",
+            session=session,
+        )
+
+        assert selection["selected_group"]["group_key"] == "suny_india"
+        assert selection["selected_group"]["coverage_years"] == 15
+        assert selection["fallback_used"] is False
+
+    def test_resolves_himawari_pair_as_single_group(self):
+        from samy_wgen.pipeline.download_data import _resolve_nsrdb_source_selection
+
+        payload = {
+            "outputs": [
+                {
+                    "availableYears": list(range(2011, 2016)),
+                    "links": [
+                        {"link": "https://developer.nlr.gov/api/nsrdb/v2/solar/himawari7-download.csv?names=2015"}
+                    ],
+                },
+                {
+                    "availableYears": list(range(2016, 2021)),
+                    "links": [
+                        {"link": "https://developer.nlr.gov/api/nsrdb/v2/solar/himawari-download.csv?names=2020"}
+                    ],
+                },
+            ]
+        }
+        session = MagicMock()
+        session.get.return_value.raise_for_status = MagicMock()
+        session.get.return_value.json.return_value = payload
+
+        selection = _resolve_nsrdb_source_selection(
+            city="Beijing",
+            lat=39.90,
+            lon=116.39,
+            api_key="test_key",
+            session=session,
+        )
+
+        assert selection["selected_group"]["group_key"] == "himawari_pair"
+        assert selection["selected_group"]["coverage_years"] == 10
+        assert selection["selected_sources"] == [
+            ("https://developer.nlr.gov/api/nsrdb/v2/solar/himawari7-download", 2011, 2015),
+            ("https://developer.nlr.gov/api/nsrdb/v2/solar/himawari-download", 2016, 2020),
+        ]
+
+    def test_query_failure_falls_back_to_static_india_source(self):
+        from samy_wgen.pipeline.download_data import _resolve_nsrdb_source_selection
+
+        session = MagicMock()
+        session.get.side_effect = Exception("network down")
+
+        selection = _resolve_nsrdb_source_selection(
+            city="Ahmedabad",
+            lat=23.02,
+            lon=72.57,
+            api_key="test_key",
+            session=session,
+        )
+
+        assert selection["fallback_used"] is True
+        assert selection["selected_group"]["group_key"] == "suny_india"
+
+    def test_download_prints_selected_source_summary(self, tmp_path, capsys):
+        from samy_wgen.pipeline.download_data import download_nsrdb
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.text = self._mock_nsrdb_csv(2000)
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
+
+        selection = {
+            "query_success": True,
+            "query_error": None,
+            "fallback_used": False,
+            "fallback_reason": "",
+            "raw_discovered_sources": [
+                {
+                    "url": "https://developer.nlr.gov/api/nsrdb/v2/solar/suny-india-download",
+                    "source_key": "suny_india",
+                    "supported": True,
+                    "years": list(range(2000, 2015)),
+                    "year_ranges": "2000-2014",
+                }
+            ],
+            "candidate_groups": [
+                {
+                    "group_key": "suny_india",
+                    "label": "suny_india",
+                    "source_keys": ["suny_india"],
+                    "years": list(range(2000, 2015)),
+                    "year_ranges": "2000-2014",
+                    "coverage_years": 15,
+                }
+            ],
+            "selected_group": {
+                "group_key": "suny_india",
+                "label": "suny_india",
+                "source_keys": ["suny_india"],
+                "years": list(range(2000, 2015)),
+                "year_ranges": "2000-2014",
+                "coverage_years": 15,
+            },
+            "selected_sources": [
+                ("https://developer.nlr.gov/api/nsrdb/v2/solar/suny-india-download", 2000, 2014)
+            ],
+        }
+
+        with (
+            patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
+            patch("samy_wgen.pipeline.download_data._resolve_nsrdb_source_selection", return_value=selection),
+            patch("requests.Session", return_value=mock_session),
+        ):
+            download_nsrdb("Ahmedabad", 23.02, 72.57, [2000], output_dir=str(tmp_path))
+
+        captured = capsys.readouterr()
+        assert "Selected default: suny_india (2000-2014; 15 years)" in captured.out
+
     def test_retries_transient_failure_then_succeeds(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_nsrdb
 
@@ -510,12 +689,38 @@ class TestDownloadNsrdbUnit:
         session = MagicMock()
         session.get.side_effect = Exception("tls eof")
 
+        selection = {
+            "query_success": True,
+            "query_error": None,
+            "fallback_used": False,
+            "fallback_reason": "",
+            "raw_discovered_sources": [],
+            "candidate_groups": [
+                {
+                    "group_key": "goes_aggregated",
+                    "label": "goes_aggregated",
+                    "source_keys": ["goes_aggregated"],
+                    "years": list(range(1998, 2025)),
+                    "year_ranges": "1998-2024",
+                    "coverage_years": 27,
+                }
+            ],
+            "selected_group": {
+                "group_key": "goes_aggregated",
+                "label": "goes_aggregated",
+                "source_keys": ["goes_aggregated"],
+                "years": list(range(1998, 2025)),
+                "year_ranges": "1998-2024",
+                "coverage_years": 27,
+            },
+            "selected_sources": [
+                ("https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download", 1998, 2024)
+            ],
+        }
+
         with (
             patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials", return_value=("test_key", "test@example.com")),
-            patch(
-                "samy_wgen.pipeline.download_data._resolve_nsrdb_sources_with_dynamic_years",
-                return_value=[("https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-aggregated-v4-0-0-download", 1998, 2024)],
-            ),
+            patch("samy_wgen.pipeline.download_data._resolve_nsrdb_source_selection", return_value=selection),
             patch("requests.Session", return_value=session),
             patch("time.sleep"),
         ):
@@ -546,6 +751,17 @@ class TestCliParsing:
         assert args.city == "Miami"
         assert args.radius == 150.0
         assert args.isd_dir == "data/ISD"
+
+    def test_list_nsrdb_requires_city(self):
+        parser = self._parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["list-nsrdb"])
+
+    def test_list_nsrdb_accepts_multiple_cities(self):
+        parser = self._parser()
+        args = parser.parse_args(["list-nsrdb", "--city", "Miami", "Chennai"])
+        assert args.command == "list-nsrdb"
+        assert args.city == ["Miami", "Chennai"]
 
     def test_download_default_sources(self):
         parser = self._parser()
