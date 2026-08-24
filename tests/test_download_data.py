@@ -239,7 +239,7 @@ class TestListIsdStationsUnit:
         assert "No stations found" in captured.out
 
 
-# ─── download_isd (unit, mocked FTP) ─────────────────────────────────────────
+# ─── download_isd (unit, mocked HTTPS) ───────────────────────────────────────
 
 class TestDownloadIsdUnit:
     def test_bad_station_id_raises(self, tmp_path):
@@ -279,17 +279,16 @@ class TestDownloadIsdUnit:
             "STATION NAME": ["MIAMI INTL AP"], "BEGIN": [19700101], "END": [20241231],
         })
 
-        ftp_mock = MagicMock()
+        get_mock = MagicMock()
 
         with (
             patch("samy_wgen.pipeline.download_data._load_isd_history",
                   return_value=fake_history),
-            patch("samy_wgen.pipeline.download_data.FTP", return_value=ftp_mock),
+            patch("requests.get", get_mock),
         ):
             download_isd("722020-12839", "Miami", [2000], output_dir=str(tmp_path))
 
-        # retrbinary should NOT have been called (file already exists)
-        ftp_mock.retrbinary.assert_not_called()
+        get_mock.assert_not_called()
 
     def test_downloads_missing_years(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_isd
@@ -301,19 +300,16 @@ class TestDownloadIsdUnit:
 
         downloaded: list[str] = []
 
-        def fake_retrbinary(cmd: str, callback):
-            filename = cmd.split()[-1]
-            downloaded.append(filename)
-            # Write dummy content so tmp.rename() works
-            callback(b"fake gz")
-
-        ftp_mock = MagicMock()
-        ftp_mock.retrbinary.side_effect = fake_retrbinary
+        def fake_get(url: str, **kwargs):
+            downloaded.append(url.rsplit("/", 1)[-1])
+            response = MagicMock()
+            response.iter_content.return_value = [b"fake gz"]
+            return response
 
         with (
             patch("samy_wgen.pipeline.download_data._load_isd_history",
                   return_value=fake_history),
-            patch("samy_wgen.pipeline.download_data.FTP", return_value=ftp_mock),
+            patch("requests.get", side_effect=fake_get),
         ):
             download_isd(
                 "722020-12839", "Miami", [2001, 2002], output_dir=str(tmp_path)
@@ -332,23 +328,44 @@ class TestDownloadIsdUnit:
 
         downloaded: list[str] = []
 
-        def fake_retrbinary(cmd: str, callback):
-            filename = cmd.split()[-1]
-            downloaded.append(filename)
-            callback(b"fake gz")
-
-        ftp_mock = MagicMock()
-        ftp_mock.retrbinary.side_effect = fake_retrbinary
+        def fake_get(url: str, **kwargs):
+            downloaded.append(url.rsplit("/", 1)[-1])
+            response = MagicMock()
+            response.iter_content.return_value = [b"fake gz"]
+            return response
 
         with (
             patch("samy_wgen.pipeline.download_data._load_isd_history", return_value=fake_history),
-            patch("samy_wgen.pipeline.download_data.FTP", return_value=ftp_mock),
+            patch("requests.get", side_effect=fake_get),
         ):
             download_isd(
                 "722020-12839", "Miami", [1999, 2000, 2001, 2002], output_dir=str(tmp_path)
             )
 
         assert downloaded == ["722020-12839-2000.gz", "722020-12839-2001.gz"]
+
+    def test_continues_after_http_failure(self, tmp_path, caplog):
+        from samy_wgen.pipeline.download_data import download_isd
+
+        fake_history = pd.DataFrame({
+            "USAF": ["722020"], "WBAN": ["12839"],
+            "STATION NAME": ["MIAMI INTL AP"], "BEGIN": [20000101], "END": [20011231],
+        })
+        failed = MagicMock()
+        failed.raise_for_status.side_effect = RuntimeError("HTTP 503")
+        succeeded = MagicMock()
+        succeeded.iter_content.return_value = [b"fake gz"]
+
+        with (
+            patch("samy_wgen.pipeline.download_data._load_isd_history", return_value=fake_history),
+            patch("requests.get", side_effect=[failed, succeeded]),
+        ):
+            download_isd("722020-12839", "Miami", [2000, 2001], output_dir=str(tmp_path))
+
+        station_dir = tmp_path / "Miami" / "722020-12839_MIAMI_INTL_AP"
+        assert not (station_dir / "722020-12839-2000.gz").exists()
+        assert (station_dir / "722020-12839-2001.gz").read_bytes() == b"fake gz"
+        assert "2000 failed: HTTP 503" in caplog.text
 
 
 # ─── download_nsrdb (unit, mocked HTTP) ──────────────────────────────────────

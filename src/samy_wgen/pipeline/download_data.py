@@ -11,7 +11,7 @@ Credentials
               Run 'samy-download config' to write this file interactively.
   CMIP6   : ~/.cdsapirc  (standard cdsapi config)
   CORDEX  : ~/.cdsapirc
-  ISD     : none (public FTP)
+  ISD     : none (public HTTPS archive)
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ import os
 import time
 
 from tqdm import tqdm
-from ftplib import FTP
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import List, Optional
@@ -172,8 +171,7 @@ NSRDB_ATTRS = [
     "wind_speed", "wind_direction", "ghi", "dni", "dhi", "surface_pressure",
 ]
 
-ISD_FTP_HOST    = "ftp.ncei.noaa.gov"
-ISD_FTP_DIR     = "/pub/data/noaa/{year}/"
+ISD_HTTP_URL    = "https://www.ncei.noaa.gov/pub/data/noaa/{year}/{filename}"
 ISD_HISTORY_URL = "https://www.ncei.noaa.gov/pub/data/noaa/isd-history.csv"
 
 CDS_CMIP6_DATASET = "projections-cmip6"
@@ -1542,29 +1540,34 @@ def download_isd(
     station_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"ISD output → {station_dir}")
 
-    ftp = FTP(ISD_FTP_HOST)
-    ftp.login()
-    try:
-        with tqdm(valid_years, desc=f"ISD {city}", unit="yr") as pbar:
-            for year in pbar:
-                pbar.set_postfix(year=year)
-                filename = f"{usaf}-{wban}-{year}.gz"
-                local = station_dir / filename
-                if local.exists() and local.stat().st_size > 0:
-                    logger.debug(f"  {year} already present, skipping")
-                    continue
-                tmp = local.with_suffix(".gz.tmp")
-                try:
-                    ftp.cwd(ISD_FTP_DIR.format(year=year))
-                    with open(tmp, "wb") as f:
-                        ftp.retrbinary(f"RETR {filename}", f.write)
-                    tmp.rename(local)
-                except Exception as exc:
-                    logger.warning(f"  {year} failed: {exc}")
-                    if tmp.exists():
-                        tmp.unlink()
-    finally:
-        ftp.quit()
+    import requests
+
+    with tqdm(valid_years, desc=f"ISD {city}", unit="yr") as pbar:
+        for year in pbar:
+            pbar.set_postfix(year=year)
+            filename = f"{usaf}-{wban}-{year}.gz"
+            local = station_dir / filename
+            if local.exists() and local.stat().st_size > 0:
+                logger.debug(f"  {year} already present, skipping")
+                continue
+            tmp = local.with_suffix(".gz.tmp")
+            response = None
+            try:
+                url = ISD_HTTP_URL.format(year=year, filename=filename)
+                response = requests.get(url, stream=True, timeout=60)
+                response.raise_for_status()
+                with open(tmp, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                tmp.replace(local)
+            except Exception as exc:
+                logger.warning(f"  {year} failed: {exc}")
+                if tmp.exists():
+                    tmp.unlink()
+            finally:
+                if response is not None:
+                    response.close()
 
     logger.info(
         "ISD download complete (%s/%s years requested after coverage filter) → %s",
