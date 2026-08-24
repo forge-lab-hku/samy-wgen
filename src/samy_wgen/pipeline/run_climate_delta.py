@@ -526,7 +526,9 @@ def _load_and_merge_climate_data(file_pairs: list[tuple[Path, Path]], required: 
 
             # Detect model name from filename
             hist_name = hist_path.stem
-            if 'cnrm_esm2_1' in hist_name:
+            if 'mri_esm2_0' in hist_name:
+                model_name = 'MRI-ESM2-0'
+            elif 'cnrm_esm2_1' in hist_name:
                 model_name = 'CNRM-ESM2-1'
             elif 'mpi_esm1_2_lr' in hist_name:
                 model_name = 'MPI-ESM1-2-LR'
@@ -583,16 +585,31 @@ def load_cmip6_projection(
         city_dir / f"cnrm_esm2_1_{ssp}_monthly.csv"
     )]
 
+    # Try CMIP6 MRI format: mri_esm2_0_{experiment}.csv
+    mri_daily_pairs = [(
+        city_dir / "mri_esm2_0_historical.csv",
+        city_dir / f"mri_esm2_0_{ssp}.csv"
+    )]
+    mri_monthly_pairs = [(
+        city_dir / "mri_esm2_0_historical_monthly.csv",
+        city_dir / f"mri_esm2_0_{ssp}_monthly.csv"
+    )]
+
     # Determine loading priority based on scenario_id
-    # If scenario contains "CNRM", prioritize CNRM model files
+    # If scenario contains a supported model name, prioritize its files.
     with _stdout_context(verbose):
-        if scenario_id and "CNRM" in scenario_id:
-            daily_pairs = cnrm_daily_pairs + cmip6_daily_pairs
-            monthly_pairs = cnrm_monthly_pairs + cmip6_monthly_pairs
+        scenario_id_upper = (scenario_id or "").upper()
+        if "MRI" in scenario_id_upper:
+            daily_pairs = mri_daily_pairs + cmip6_daily_pairs + cnrm_daily_pairs
+            monthly_pairs = mri_monthly_pairs + cmip6_monthly_pairs + cnrm_monthly_pairs
+            print(f"  [Model Priority] Using MRI model priority for scenario: {scenario_id}")
+        elif "CNRM" in scenario_id_upper:
+            daily_pairs = cnrm_daily_pairs + cmip6_daily_pairs + mri_daily_pairs
+            monthly_pairs = cnrm_monthly_pairs + cmip6_monthly_pairs + mri_monthly_pairs
             print(f"  [Model Priority] Using CNRM model priority for scenario: {scenario_id}")
         else:
-            daily_pairs = cmip6_daily_pairs + cnrm_daily_pairs
-            monthly_pairs = cmip6_monthly_pairs + cnrm_monthly_pairs
+            daily_pairs = cmip6_daily_pairs + cnrm_daily_pairs + mri_daily_pairs
+            monthly_pairs = cmip6_monthly_pairs + cnrm_monthly_pairs + mri_monthly_pairs
 
         daily_df, model_name = _load_and_merge_climate_data(daily_pairs, required=True)
         print(f"  [Model Detected] Loaded {model_name} for {city}/{scenario_id or ssp}")

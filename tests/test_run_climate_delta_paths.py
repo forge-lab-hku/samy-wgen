@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 
 def test_resolve_city_dir_uses_canonical_ascii_code(tmp_path):
     from samy_wgen.pipeline.run_climate_delta import _resolve_city_dir
@@ -66,3 +68,45 @@ def test_resolve_projection_args_cordex_cmip5_mode():
     assert str(resolved["root"]) == "data/CORDEX_CMIP5/NAM-22_REMO2015_r1i1p1"
     assert resolved["type"] == "cordex-cmip5"
     assert resolved["ssp"] == "rcp85"
+
+
+def test_load_cmip6_projection_supports_mri_files(tmp_path):
+    from samy_wgen.pipeline.run_climate_delta import load_cmip6_projection
+
+    city_dir = tmp_path / "Beijing"
+    city_dir.mkdir()
+    pd.DataFrame({"time": ["2014-12-31"], "tas": [280.0]}).to_csv(
+        city_dir / "mri_esm2_0_historical.csv", index=False
+    )
+    pd.DataFrame({"time": ["2015-01-01"], "tas": [281.0]}).to_csv(
+        city_dir / "mri_esm2_0_ssp245.csv", index=False
+    )
+
+    daily_df, monthly_df, meta = load_cmip6_projection(
+        tmp_path, city="Beijing", ssp="ssp245", verbose=False
+    )
+
+    assert list(daily_df.index) == list(pd.to_datetime(["2014-12-31", "2015-01-01"]))
+    assert monthly_df.empty
+    assert meta["model_name"] == "MRI-ESM2-0"
+
+
+def test_load_cmip6_projection_prioritizes_mri_scenario(tmp_path):
+    from samy_wgen.pipeline.run_climate_delta import load_cmip6_projection
+
+    city_dir = tmp_path / "Beijing"
+    city_dir.mkdir()
+    for model, temperature in (("mpi_esm1_2_lr", 280.0), ("mri_esm2_0", 285.0)):
+        pd.DataFrame({"time": ["2014-12-31"], "tas": [temperature]}).to_csv(
+            city_dir / f"{model}_historical.csv", index=False
+        )
+        pd.DataFrame({"time": ["2015-01-01"], "tas": [temperature + 1.0]}).to_csv(
+            city_dir / f"{model}_ssp245.csv", index=False
+        )
+
+    daily_df, _, meta = load_cmip6_projection(
+        tmp_path, city="Beijing", ssp="ssp245", scenario_id="MRI_ssp245", verbose=False
+    )
+
+    assert abs(daily_df.iloc[0]["tas_C"] - 11.85) < 1e-9
+    assert meta["model_name"] == "MRI-ESM2-0"
