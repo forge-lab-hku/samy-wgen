@@ -210,6 +210,28 @@ class TestExtractCmip6FromFiles:
         assert out["pr"].tolist()[:2] == [1.0, 2.0]
         assert pd.isna(out["pr"].iloc[2])
 
+    def test_reads_zip_disguised_as_nc(self, tmp_path):
+        import zipfile
+
+        from samy_wgen.pipeline.download_data import extract_cmip6_from_files
+
+        times = pd.date_range("2000-01-01", periods=1, freq="D")
+        source_nc = tmp_path / "source.nc"
+        import xarray as xr
+        xr.Dataset(
+            {"tas": (("time", "lat", "lon"), np.array([[[300.0]]]))},
+            coords={"time": times, "lat": [25.76], "lon": [-80.19]},
+        ).to_netcdf(source_nc)
+        archive_path = tmp_path / "zip_disguised_as_nc.nc"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.write(source_nc, arcname="inside.nc")
+
+        outputs = extract_cmip6_from_files(
+            cities=["Miami"], input_files=[archive_path], output_dir=tmp_path / "out", output_name="zip",
+        )
+
+        assert pd.read_csv(outputs["Miami"])["tas"].tolist() == [300.0]
+
 
 # ─── list_isd_stations (unit, mocked) ────────────────────────────────────────
 

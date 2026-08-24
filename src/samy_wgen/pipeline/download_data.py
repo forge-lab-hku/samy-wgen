@@ -1450,8 +1450,14 @@ def _cmip6_dataset_to_point_dfs(ds, city_points: dict[str, tuple[float, float]])
 
 
 def extract_cmip6_from_files(cities: list[str], input_files: list[str | Path], output_dir: str = "data/CMIP6", output_name: str = "extracted_cmip6") -> dict[str, Path]:
-    """Extract local CMIP6 NetCDF files to one nearest-grid CSV per city."""
+    """Extract local CMIP6 files to one nearest-grid CSV per city.
+
+    CDS archives occasionally use a ``.nc`` suffix for a ZIP file containing
+    one or more actual NetCDF files.  Both that layout and ordinary NetCDF
+    files are accepted.
+    """
     import xarray as xr
+    import zipfile
 
     if not input_files:
         raise ValueError("Provide at least one local NetCDF file")
@@ -1464,10 +1470,23 @@ def extract_cmip6_from_files(cities: list[str], input_files: list[str | Path], o
         if not input_path.is_file():
             raise FileNotFoundError(f"CMIP6 input file not found: {input_path}")
         logger.info("CMIP6 local extract input → %s", input_path)
-        with xr.open_dataset(input_path) as ds:
-            city_dfs = _cmip6_dataset_to_point_dfs(ds, city_points)
-        for city, frame in city_dfs.items():
-            city_frames[city].append(frame)
+        if zipfile.is_zipfile(input_path):
+            with zipfile.ZipFile(input_path) as archive:
+                nc_names = [name for name in archive.namelist() if name.lower().endswith(".nc")]
+                if not nc_names:
+                    raise ValueError(f"No NetCDF file found inside CMIP6 ZIP: {input_path}")
+                logger.info("  ZIP archive contains %s NetCDF file(s)", len(nc_names))
+                for nc_name in nc_names:
+                    with archive.open(nc_name) as handle:
+                        with xr.open_dataset(BytesIO(handle.read())) as ds:
+                            city_dfs = _cmip6_dataset_to_point_dfs(ds, city_points)
+                    for city, frame in city_dfs.items():
+                        city_frames[city].append(frame)
+        else:
+            with xr.open_dataset(input_path) as ds:
+                city_dfs = _cmip6_dataset_to_point_dfs(ds, city_points)
+            for city, frame in city_dfs.items():
+                city_frames[city].append(frame)
     outputs: dict[str, Path] = {}
     for city in city_points:
         frames = city_frames[city]
