@@ -4,6 +4,7 @@ Subcommands
 -----------
   list-stations   Print nearby ISD stations for a city (choose one, then download)
   download        Download ISD / NSRDB / CMIP6 / CORDEX-CMIP5 for a city
+  extract-cmip6   Extract nearest-grid city series from local CMIP6 NetCDF files
 
 Credentials
 -----------
@@ -1400,6 +1401,102 @@ def _merge_cmip6_city_frames(
     return merged.sort_values("time").reset_index(drop=True)
 
 
+def _cmip6_dataset_to_point_dfs(ds, city_points: dict[str, tuple[float, float]]) -> dict[str, pd.DataFrame]:
+    """Extract nearest-grid time series from an opened CMIP6 dataset."""
+    import numpy as np
+
+    lat_name = next((c for c in ds.coords if c in ("lat", "latitude")), None)
+    lon_name = next((c for c in ds.coords if c in ("lon", "longitude")), None)
+    if lat_name is None or lon_name is None:
+        raise ValueError(f"lat/lon coordinates not found. Available: {list(ds.coords)}")
+    if "time" not in ds.coords:
+        raise ValueError(f"time coordinate not found. Available: {list(ds.coords)}")
+
+    lat_arr, lon_arr = ds[lat_name].values, ds[lon_name].values
+    time_index = pd.to_datetime(ds["time"].values)
+    city_indices: dict[str, tuple[int, int]] = {}
+    for city, (lat, lon) in city_points.items():
+        lon_target = lon % 360 if lon_arr.min() >= 0 and lon_arr.max() > 180 else lon
+        if lat_arr.ndim == 1 and lon_arr.ndim == 1:
+            li, lj = int(np.argmin(abs(lat_arr - lat))), int(np.argmin(abs(lon_arr - lon_target)))
+            selected_lat, selected_lon = float(lat_arr[li]), float(lon_arr[lj])
+        elif lat_arr.ndim == 2 and lon_arr.ndim == 2:
+            li, lj = np.unravel_index(np.argmin((lat_arr - lat) ** 2 + (lon_arr - lon_target) ** 2), lat_arr.shape)
+            selected_lat, selected_lon = float(lat_arr[li, lj]), float(lon_arr[li, lj])
+        else:
+            raise ValueError(f"Unsupported latitude/longitude dimensions: {lat_arr.ndim}D/{lon_arr.ndim}D")
+        city_indices[city] = (li, lj)
+        logger.info("CMIP6 local extract: city='%s' → grid=(%.4f, %.4f)", city, selected_lat, selected_lon)
+
+    city_series: dict[str, list[pd.Series]] = {city: [] for city in city_points}
+    for var, da in ds.data_vars.items():
+        if var.endswith(("_bnds", "_bounds")) or "time" not in da.dims:
+            continue
+        spatial_dims = [dim for dim in da.dims if dim != "time"]
+        if not spatial_dims:
+            values_by_city = {city: da.values for city in city_points}
+        elif len(spatial_dims) == 2:
+            values_by_city = {city: da.isel({spatial_dims[0]: li, spatial_dims[1]: lj}).values for city, (li, lj) in city_indices.items()}
+        else:
+            logger.warning("Skipping CMIP6 variable '%s': unsupported dimensions %s", var, da.dims)
+            continue
+        for city, values in values_by_city.items():
+            city_series[city].append(pd.Series(values, index=time_index, name=var))
+
+    result = {city: pd.concat(series, axis=1).reset_index().rename(columns={"index": "time"}) for city, series in city_series.items() if series}
+    if not result:
+        raise ValueError("No time-series data variables found in NetCDF")
+    return result
+
+
+def extract_cmip6_from_files(cities: list[str], input_files: list[str | Path], output_dir: str = "data/CMIP6", output_name: str = "extracted_cmip6") -> dict[str, Path]:
+    """Extract local CMIP6 NetCDF files to one nearest-grid CSV per city."""
+    import xarray as xr
+
+    if not input_files:
+        raise ValueError("Provide at least one local NetCDF file")
+    if Path(output_name).name != output_name or not output_name:
+        raise ValueError("output_name must be a filename stem, not a path")
+    city_points = _resolve_city_points(_normalize_city_args(cities))
+    city_frames: dict[str, list[pd.DataFrame]] = {city: [] for city in city_points}
+    for value in input_files:
+        input_path = Path(value).expanduser()
+        if not input_path.is_file():
+            raise FileNotFoundError(f"CMIP6 input file not found: {input_path}")
+        logger.info("CMIP6 local extract input → %s", input_path)
+        with xr.open_dataset(input_path) as ds:
+            city_dfs = _cmip6_dataset_to_point_dfs(ds, city_points)
+        for city, frame in city_dfs.items():
+            city_frames[city].append(frame)
+    outputs: dict[str, Path] = {}
+    for city in city_points:
+        frames = city_frames[city]
+        if not frames:
+            raise ValueError(f"No CMIP6 time series extracted for city='{city}'")
+        combined = pd.concat(frames, ignore_index=True, sort=False)
+        value_columns = [column for column in combined.columns if column != "time"]
+        conflicts = []
+        for column in value_columns:
+            counts = combined.groupby("time")[column].nunique(dropna=True)
+            if (counts > 1).any():
+                conflicts.append(column)
+        if conflicts:
+            raise ValueError(f"Conflicting CMIP6 values for duplicate timestamps: {sorted(conflicts)}")
+        merged = combined.groupby("time", as_index=False).first().sort_values("time").reset_index(drop=True)
+        rename = {col: CMIP6_VAR_SHORT.get(col, col) for col in merged.columns if col != "time"}
+        merged = merged.rename(columns=rename)
+        if merged.columns.duplicated().any():
+            duplicates = merged.columns[merged.columns.duplicated()].tolist()
+            raise ValueError(f"Duplicate output CMIP6 columns: {duplicates}")
+        city_dir = Path(output_dir) / city
+        city_dir.mkdir(parents=True, exist_ok=True)
+        output_path = city_dir / f"{output_name}.csv"
+        merged.to_csv(output_path, index=False)
+        outputs[city] = output_path
+        logger.info("CMIP6 local extract saved → %s (%s rows)", output_path, len(merged))
+    return outputs
+
+
 # ─── ISD ──────────────────────────────────────────────────────────────────────
 
 def list_isd_stations(
@@ -2079,6 +2176,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Filter by CDS temporal resolution",
     )
 
+    # ── extract-cmip6 ─────────────────────────────────────────────────────────
+    p_ec = sub.add_parser("extract-cmip6", help="Extract nearest-grid city time series from local CMIP6 NetCDF file(s)")
+    p_ec.add_argument("--city", required=True, nargs="+", help="ASCII city code(s) from cities_config.csv")
+    p_ec.add_argument("--input", required=True, nargs="+", metavar="NETCDF", help="Local CMIP6 NetCDF file(s); shell globs are accepted")
+    p_ec.add_argument("--cmip6-dir", default="data/CMIP6", help="Output CMIP6 directory")
+    p_ec.add_argument("--name", default="extracted_cmip6", metavar="STEM", help="Output filename stem written as <cmip6-dir>/<city>/<stem>.csv")
+
     # ── list-cordex ───────────────────────────────────────────────────────────
     p_lc = sub.add_parser("list-cordex", help="List available CORDEX domain / experiment / GCM / RCM / ensemble / resolution / variable combinations from the live CDS catalogue")
     p_lc.add_argument("--detail", action="store_true", help="Expand each GCM/RCM/ensemble combination into domain / experiment / resolution / variable rows")
@@ -2213,6 +2317,10 @@ def main() -> None:
         for row in rows:
             print(f"{row['model']:<25} {row['experiment']:<14} {row['resolution']:<10} {row['variable']}")
         print(f"\nTotal: {len(rows)} rows")
+        return
+
+    if args.command == "extract-cmip6":
+        extract_cmip6_from_files(args.city, args.input, args.cmip6_dir, args.name)
         return
 
     if args.command == "list-cordex":

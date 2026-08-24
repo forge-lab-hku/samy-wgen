@@ -180,6 +180,37 @@ class TestNcBytesToPointDf:
         assert list(df["tas"]) == pytest.approx([10.0, 11.0, 12.0, 13.0])
 
 
+class TestExtractCmip6FromFiles:
+    def test_merges_local_netcdf_variables_at_nearest_city_grid(self, tmp_path):
+        import xarray as xr
+
+        from samy_wgen.pipeline.download_data import extract_cmip6_from_files
+
+        times = pd.date_range("2000-01-01", periods=2, freq="D")
+        coords = {"time": times, "lat": [25.0, 26.0], "lon": [-80.5, -80.0]}
+        tas = xr.Dataset({"tas": (("time", "lat", "lon"), np.full((2, 2, 2), 300.0))}, coords=coords)
+        pr_values = np.zeros((2, 2, 2))
+        pr_values[:, 1, 1] = [1.0, 2.0]
+        pr = xr.Dataset({"pr": (("time", "lat", "lon"), pr_values)}, coords=coords)
+        later_times = pd.date_range("2000-01-03", periods=1, freq="D")
+        tas_later = xr.Dataset({"tas": (("time", "lat", "lon"), np.full((1, 2, 2), 301.0))}, coords={**coords, "time": later_times})
+        tas_path, pr_path, tas_later_path = tmp_path / "tas.nc", tmp_path / "pr.nc", tmp_path / "tas_later.nc"
+        tas.to_netcdf(tas_path)
+        pr.to_netcdf(pr_path)
+        tas_later.to_netcdf(tas_later_path)
+
+        outputs = extract_cmip6_from_files(
+            cities=["Miami"], input_files=[tas_path, pr_path, tas_later_path], output_dir=tmp_path / "out", output_name="test",
+        )
+
+        out = pd.read_csv(outputs["Miami"])
+        assert outputs["Miami"] == tmp_path / "out" / "Miami" / "test.csv"
+        assert out.columns.tolist() == ["time", "tas", "pr"]
+        assert out["tas"].tolist() == [300.0, 300.0, 301.0]
+        assert out["pr"].tolist()[:2] == [1.0, 2.0]
+        assert pd.isna(out["pr"].iloc[2])
+
+
 # ─── list_isd_stations (unit, mocked) ────────────────────────────────────────
 
 class TestListIsdStationsUnit:
@@ -841,6 +872,18 @@ class TestCliParsing:
             "--cmip6-var", "near_surface_air_temperature", "precipitation",
         ])
         assert args.cmip6_var == ["near_surface_air_temperature", "precipitation"]
+
+    def test_extract_cmip6_parses_multiple_inputs_and_cities(self):
+        parser = self._parser()
+        args = parser.parse_args([
+            "extract-cmip6", "--city", "Miami", "Los_Angeles",
+            "--input", "tas.nc", "pr.nc", "--cmip6-dir", "raw/CMIP6", "--name", "mpi_ssp245",
+        ])
+        assert args.command == "extract-cmip6"
+        assert args.city == ["Miami", "Los_Angeles"]
+        assert args.input == ["tas.nc", "pr.nc"]
+        assert args.cmip6_dir == "raw/CMIP6"
+        assert args.name == "mpi_ssp245"
 
 
 class TestIsdStationSelection:
