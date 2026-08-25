@@ -447,12 +447,12 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
                            city: str, ssp: str, lat: float,
                            baseline_start: int, baseline_end: int,
                            out_dir: Path, overwrite: bool) -> pd.DataFrame:
-    """Apply CMIP6 climate delta → 4_delta_corrected.csv."""
+    """Apply per-variable daily/monthly CMIP6 deltas → 4_delta_corrected.csv."""
     from samy_wgen.pipeline.run_climate_delta import (
         load_rsvar_output,
         load_cmip6_or_cordex6,
-        compute_cordex_baseline,
-        apply_climate_delta,
+        compute_mixed_resolution_baseline,
+        apply_mixed_resolution_climate_delta,
     )
 
     csv_path = out_dir / "4_delta_corrected.csv"
@@ -463,25 +463,27 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
 
     _print_title("Stage 4 Apply Climate Delta")
     print(f"[stage 4] Applying CMIP6 climate delta ({ssp})")
-    daily_df, _monthly_df, meta = load_cmip6_or_cordex6(
+    daily_df, monthly_df, meta = load_cmip6_or_cordex6(
         base_path=cmip6_dir, city=city, ssp=ssp, verbose=False
     )
     gcm = meta.get("model_name", "unknown")
-    print(f"  GCM: {gcm}, {len(daily_df):,} daily rows")
+    print(f"  GCM: {gcm}, {len(daily_df):,} daily rows, {len(monthly_df):,} monthly rows")
 
-    baseline = compute_cordex_baseline(daily_df, baseline_start, baseline_end, mode="daily")
+    baseline = compute_mixed_resolution_baseline(
+        daily_df, monthly_df, baseline_start, baseline_end, var_resolution_config={}
+    )
     rsvar_df, _ = load_rsvar_output(rsvar_xlsx)
 
-    output_df, _stats = apply_climate_delta(
-        rsvar_df=rsvar_df,
-        cordex=daily_df,
+    output_df, _stats = apply_mixed_resolution_climate_delta(
+        rsvar_df,
+        daily_df,
+        monthly_df,
         baseline=baseline,
         gcm=gcm,
         rcm=None,
         lat=lat,
         baseline_start=baseline_start,
         baseline_end=baseline_end,
-        delta_mode="daily",
         verbose=False,
     )
     output_df.index.name = "datetime"

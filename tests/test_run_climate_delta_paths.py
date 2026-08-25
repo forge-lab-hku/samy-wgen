@@ -110,3 +110,43 @@ def test_load_cmip6_projection_prioritizes_mri_scenario(tmp_path):
 
     assert abs(daily_df.iloc[0]["tas_C"] - 11.85) < 1e-9
     assert meta["model_name"] == "MRI-ESM2-0"
+
+
+def test_load_cmip6_projection_keeps_monthly_data_with_selected_model(tmp_path):
+    from samy_wgen.pipeline.run_climate_delta import load_cmip6_projection
+
+    city_dir = tmp_path / "Beijing"
+    city_dir.mkdir()
+    for suffix, value in (("historical", 280.0), ("ssp245", 281.0)):
+        pd.DataFrame({"time": ["2014-12-31"], "tas": [value]}).to_csv(
+            city_dir / f"cnrm_esm2_1_{suffix}.csv", index=False
+        )
+        pd.DataFrame({"time": ["2014-12-16"], "hurs": [50.0]}).to_csv(
+            city_dir / f"cnrm_esm2_1_{suffix}_monthly.csv", index=False
+        )
+        pd.DataFrame({"time": ["2014-12-16"], "rsds": [200.0]}).to_csv(
+            city_dir / f"mri_esm2_0_{suffix}_monthly.csv", index=False
+        )
+
+    _, monthly_df, meta = load_cmip6_projection(
+        tmp_path, city="Beijing", ssp="ssp245", scenario_id="CNRM_ssp245", verbose=False
+    )
+
+    assert meta["model_name"] == "CNRM-ESM2-1"
+    assert "hurs" in monthly_df.columns
+    assert "rsds" not in monthly_df.columns
+
+
+def test_mixed_resolution_infers_monthly_wind_from_csv_columns():
+    from samy_wgen.pipeline.run_climate_delta import compute_mixed_resolution_baseline
+
+    daily_index = pd.date_range("1991-01-01", "1991-12-31", freq="D")
+    monthly_index = pd.date_range("1991-01-01", "1991-12-01", freq="MS")
+    daily_df = pd.DataFrame({"tas": 280.0, "ps": 101000.0}, index=daily_index)
+    monthly_df = pd.DataFrame({"sfcWind": 2.0}, index=monthly_index)
+
+    baseline = compute_mixed_resolution_baseline(
+        daily_df, monthly_df, 1991, 1991, var_resolution_config={}
+    )
+
+    assert baseline["sfcWind"]["resolution"] == "monthly"

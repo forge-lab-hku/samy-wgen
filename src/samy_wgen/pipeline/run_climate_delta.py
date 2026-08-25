@@ -545,6 +545,29 @@ def _load_and_merge_climate_data(file_pairs: list[tuple[Path, Path]], required: 
     return pd.DataFrame(), "None"
 
 
+def infer_variable_resolution(
+    daily_df: pd.DataFrame,
+    monthly_df: pd.DataFrame,
+) -> dict[str, str]:
+    """Infer each supported variable's resolution from the loaded CSV columns.
+
+    Daily and monthly CMIP6 files have already been separated by the loader.
+    When a variable is available in both, retain the daily series; otherwise
+    use the only available series.  This supports GCM-specific availability
+    (for example, CNRM monthly ``sfcWind``) without a model-specific map.
+    """
+    supported = {
+        "tas_C", "tasmax_C", "tasmin_C", "ps_hPa", "sfcWind", "rsds", "hurs", "huss"
+    }
+    daily_columns = set(daily_df.columns)
+    monthly_columns = set(monthly_df.columns)
+    return {
+        variable: "daily" if variable in daily_columns else "monthly"
+        for variable in supported
+        if variable in daily_columns or variable in monthly_columns
+    }
+
+
 def load_cmip6_projection(
     base_path: Path,
     city: str,
@@ -565,55 +588,61 @@ def load_cmip6_projection(
     """
     city_dir = _resolve_city_dir(base_path, city)
 
-    # Try CMIP6 format: mpi_esm1_2_lr_{experiment}.csv
-    cmip6_daily_pairs = [(
-        city_dir / "mpi_esm1_2_lr_historical.csv",
-        city_dir / f"mpi_esm1_2_lr_{ssp}.csv"
-    )]
-    cmip6_monthly_pairs = [(
-        city_dir / "mpi_esm1_2_lr_historical_monthly.csv",
-        city_dir / f"mpi_esm1_2_lr_{ssp}_monthly.csv"
-    )]
+    models = {
+        "MPI": (
+            city_dir / "mpi_esm1_2_lr_historical.csv",
+            city_dir / f"mpi_esm1_2_lr_{ssp}.csv",
+            city_dir / "mpi_esm1_2_lr_historical_monthly.csv",
+            city_dir / f"mpi_esm1_2_lr_{ssp}_monthly.csv",
+        ),
+        "CNRM": (
+            city_dir / "cnrm_esm2_1_historical.csv",
+            city_dir / f"cnrm_esm2_1_{ssp}.csv",
+            city_dir / "cnrm_esm2_1_historical_monthly.csv",
+            city_dir / f"cnrm_esm2_1_{ssp}_monthly.csv",
+        ),
+        "MRI": (
+            city_dir / "mri_esm2_0_historical.csv",
+            city_dir / f"mri_esm2_0_{ssp}.csv",
+            city_dir / "mri_esm2_0_historical_monthly.csv",
+            city_dir / f"mri_esm2_0_{ssp}_monthly.csv",
+        ),
+    }
 
-    # Try CMIP6 CNRM format: cnrm_esm2_1_{experiment}.csv
-    cnrm_daily_pairs = [(
-        city_dir / "cnrm_esm2_1_historical.csv",
-        city_dir / f"cnrm_esm2_1_{ssp}.csv"
-    )]
-    cnrm_monthly_pairs = [(
-        city_dir / "cnrm_esm2_1_historical_monthly.csv",
-        city_dir / f"cnrm_esm2_1_{ssp}_monthly.csv"
-    )]
-
-    # Try CMIP6 MRI format: mri_esm2_0_{experiment}.csv
-    mri_daily_pairs = [(
-        city_dir / "mri_esm2_0_historical.csv",
-        city_dir / f"mri_esm2_0_{ssp}.csv"
-    )]
-    mri_monthly_pairs = [(
-        city_dir / "mri_esm2_0_historical_monthly.csv",
-        city_dir / f"mri_esm2_0_{ssp}_monthly.csv"
-    )]
-
-    # Determine loading priority based on scenario_id
-    # If scenario contains a supported model name, prioritize its files.
+    # Determine loading priority based on scenario_id.  The monthly pair is
+    # always taken from the same selected model as the daily pair; it must not
+    # fall through to a different GCM merely because that GCM has monthly data.
     with _stdout_context(verbose):
         scenario_id_upper = (scenario_id or "").upper()
         if "MRI" in scenario_id_upper:
-            daily_pairs = mri_daily_pairs + cmip6_daily_pairs + cnrm_daily_pairs
-            monthly_pairs = mri_monthly_pairs + cmip6_monthly_pairs + cnrm_monthly_pairs
+            model_order = ["MRI", "MPI", "CNRM"]
             print(f"  [Model Priority] Using MRI model priority for scenario: {scenario_id}")
         elif "CNRM" in scenario_id_upper:
-            daily_pairs = cnrm_daily_pairs + cmip6_daily_pairs + mri_daily_pairs
-            monthly_pairs = cnrm_monthly_pairs + cmip6_monthly_pairs + mri_monthly_pairs
+            model_order = ["CNRM", "MPI", "MRI"]
             print(f"  [Model Priority] Using CNRM model priority for scenario: {scenario_id}")
         else:
-            daily_pairs = cmip6_daily_pairs + cnrm_daily_pairs + mri_daily_pairs
-            monthly_pairs = cmip6_monthly_pairs + cnrm_monthly_pairs + mri_monthly_pairs
+            model_order = ["MPI", "CNRM", "MRI"]
 
-        daily_df, model_name = _load_and_merge_climate_data(daily_pairs, required=True)
+        daily_df = pd.DataFrame()
+        model_name = "None"
+        monthly_df = pd.DataFrame()
+        for model_key in model_order:
+            hist_daily, future_daily, hist_monthly, future_monthly = models[model_key]
+            candidate_daily, candidate_name = _load_and_merge_climate_data(
+                [(hist_daily, future_daily)], required=False
+            )
+            if candidate_daily.empty:
+                continue
+            daily_df = candidate_daily
+            model_name = candidate_name
+            monthly_df, _ = _load_and_merge_climate_data(
+                [(hist_monthly, future_monthly)], required=False
+            )
+            break
+        if daily_df.empty:
+            tried = [str(models[key][0]) for key in model_order]
+            raise FileNotFoundError(f"No valid CMIP6 daily file pair found. Tried: {tried}")
         print(f"  [Model Detected] Loaded {model_name} for {city}/{scenario_id or ssp}")
-        monthly_df, _ = _load_and_merge_climate_data(monthly_pairs, required=False)
 
     meta = {
         'base_path': str(base_path),
@@ -819,28 +848,23 @@ def compute_mixed_resolution_baseline(
     daily_df = _apply_unit_conversions(daily_df)
     monthly_df = _apply_unit_conversions(monthly_df)
 
-    # Default variable configuration
-    # NOTE: ps_hPa resolution depends on the dataset:
-    #   - CMIP6 often provides daily pressure
-    #   - CORDEX-CMIP5 commonly needs monthly pressure climatology
+    # Transform type remains explicit, while resolution is inferred from the
+    # actual columns loaded from the daily and monthly CSV files.
     baseline_vars = {
-        # Daily variables (temperature, wind)
         'tas_C': ('daily', 'additive'),
         'tasmax_C': ('daily', 'additive'),
         'tasmin_C': ('daily', 'additive'),
         'sfcWind': ('daily', 'multiplicative'),
-        # Monthly variables (solar, humidity, pressure)
-        'ps_hPa': ('monthly', 'additive'),  # Default to monthly, will auto-detect below
+        'ps_hPa': ('daily', 'additive'),
         'rsds': ('monthly', 'multiplicative'),
         'hurs': ('monthly', 'multiplicative'),
         'huss': ('monthly', 'multiplicative'),
     }
 
-    # Auto-detect ps_hPa resolution based on actual data availability.
-    if 'ps_hPa' in daily_df.columns and 'ps_hPa' not in var_resolution_config:
-        baseline_vars['ps_hPa'] = ('daily', 'additive')
-    elif 'ps_hPa' in monthly_df.columns and 'ps_hPa' not in var_resolution_config:
-        baseline_vars['ps_hPa'] = ('monthly', 'additive')
+    inferred_resolution = infer_variable_resolution(daily_df, monthly_df)
+    for var, resolution in inferred_resolution.items():
+        if var in baseline_vars:
+            baseline_vars[var] = (resolution, baseline_vars[var][1])
 
     # Override with user config if provided
     for var in var_resolution_config:
@@ -862,18 +886,19 @@ def compute_mixed_resolution_baseline(
             f"Daily data period: {daily_df.index.min()} to {daily_df.index.max()}"
         )
 
-    # Compute monthly baselines
-    monthly_mask = (
-        (monthly_df.index.year >= baseline_start) &
-        (monthly_df.index.year <= baseline_end)
-    )
-    monthly_baseline_data = monthly_df.loc[monthly_mask]
-
-    if monthly_baseline_data.empty:
-        raise ValueError(
-            f"Monthly baseline slice is empty for {baseline_start}-{baseline_end}. "
-            f"Monthly data period: {monthly_df.index.min()} to {monthly_df.index.max()}"
+    monthly_baseline_data = pd.DataFrame()
+    needs_monthly = any(resolution == 'monthly' for resolution, _ in baseline_vars.values())
+    if needs_monthly:
+        monthly_mask = (
+            (monthly_df.index.year >= baseline_start) &
+            (monthly_df.index.year <= baseline_end)
         )
+        monthly_baseline_data = monthly_df.loc[monthly_mask]
+        if monthly_baseline_data.empty:
+            raise ValueError(
+                f"Monthly baseline slice is empty for {baseline_start}-{baseline_end}. "
+                f"Monthly data period: {monthly_df.index.min()} to {monthly_df.index.max()}"
+            )
 
     # Process each variable
     for var, (resolution, transform_type) in baseline_vars.items():

@@ -200,6 +200,49 @@ class TestEnsurePipelineInputs:
 
 
 class TestDeterministicArtifacts:
+    def test_stage4_uses_mixed_resolution_inputs(self, tmp_path, monkeypatch):
+        from samy_wgen.pipeline import run_climate_delta, run_pipeline
+
+        index = pd.DatetimeIndex(["1991-01-01"])
+        daily_df = pd.DataFrame({"tas": [280.0], "ps": [101000.0]}, index=index)
+        monthly_df = pd.DataFrame({"sfcWind": [2.0]}, index=index)
+        captured: dict[str, object] = {}
+
+        monkeypatch.setattr(
+            run_climate_delta,
+            "load_cmip6_or_cordex6",
+            lambda **_kwargs: (daily_df, monthly_df, {"model_name": "CNRM-ESM2-1"}),
+        )
+        monkeypatch.setattr(run_climate_delta, "load_rsvar_output", lambda _path: (pd.DataFrame(index=index), {}))
+
+        def fake_baseline(daily, monthly, *_args, **_kwargs):
+            captured["daily"] = daily
+            captured["monthly"] = monthly
+            return {"tas_C": {"resolution": "daily"}}
+
+        monkeypatch.setattr(run_climate_delta, "compute_mixed_resolution_baseline", fake_baseline)
+        monkeypatch.setattr(
+            run_climate_delta,
+            "apply_mixed_resolution_climate_delta",
+            lambda _rsvar, daily, monthly, **_kwargs: (daily.assign(temp=20.0), {}),
+        )
+
+        result = run_pipeline._stage4_climate_delta(
+            rsvar_xlsx=tmp_path / "3_rsvar.xlsx",
+            cmip6_dir=tmp_path / "CMIP6",
+            city="Beijing",
+            ssp="ssp245",
+            lat=39.9,
+            baseline_start=1991,
+            baseline_end=2010,
+            out_dir=tmp_path,
+            overwrite=True,
+        )
+
+        assert captured["daily"] is daily_df
+        assert captured["monthly"] is monthly_df
+        assert "temp" in result.columns
+
     def test_output_historical_epw_requires_actual_2000(self, tmp_path):
         from samy_wgen.pipeline.run_pipeline import _output_historical_epw
 
