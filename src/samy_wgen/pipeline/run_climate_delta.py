@@ -98,7 +98,7 @@ def _resolve_projection_args(args) -> dict[str, Any]:
             "label": args.scenario_label or f"CMIP6_{args.ssp}",
             "root": projection_root,
             "ssp": args.ssp,
-            "gcm": args.gcm or "AUTO",
+            "gcm": args.gcm,
             "rcm": args.rcm,
         }
 
@@ -573,6 +573,7 @@ def load_cmip6_projection(
     city: str,
     ssp: str,
     scenario_id: str = None,
+    gcm: str | None = None,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Load CMIP6 data with auto-detection of supported model file names.
@@ -582,6 +583,8 @@ def load_cmip6_projection(
         city: City name (e.g., 'Los Angeles')
         ssp: SSP scenario (e.g., 'ssp245', 'ssp370')
         scenario_id: Full scenario identifier for model priority detection
+        gcm: Optional explicit GCM selector. If omitted, preserve the
+            historical scenario-id priority and fallback behavior.
 
     Returns:
         (daily_df, monthly_df, meta_dict)
@@ -614,7 +617,20 @@ def load_cmip6_projection(
     # fall through to a different GCM merely because that GCM has monthly data.
     with _stdout_context(verbose):
         scenario_id_upper = (scenario_id or "").upper()
-        if "MRI" in scenario_id_upper:
+        if gcm:
+            requested = gcm.upper().replace("-", "_")
+            aliases = {
+                "MPI": "MPI", "MPI_ESM1_2_LR": "MPI",
+                "CNRM": "CNRM", "CNRM_ESM2_1": "CNRM",
+                "MRI": "MRI", "MRI_ESM2_0": "MRI",
+            }
+            if requested not in aliases:
+                raise ValueError(
+                    f"Unsupported explicit GCM '{gcm}'. Expected MPI-ESM1-2-LR, CNRM-ESM2-1, or MRI-ESM2-0."
+                )
+            model_order = [aliases[requested]]
+            print(f"  [Model Selection] Explicit GCM: {model_order[0]}")
+        elif "MRI" in scenario_id_upper:
             model_order = ["MRI", "MPI", "CNRM"]
             print(f"  [Model Priority] Using MRI model priority for scenario: {scenario_id}")
         elif "CNRM" in scenario_id_upper:
@@ -659,6 +675,7 @@ def load_cmip6_or_cordex6(
     city: str,
     ssp: str,
     scenario_id: str = None,
+    gcm: str | None = None,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Backward-compatible wrapper retained for samy-run and existing tests."""
@@ -667,6 +684,7 @@ def load_cmip6_or_cordex6(
         city=city,
         ssp=ssp,
         scenario_id=scenario_id,
+        gcm=gcm,
         verbose=verbose,
     )
 
@@ -1617,7 +1635,8 @@ def main():
         if projection["type"] == "cmip6":
             try:
                 daily_df, monthly_df, meta = load_cmip6_projection(
-                    projection["root"], city, projection["ssp"], scenario_id=projection_label
+                    projection["root"], city, projection["ssp"],
+                    scenario_id=projection_label, gcm=projection.get("gcm")
                 )
             except Exception as e:
                 print(f"  [FAIL] Could not load data for {city}/{projection_label}: {e}")

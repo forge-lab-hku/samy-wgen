@@ -112,6 +112,27 @@ def test_load_cmip6_projection_prioritizes_mri_scenario(tmp_path):
     assert meta["model_name"] == "MRI-ESM2-0"
 
 
+def test_load_cmip6_projection_explicit_gcm_selector(tmp_path):
+    from samy_wgen.pipeline.run_climate_delta import load_cmip6_projection
+
+    city_dir = tmp_path / "Beijing"
+    city_dir.mkdir()
+    for model, temperature in (("mpi_esm1_2_lr", 280.0), ("cnrm_esm2_1", 285.0)):
+        pd.DataFrame({"time": ["2014-12-31"], "tas": [temperature]}).to_csv(
+            city_dir / f"{model}_historical.csv", index=False
+        )
+        pd.DataFrame({"time": ["2015-01-01"], "tas": [temperature + 1.0]}).to_csv(
+            city_dir / f"{model}_ssp245.csv", index=False
+        )
+
+    daily_df, _, meta = load_cmip6_projection(
+        tmp_path, city="Beijing", ssp="ssp245", gcm="CNRM-ESM2-1", verbose=False
+    )
+
+    assert abs(daily_df.iloc[0]["tas_C"] - 11.85) < 1e-9
+    assert meta["model_name"] == "CNRM-ESM2-1"
+
+
 def test_load_cmip6_projection_keeps_monthly_data_with_selected_model(tmp_path):
     from samy_wgen.pipeline.run_climate_delta import load_cmip6_projection
 

@@ -140,6 +140,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="NSRDB solar CSV path (overrides auto-detect under data-dir/NSRDB/)")
     parser.add_argument("--cmip6-dir", default=None,
                         help="CMIP6 root directory (overrides data-dir/CMIP6)")
+    parser.add_argument("--gcm", default=None,
+                        help="Optional CMIP6 GCM selector (e.g. MPI-ESM1-2-LR, CNRM-ESM2-1, MRI-ESM2-0). Omit to retain automatic selection.")
+    parser.add_argument("--rsvar-input", default=None,
+                        help="Optional existing 3_rsvar.xlsx/CSV to reuse instead of running Stage 3; single-city mode only.")
     parser.add_argument("--out-dir", default=None,
                         help="Output directory (default: output/<city>)")
     parser.add_argument("--elevation", type=float, default=0.0,
@@ -446,7 +450,8 @@ def _stage3_rsvar(merged_csv: Path, lat: float, city: str,
 def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
                            city: str, ssp: str, lat: float,
                            baseline_start: int, baseline_end: int,
-                           out_dir: Path, overwrite: bool) -> pd.DataFrame:
+                           out_dir: Path, overwrite: bool,
+                           gcm: str | None = None) -> pd.DataFrame:
     """Apply per-variable daily/monthly CMIP6 deltas → 4_delta_corrected.csv."""
     from samy_wgen.pipeline.run_climate_delta import (
         load_rsvar_output,
@@ -464,7 +469,9 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
     _print_title("Stage 4 Apply Climate Delta")
     print(f"[stage 4] Applying CMIP6 climate delta ({ssp})")
     daily_df, monthly_df, meta = load_cmip6_or_cordex6(
-        base_path=cmip6_dir, city=city, ssp=ssp, verbose=False
+        base_path=cmip6_dir, city=city, ssp=ssp,
+        scenario_id=f"{gcm}_{ssp}" if gcm else None,
+        gcm=gcm, verbose=False
     )
     gcm = meta.get("model_name", "unknown")
     print(f"  GCM: {gcm}, {len(daily_df):,} daily rows, {len(monthly_df):,} monthly rows")
@@ -691,17 +698,25 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
     merged_csv = _stage2_merge_nsrdb(isd_lst, nsrdb_csv, out_dir, overwrite=ow)
 
     if args.mode == "deterministic":
-        xlsx = _stage3_rsvar(
-            merged_csv=merged_csv,
-            lat=meta["lat"],
-            city=city,
-            baseline_start=args.baseline_start,
-            baseline_end=args.baseline_end,
-            forecast_start=args.start,
-            forecast_end=args.end,
-            out_dir=out_dir,
-            overwrite=ow,
-        )
+        if args.rsvar_input:
+            if len(args.city) != 1:
+                raise SystemExit("ERROR: --rsvar-input is supported only in single-city mode.")
+            xlsx = Path(args.rsvar_input)
+            if not xlsx.exists():
+                raise SystemExit(f"ERROR: --rsvar-input not found: {xlsx}")
+            print(f"[stage 3] Reusing explicit RS-VAR input: {xlsx}")
+        else:
+            xlsx = _stage3_rsvar(
+                merged_csv=merged_csv,
+                lat=meta["lat"],
+                city=city,
+                baseline_start=args.baseline_start,
+                baseline_end=args.baseline_end,
+                forecast_start=args.start,
+                forecast_end=args.end,
+                out_dir=out_dir,
+                overwrite=ow,
+            )
         output_df = _stage4_climate_delta(
             rsvar_xlsx=xlsx,
             cmip6_dir=cmip6_dir,
@@ -712,6 +727,7 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             baseline_end=args.baseline_end,
             out_dir=out_dir,
             overwrite=ow,
+            gcm=args.gcm,
         )
         print(f"\n[output] Writing historical EPW for 2000")
         historical_epw = _output_historical_epw(
