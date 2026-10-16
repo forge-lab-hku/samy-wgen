@@ -38,7 +38,7 @@ Python ≥ 3.10 required. All dependencies are declared in `pyproject.toml` and 
 
 Configure external data access once after installation.
 
-**NOAA ISD** — no registration required (public FTP).
+**NOAA ISD** — no registration required (public HTTPS archive).
 
 **NREL NSRDB** (solar irradiance)
 
@@ -128,6 +128,8 @@ output/Miami/
 | `--download-data` | `isd nsrdb cmip6` | Missing datasets to auto-download before running |
 | `--isd-radius` | `50` | Radius used for automatic ISD station selection |
 | `--cmip6-models` | `mpi_esm1_2_lr` | CMIP6 model(s) used for automatic download |
+| `--gcm` | automatic | Optional CMIP6 GCM selector: `MPI-ESM1-2-LR`, `CNRM-ESM2-1`, or `MRI-ESM2-0` |
+| `--rsvar-input` | — | Reuse an existing RS-VAR XLSX/CSV instead of running Stage 3 (single-city mode) |
 | `--skip-download` | `false` | Require inputs to already exist locally |
 
 ---
@@ -191,8 +193,13 @@ samy-download download \
 samy-download download \
   --city Miami \
   --data cmip6 \
-  --models mpi_esm1_2_lr cnrm_esm2_1 \
+  --models mpi_esm1_2_lr cnrm_esm2_1 mri_esm2_0 \
   --experiments historical ssp2_4_5 ssp5_8_5
+
+# Extract city series from locally available CMIP6 NetCDF or ZIP-wrapped NetCDF files
+samy-download extract-cmip6 \
+  --city Miami \
+  --input /path/to/cmip6-file.nc
 ```
 
 Files are written directly to the paths the pipeline expects:
@@ -211,6 +218,9 @@ data/
 
 CMIP6 data are downloaded as city-specific grid-point extractions using the CDS
 `area` parameter, so no large global files are stored locally.
+For offline archives, `extract-cmip6` writes the nearest-grid city series under
+`data/CMIP6/<City>/`. Daily and monthly variables from the selected GCM can be
+used together; temporal resolution is handled per variable.
 
 ### Download ERA5-Land and calibrate its solar radiation
 
@@ -312,6 +322,7 @@ Recommended sources:
 | `list-cmip6 --experiment <exp> --resolution <res> --var <var>` | Filter live CMIP6 catalogue rows before download |
 | `list-cordex [--detail]` | Inspect live CORDEX catalogue combinations from CDS |
 | `download --city <city_ascii> --data cordex [--cordex-gcm ... --cordex-rcm ...]` | Download CORDEX-CMIP5 city CSVs for `samy-delta` |
+| `extract-cmip6 --city <city_ascii> --input <NETCDF...>` | Extract nearest-grid city series from local CMIP6 NetCDF or ZIP-wrapped NetCDF files |
 | `list-stations --city <city_ascii> [--radius 150]` | Print nearby ISD stations sorted by distance |
 | `download --city <city_ascii> [--isd-station <USAF-WBAN>]` | Download ISD + NSRDB + CMIP6 for one city; otherwise auto-select best-coverage ISD station within 50 km |
 | `download --city <city_ascii_1> <city_ascii_2> ...` | Batch-download multiple cities; CMIP6 requests are grouped into shared bounding-box fetches |
@@ -431,6 +442,7 @@ for year in [2030, 2050, 2080]:
 | `samy-download download --city <city_ascii> --data era5-land` | Download hourly ERA5-Land point time series |
 | `samy-download calibrate-solar --city <city_ascii> --era5 <file> --nsrdb <file>` | Calibrate ERA5-Land GHI/DNI/DHI with overlapping NSRDB data |
 | `samy-download download --city <city_ascii> --data cordex` | Download CORDEX-CMIP5 historical and RCP8.5 city series |
+| `samy-download extract-cmip6 --city <city_ascii> --input <NETCDF...>` | Extract nearest-grid city series from local CMIP6 NetCDF file(s) |
 | `samy-download list-stations --city <city_ascii>` | List nearby ISD stations |
 | `samy-download download --city <city_ascii>` | Download ISD / NSRDB / CMIP6 (auto-select ISD station by coverage within 50 km) |
 | `samy-run --city <city_ascii>` | Full pipeline with auto-download of missing ISD / NSRDB / CMIP6 inputs |

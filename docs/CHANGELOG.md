@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Added the `samy-download` data-retrieval CLI, automatic missing-input downloads in `samy-run`, and batched multi-city downloads with per-city ISD station overrides.
+- Expanded the bundled city catalog for global coverage and added multi-source NSRDB downloads.
+- Added hourly ERA5-Land point downloads and NSRDB-based calibration of GHI, DNI, and DHI to extend solar-radiation coverage.
+- Added CORDEX-CMIP5 downloads and live catalogue inspection for climate-delta workflows.
+- Added `samy-download extract-cmip6` to create city time series from local CMIP6 NetCDF files, including ZIP-wrapped files.
+- Added MRI-ESM2-0 support, explicit `samy-run --gcm` selection, and `--rsvar-input` reuse of an existing single-city RS-VAR result.
+- Added live NSRDB source and coverage inspection to improve source selection and grouped downloads.
+
+### Changed
+- Standardized user-facing city codes as ASCII identifiers and derive local solar time offsets from city coordinates.
+- Switched NOAA ISD downloads from FTP to HTTPS.
+- Updated CMIP6 handling to preserve daily and monthly inputs together and determine temporal resolution per variable.
+- Improved automatic ISD station and NSRDB coverage selection using available station and query coverage.
+
+### Fixed
+- Validate cached CMIP6 coverage against the requested years before skipping a download.
+- Harden RS-VAR fitting and regime-label handling for sparse assignments and non-finite posterior output.
+- Use dewpoint as a fallback when yearly EPW humidity inputs are unavailable, and generalize DDY generation for baseline and future periods.
+
 ## [0.1.2] - 2026-04-10
 
 ### Added
