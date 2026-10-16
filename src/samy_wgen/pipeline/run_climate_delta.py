@@ -66,6 +66,7 @@ DEFAULT_OUT_DIR = Path("output") / "RSVAR_cd"
 DEFAULT_OUT_DIR_MONTHLY = Path("output") / "RSVAR_cd_monthly"
 DEFAULT_CMIP6_DIR = Path("data") / "CMIP6"
 DEFAULT_CORDEX_CMIP5_DIR = Path("data") / "CORDEX_CMIP5"
+DEFAULT_ISD_DIR = Path("data") / "ISD_complete_solar"
 
 
 def _stdout_context(verbose: bool):
@@ -1575,7 +1576,7 @@ def main():
     print(f"Delta mode: {args.delta_mode}")
 
     # ISD data directory for baseline temperature
-    isd_dir = REPO_ROOT / "data" / "ISD_complete_solar"
+    isd_dir = DEFAULT_ISD_DIR
 
     n_ok = 0
     n_skip = 0

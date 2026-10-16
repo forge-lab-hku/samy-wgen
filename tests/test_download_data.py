@@ -10,6 +10,7 @@ Slow integration tests (real network) run with:
 from __future__ import annotations
 
 import io
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -895,6 +896,22 @@ class TestCliParsing:
         ])
         assert args.cmip6_var == ["near_surface_air_temperature", "precipitation"]
 
+    def test_download_cordex_options(self):
+        parser = self._parser()
+        args = parser.parse_args([
+            "download", "--city", "Los_Angeles", "--data", "cordex",
+            "--cordex-rcm", "ncar_regcm4",
+            "--cordex-var", "2m_air_temperature", "surface_pressure",
+            "--cordex-historical-years", "2000", "2000",
+            "--cordex-rcp85-years", "2006", "2006",
+            "--cordex-months", "01",
+        ])
+        assert args.data == ["cordex"]
+        assert args.cordex_var == ["2m_air_temperature", "surface_pressure"]
+        assert args.cordex_historical_years == [2000, 2000]
+        assert args.cordex_rcp85_years == [2006, 2006]
+        assert args.cordex_months == ["01"]
+
     def test_extract_cmip6_parses_multiple_inputs_and_cities(self):
         parser = self._parser()
         args = parser.parse_args([
@@ -1596,7 +1613,7 @@ class TestCmip6YearRange:
             ),
             patch(
                 "samy_wgen.pipeline.download_data._nc_bytes_to_point_df",
-                return_value=pd.DataFrame({"time": pd.date_range("2000-01-01", periods=1), "tas": [1.0]}),
+                return_value=pd.DataFrame({"time": pd.date_range("2000-01-01", periods=1), "tas": [280.0], "ps": [101000.0]}),
             ),
             patch("samy_wgen.pipeline.download_data.time.sleep"),
         ):
@@ -1612,10 +1629,85 @@ class TestCmip6YearRange:
                 output_dir=str(tmp_path),
             )
 
-        assert len(captured_requests) == 1
+        assert len(captured_requests) == 2
         assert captured_requests[0]["domain"] == "north_america"
         assert captured_requests[0]["horizontal_resolution"] == "0_22_degree_x_0_22_degree"
-        assert captured_requests[0]["variable"] == ["2m_air_temperature", "surface_pressure"]
+        assert {request["variable"] for request in captured_requests} == {
+            "2m_air_temperature", "surface_pressure"
+        }
+        assert captured_requests[0]["year"] == ["2000"]
+        assert captured_requests[0]["month"] == [f"{month:02d}" for month in range(1, 13)]
+        assert "start_year" not in captured_requests[0]
+        assert captured_requests[0]["area"] == [26.26, -80.69, 25.26, -79.69]
+        assert (tmp_path / "NAM-22_mpi_m_mpi_esm_lr_ncar_regcm4_r1i1p1" / "Miami" / "historical.csv").exists()
+
+    def test_cordex_zip_outputs_feed_delta_reader(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cordex_cmip5
+        from samy_wgen.pipeline.run_climate_delta import (
+            compute_cordex_baseline,
+            compute_daily_delta,
+            load_cordex_cmip5_projection,
+        )
+
+        plans = [
+            {
+                "domain": "north_america",
+                "experiment": experiment,
+                "gcm_model": "mpi_m_mpi_esm_lr",
+                "rcm_model": "ncar_regcm4",
+                "ensemble_member": "r1i1p1",
+                "horizontal_resolution": "0_22_degree_x_0_22_degree",
+                "variable": ["2m_air_temperature", "surface_pressure"],
+            }
+            for experiment in ("historical", "rcp_8_5")
+        ]
+
+        def fake_retrieve(_dataset, request, path):
+            year = int(request["year"][0])
+            times = pd.date_range(f"{year}-01-01", periods=3, freq="D")
+            temperature = 280.0 if year == 2000 else 282.0
+            with zipfile.ZipFile(path, "w") as archive:
+                if request["variable"] == "2m_air_temperature":
+                    archive.writestr("tas.nc", _make_nc_bytes(times, lat=34.1141, lon=-118.4068,
+                                                              variables={"tas": np.full(3, temperature)}))
+                else:
+                    archive.writestr("ps.nc", _make_nc_bytes(times, lat=34.1141, lon=-118.4068,
+                                                             variables={"ps": np.full(3, 101000.0)}))
+
+        client = MagicMock()
+        client.retrieve.side_effect = fake_retrieve
+        with (
+            patch("cdsapi.Client", return_value=client),
+            patch("samy_wgen.pipeline.download_data._resolve_cordex_download_plan", return_value=plans),
+            patch("samy_wgen.pipeline.download_data.CORDEX_EXP_YEARS", {"historical": [2000], "rcp_8_5": [2006]}),
+            patch("samy_wgen.pipeline.download_data.time.sleep"),
+        ):
+            outputs = download_cordex_cmip5("Los_Angeles", output_dir=str(tmp_path))
+
+        variant_root = outputs["historical"].parent.parent
+        assert outputs["rcp_8_5"] == variant_root / "Los_Angeles" / "rcp85.csv"
+        projection, _, _ = load_cordex_cmip5_projection(variant_root, "Los_Angeles", verbose=False)
+        baseline = compute_cordex_baseline(projection, 2000, 2000)
+        delta = compute_daily_delta(projection, baseline, pd.Timestamp("2006-01-01"))
+        assert delta["tas_C"] == pytest.approx(2.0)
+        assert delta["ps_hPa"] == pytest.approx(0.0)
+
+    def test_cordex_existing_csv_must_cover_requested_month(self, tmp_path):
+        from samy_wgen.pipeline.download_data import _cordex_csv_covers_request
+
+        path = tmp_path / "historical.csv"
+        frame = pd.DataFrame({
+            "time": pd.date_range("2000-01-01", periods=31, freq="D"),
+            "tas": np.full(31, 280.0),
+            "ps": np.full(31, 101000.0),
+        })
+        frame.to_csv(path, index=False)
+        variables = ["2m_air_temperature", "surface_pressure"]
+        assert _cordex_csv_covers_request(path, [2000], ["01"], variables)
+        assert not _cordex_csv_covers_request(path, [2000], ["01", "02"], variables)
+        assert not _cordex_csv_covers_request(path, [2000, 2001], ["01"], variables)
+        frame.iloc[:3].to_csv(path, index=False)
+        assert not _cordex_csv_covers_request(path, [2000], ["01"], variables)
 
     def test_download_cordex_skips_when_plan_empty(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_cordex_cmip5
@@ -1626,13 +1718,14 @@ class TestCmip6YearRange:
             patch("cdsapi.Client", return_value=mock_client),
             patch("samy_wgen.pipeline.download_data._resolve_cordex_download_plan", return_value=[]),
         ):
-            download_cordex_cmip5(
-                city="Miami",
-                lat=25.76,
-                lon=-80.19,
-                cordex_domain="NAM-22",
-                output_dir=str(tmp_path),
-            )
+            with pytest.raises(ValueError, match="No CORDEX download combinations"):
+                download_cordex_cmip5(
+                    city="Miami",
+                    lat=25.76,
+                    lon=-80.19,
+                    cordex_domain="NAM-22",
+                    output_dir=str(tmp_path),
+                )
 
         mock_client.retrieve.assert_not_called()
 

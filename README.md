@@ -50,10 +50,10 @@ Configure external data access once after installation.
    #   NSRDB email   : your@email.com
    ```
 
-**Copernicus CDS** (CMIP6 climate projections; optional CORDEX-CMIP5 catalogue queries)
+**Copernicus CDS** (CMIP6 and CORDEX-CMIP5 climate projections)
 
 1. Register at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu)
-2. Accept the dataset licence for *CMIP6 climate projections* and, if you plan to inspect CORDEX availability through the catalogue tools, *CORDEX regional climate projections* in your CDS profile
+2. Accept the licence for each CDS dataset you plan to download: *CMIP6 climate projections* and/or *CORDEX regional climate projections*
 3. Create `~/.cdsapirc`:
    ```ini
    # ~/.cdsapirc
@@ -214,32 +214,55 @@ CMIP6 data are downloaded as city-specific grid-point extractions using the CDS
 
 ### CORDEX-CMIP5 note
 
-This repository does **not** currently provide a built-in CORDEX download path
-through `samy-download download`.
+Use `samy-download list-cordex --domain NAM-22 --detail` to inspect available
+GCM/RCM combinations, then download a city with `--data cordex`:
 
-You can still use externally prepared CORDEX-CMIP5 data as climate-delta input.
-The package only requires that your files follow the expected folder structure
-and CSV schema.
+```bash
+samy-download download --city Los_Angeles --data cordex \
+  --cordex-gcm mpi_m_mpi_esm_lr --cordex-rcm ncar_regcm4
+```
 
-Required layout:
+By default, the downloader requests the historical and RCP8.5 experiments,
+all supported daily variables and the configured experiment year ranges. A
+small January sample should use a separate output directory:
+
+```bash
+samy-download download --city Los_Angeles --data cordex \
+  --cordex-gcm mpi_m_mpi_esm_lr --cordex-rcm ncar_regcm4 \
+  --cordex-var 2m_air_temperature surface_pressure \
+  --cordex-historical-years 2000 2000 --cordex-rcp85-years 2006 2006 \
+  --cordex-months 01 --cordex-dir tests/output/cordex_la_smoke
+```
+
+This sample checks the data path, not a production climate baseline. Existing
+CSVs are skipped only when they cover all requested full months and variables;
+otherwise use another `--cordex-dir` or `--cordex-overwrite`.
+
+The downloader extracts the nearest model grid cell and writes CSV files in
+the layout expected by `samy-delta`:
 
 ```text
-<your-cordex-root>/
+data/CORDEX_CMIP5/<domain>_<gcm>_<rcm>_<ensemble>/
 └── <CitySlug>/
     ├── historical.csv
     └── rcp85.csv
 ```
 
-Required CSV conventions:
+Each CSV has a `time` column and available model variables such as `tas`,
+`ps`, `huss`, `hurs`, `sfcWind`, and `rsds`. To apply the downloaded signal to
+an existing RS-VAR forecast, point `--projection-root` to the variant folder:
 
-- Each file must include a `time` column.
-- Historical and future files must use the same variable columns.
-- Variable names must match the climate-delta reader expectations, such as
-  `tas`, `tasmax`, `tasmin`, `ps` or `psl`, `sfcWind`, `rsds`, `hurs`, `huss`.
+```bash
+samy-delta --city Los_Angeles --rsvar-dir output/RSVAR \
+  --projection-type cordex-cmip5 \
+  --projection-root data/CORDEX_CMIP5/NAM-22_mpi_m_mpi_esm_lr_ncar_regcm4_r1i1p1 \
+  --gcm mpi_m_mpi_esm_lr --rcm ncar_regcm4
+```
 
-If the folder structure and CSV columns match, the data can be loaded by
-`samy-delta` even when the files were downloaded or prepared outside this
-repository.
+`samy-delta` computes the climate baseline and daily or monthly delta from
+these raw city series. The default baseline is 1991–2010; both historical and
+RCP8.5 data must cover the requested baseline years. Externally prepared CSVs
+can use the same city-folder layout.
 
 Recommended sources:
 
@@ -247,11 +270,6 @@ Recommended sources:
   [How to access CORDEX-CMIP5 data](https://cordex.org/data-access/cordex-cmip5-data/how-to-access-cordex-cmip5-data/)
 - Copernicus CDS CORDEX dataset page:
   [projections-cordex-domains-single-levels](https://cds.climate.copernicus.eu/datasets/projections-cordex-domains-single-levels?tab=download)
-
-`samy-download list-cordex` remains available to inspect the live CDS CORDEX
-catalogue, but actual CORDEX files must currently be downloaded outside the
-package and then placed under a compatible directory layout for downstream
-climate-delta workflows.
 
 ### `samy-download` reference
 
@@ -261,6 +279,7 @@ climate-delta workflows.
 | `list-cmip6 [--detail]` | List available CMIP6 model / experiment / resolution / variable combinations from the live CDS catalogue |
 | `list-cmip6 --experiment <exp> --resolution <res> --var <var>` | Filter live CMIP6 catalogue rows before download |
 | `list-cordex [--detail]` | Inspect live CORDEX catalogue combinations from CDS |
+| `download --city <city_ascii> --data cordex [--cordex-gcm ... --cordex-rcm ...]` | Download CORDEX-CMIP5 city CSVs for `samy-delta` |
 | `list-stations --city <city_ascii> [--radius 150]` | Print nearby ISD stations sorted by distance |
 | `download --city <city_ascii> [--isd-station <USAF-WBAN>]` | Download ISD + NSRDB + CMIP6 for one city; otherwise auto-select best-coverage ISD station within 50 km |
 | `download --city <city_ascii_1> <city_ascii_2> ...` | Batch-download multiple cities; CMIP6 requests are grouped into shared bounding-box fetches |
@@ -377,6 +396,7 @@ for year in [2030, 2050, 2080]:
 | `samy-download config` | Save NSRDB credentials to `~/.config/samy_wgen/credentials.yaml` |
 | `samy-download list-cmip6 [--detail]` | Inspect live CMIP6 CDS catalogue entries |
 | `samy-download list-cordex [--detail]` | Inspect live CORDEX CDS catalogue entries |
+| `samy-download download --city <city_ascii> --data cordex` | Download CORDEX-CMIP5 historical and RCP8.5 city series |
 | `samy-download list-stations --city <city_ascii>` | List nearby ISD stations |
 | `samy-download download --city <city_ascii>` | Download ISD / NSRDB / CMIP6 (auto-select ISD station by coverage within 50 km) |
 | `samy-run --city <city_ascii>` | Full pipeline with auto-download of missing ISD / NSRDB / CMIP6 inputs |

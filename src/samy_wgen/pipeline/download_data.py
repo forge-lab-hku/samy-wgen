@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import time
+import zipfile
 
 from tqdm import tqdm
 from io import BytesIO, StringIO
@@ -84,6 +85,7 @@ CORDEX_DOMAIN_RES = {
 
 CORDEX_VARS = [
     "2m_air_temperature",
+    "2m_relative_humidity",
     "2m_surface_specific_humidity",
     "10m_wind_speed",
     "maximum_2m_temperature_in_the_last_24_hours",
@@ -92,6 +94,17 @@ CORDEX_VARS = [
     "surface_pressure",
     "surface_solar_radiation_downwards",
 ]
+CORDEX_VAR_SHORT = {
+    "2m_air_temperature": "tas",
+    "2m_relative_humidity": "hurs",
+    "2m_surface_specific_humidity": "huss",
+    "10m_wind_speed": "sfcWind",
+    "maximum_2m_temperature_in_the_last_24_hours": "tasmax",
+    "minimum_2m_temperature_in_the_last_24_hours": "tasmin",
+    "mean_precipitation_flux": "pr",
+    "surface_pressure": "ps",
+    "surface_solar_radiation_downwards": "rsds",
+}
 
 CORDEX_EXP_YEARS = {
     "historical": list(range(1970, 2006)),
@@ -2063,6 +2076,46 @@ def download_cmip6_for_cities(
 
 # ─── CORDEX-CMIP5 ─────────────────────────────────────────────────────────────
 
+def _cordex_point_df(nc_bytes: bytes, lat: float, lon: float) -> pd.DataFrame:
+    """Merge all NetCDF members returned by a CORDEX request at one city point."""
+    if nc_bytes[:2] == b"PK":
+        with zipfile.ZipFile(BytesIO(nc_bytes)) as archive:
+            nc_names = sorted(name for name in archive.namelist() if name.lower().endswith(".nc"))
+            if not nc_names:
+                raise ValueError("No NetCDF file found in CORDEX ZIP response")
+            frames = [_nc_bytes_to_point_df(archive.read(name), lat, lon) for name in nc_names]
+    else:
+        frames = [_nc_bytes_to_point_df(nc_bytes, lat, lon)]
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    combined["time"] = pd.to_datetime(combined["time"])
+    value_columns = [column for column in combined if column != "time"]
+    conflicts = [
+        column for column in value_columns
+        if (combined.groupby("time")[column].nunique(dropna=True) > 1).any()
+    ]
+    if conflicts:
+        raise ValueError(f"Conflicting CORDEX values for duplicate timestamps: {conflicts}")
+    return combined.groupby("time", as_index=False).first().sort_values("time").reset_index(drop=True)
+
+
+def _cordex_csv_covers_request(path: Path, years: list[int], months: list[str],
+                               variables: list[str]) -> bool:
+    """Check that an existing city CSV covers every requested full month."""
+    try:
+        frame = pd.read_csv(path, parse_dates=["time"])
+        columns = [CORDEX_VAR_SHORT[var] for var in variables]
+        if not set(columns).issubset(frame.columns):
+            return False
+        dates = frame["time"].dt.normalize()
+        if dates.duplicated().any() or frame[columns].isna().any().any():
+            return False
+        counts = frame.groupby([frame["time"].dt.year, frame["time"].dt.month]).size()
+        return all(counts.get((year, int(month)), 0) >= 28 for year in years for month in months)
+    except (OSError, ValueError, KeyError):
+        return False
+
+
 def download_cordex_cmip5(
     city: str,
     lat: Optional[float] = None,
@@ -2072,18 +2125,31 @@ def download_cordex_cmip5(
     rcm: str = "ncar_regcm4",
     ensemble: str = "r1i1p1",
     experiments: Optional[List[str]] = None,
+    variables: Optional[List[str]] = None,
+    historical_years: Optional[tuple[int, int]] = None,
+    rcp85_years: Optional[tuple[int, int]] = None,
+    months: Optional[List[str]] = None,
     output_dir: str = "data/CORDEX_CMIP5",
-) -> None:
-    """Download CORDEX-CMIP5 data for a city via CDS (per-year requests).
+    overwrite: bool = False,
+) -> dict[str, Path]:
+    """Download CORDEX-CMIP5 daily city series for the climate-delta reader.
 
-    Coordinates and cordex_domain are looked up from cities_config.csv when omitted.
-    Uses ``area: [lat, lon, lat, lon]`` to download only the city's grid cell.
-    Reads CDS credentials from ~/.cdsapirc.
+    Output layout is ``<output_dir>/<variant>/<CitySlug>/{historical,rcp85}.csv``.
+    The CDS area is a small, nonzero box around the city; the nearest grid cell
+    is selected locally from each returned NetCDF file.
     """
     import cdsapi
 
-    lat, lon    = _resolve_coords(city, lat, lon)
+    city = _normalize_city_name(city)
+    lat, lon = _resolve_coords(city, lat, lon)
     experiments = experiments or ["historical", "rcp_8_5"]
+    requested_variables = variables
+    variables = variables or CORDEX_VARS
+    months = months or [f"{month:02d}" for month in range(1, 13)]
+    if any(month not in {f"{i:02d}" for i in range(1, 13)} for month in months):
+        raise ValueError("CORDEX months must be two-digit values from 01 to 12")
+    if any(experiment not in CORDEX_EXP_YEARS for experiment in experiments):
+        raise ValueError("CORDEX experiments must be historical and/or rcp_8_5")
     if cordex_domain is None:
         cordex_domain = _city_meta(city)["cordex_domain"]
 
@@ -2094,9 +2160,7 @@ def download_cordex_cmip5(
             f"Supported: {list(CORDEX_DOMAIN_MAP)}"
         )
 
-    # Short RCM label for directory naming
-    rcm_short = "RegCM" if "regcm" in rcm.lower() else rcm.replace("_", "").upper()
-    client    = cdsapi.Client()
+    client = cdsapi.Client()
 
     download_plan = _resolve_cordex_download_plan(
         cordex_domain=cordex_domain,
@@ -2104,68 +2168,120 @@ def download_cordex_cmip5(
         rcm=rcm,
         ensemble=ensemble,
         experiments=experiments,
-        variables=CORDEX_VARS,
+        variables=variables,
     )
     if not download_plan:
-        logger.warning("No CORDEX download combinations remained after CDS constraint validation.")
-        return
+        raise ValueError("No CORDEX download combinations matched the CDS constraints")
 
+    planned_experiments = {str(plan["experiment"]) for plan in download_plan}
+    missing_experiments = set(experiments) - planned_experiments
+    if missing_experiments:
+        raise ValueError(f"CORDEX experiments unavailable in CDS: {sorted(missing_experiments)}")
+    if requested_variables is not None:
+        for plan in download_plan:
+            missing_variables = set(requested_variables) - set(plan["variable"])
+            if missing_variables:
+                raise ValueError(
+                    f"CORDEX variables unavailable for {plan['experiment']}: "
+                    f"{sorted(missing_variables)}"
+                )
+
+    outputs: dict[str, Path] = {}
+    year_ranges = {"historical": historical_years, "rcp_8_5": rcp85_years}
     for plan in download_plan:
         experiment = str(plan["experiment"])
         years = CORDEX_EXP_YEARS.get(experiment)
         if not years:
             logger.warning(f"No year range configured for CORDEX experiment '{experiment}'")
             continue
+        selected_range = year_ranges[experiment]
+        if selected_range is not None:
+            start, end = selected_range
+            if start > end:
+                raise ValueError(f"Invalid CORDEX year range: {start} > {end}")
+            years = [year for year in years if start <= year <= end]
+        if not years:
+            raise ValueError(f"No CORDEX years selected for {experiment}")
         exp_label = "historical" if experiment == "historical" else "rcp85"
-        out_subdir = Path(output_dir) / f"{cordex_domain}_{rcm_short}_{exp_label}_{ensemble}"
-        out_subdir.mkdir(parents=True, exist_ok=True)
-        out_csv = out_subdir / f"{city}_{exp_label}.csv"
+        variant = f"{cordex_domain}_{gcm}_{rcm}_{plan['ensemble_member']}"
+        city_dir = Path(output_dir) / variant / city
+        city_dir.mkdir(parents=True, exist_ok=True)
+        out_csv = city_dir / f"{exp_label}.csv"
 
-        if out_csv.exists():
-            logger.info(f"  {out_csv} exists, skipping")
-            continue
+        if out_csv.exists() and not overwrite:
+            if _cordex_csv_covers_request(out_csv, years, months, list(plan["variable"])):
+                logger.info("  %s covers requested years, months and variables; skipping", out_csv)
+                outputs[experiment] = out_csv
+                continue
+            raise FileExistsError(
+                f"Existing CORDEX CSV does not cover this request: {out_csv}. "
+                "Use --cordex-overwrite or another --cordex-dir."
+            )
 
         year_dfs: list[pd.DataFrame] = []
+        part_paths: list[Path] = []
+        failed_requests: list[str] = []
         pbar_desc = f"CORDEX {city} {exp_label}"
 
         for year in tqdm(years, desc=pbar_desc, unit="yr"):
-            tmp_nc = out_subdir / f"_tmp_{city}_{experiment}_{year}.nc"
-            try:
-                req = {
-                    "domain":               str(plan["domain"]),
-                    "experiment":           experiment,
-                    "horizontal_resolution": str(plan["horizontal_resolution"]),
-                    "temporal_resolution":  "daily_mean",
-                    "variable":             list(plan["variable"]),
-                    "gcm_model":            str(plan["gcm_model"]),
-                    "rcm_model":            str(plan["rcm_model"]),
-                    "ensemble_member":      str(plan["ensemble_member"]),
-                    "start_year":           [str(year)],
-                    "end_year":             [str(year)],
-                    "area":                 [round(lat, 2), round(lon, 2), round(lat, 2), round(lon, 2)],
-                }
-                client.retrieve(
-                    "projections-cordex-domains-single-levels", req, str(tmp_nc)
-                )
-                nc_bytes = tmp_nc.read_bytes()
-                df_year  = _nc_bytes_to_point_df(nc_bytes, lat, lon)
-                year_dfs.append(df_year)
-                logger.info(f"  {year} ✓")
-            except Exception as exc:
-                logger.warning(f"  {year} failed: {exc}")
-            finally:
-                if tmp_nc.exists():
-                    tmp_nc.unlink()
-            time.sleep(1)
+            variable_frames: list[pd.DataFrame] = []
+            for variable in plan["variable"]:
+                short = CORDEX_VAR_SHORT[str(variable)]
+                part_path = city_dir / f"_part_{experiment}_{year}_{short}_{''.join(months)}.zip"
+                try:
+                    if not part_path.exists():
+                        req = {
+                            "format": "zip",
+                            "domain": str(plan["domain"]),
+                            "experiment": experiment,
+                            "horizontal_resolution": str(plan["horizontal_resolution"]),
+                            "temporal_resolution": "daily_mean",
+                            "variable": str(variable),
+                            "gcm_model": str(plan["gcm_model"]),
+                            "rcm_model": str(plan["rcm_model"]),
+                            "ensemble_member": str(plan["ensemble_member"]),
+                            "year": [str(year)],
+                            "month": months,
+                            "area": [round(lat + 0.5, 2), round(lon - 0.5, 2),
+                                     round(lat - 0.5, 2), round(lon + 0.5, 2)],
+                        }
+                        client.retrieve(CDS_CORDEX_DATASET, req, str(part_path))
+                    frame = _cordex_point_df(part_path.read_bytes(), lat, lon)
+                    if short not in frame:
+                        raise ValueError(f"CORDEX response missing requested variable '{short}'")
+                    variable_frames.append(frame[["time", short]])
+                    part_paths.append(part_path)
+                    logger.info("  %s %s ✓", year, short)
+                except Exception as exc:
+                    logger.warning("  %s %s failed: %s", year, short, exc)
+                    failed_requests.append(f"{year}/{short}")
+                    part_path.unlink(missing_ok=True)
+                time.sleep(1)
+            if len(variable_frames) == len(plan["variable"]):
+                df_year = variable_frames[0]
+                for frame in variable_frames[1:]:
+                    df_year = pd.merge(df_year, frame, on="time", how="outer", validate="one_to_one")
+                if df_year.isna().any().any():
+                    failed_requests.append(f"{year}/incomplete timestamps")
+                else:
+                    year_dfs.append(df_year)
 
-        if not year_dfs:
-            logger.error(f"No CORDEX data downloaded for {experiment}")
-            continue
+        if failed_requests:
+            raise RuntimeError(
+                f"CORDEX {experiment} failed for {failed_requests}; no partial CSV written"
+            )
 
         merged = pd.concat(year_dfs, ignore_index=True)
+        if merged["time"].duplicated().any():
+            raise ValueError(f"Duplicate CORDEX timestamps in {experiment} response")
         merged = merged.sort_values("time").reset_index(drop=True)
         merged.to_csv(out_csv, index=False)
+        for part_path in part_paths:
+            part_path.unlink(missing_ok=True)
         logger.info(f"CORDEX saved → {out_csv} ({len(merged)} rows)")
+        outputs[experiment] = out_csv
+
+    return outputs
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
@@ -2237,7 +2353,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dl.add_argument("--city", required=True, nargs="+", help="ASCII city code(s) from cities_config.csv")
     p_dl.add_argument(
         "--data", nargs="+",
-        choices=["isd", "nsrdb", "cmip6"],
+        choices=["isd", "nsrdb", "cmip6", "cordex"],
         default=["isd", "nsrdb", "cmip6"],
         help="Data sources to download (default: isd nsrdb cmip6)",
     )
@@ -2283,6 +2399,35 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dl.add_argument(
         "--cmip6-years", nargs=2, type=int, metavar=("START", "END"), default=None,
         help="Year range for CMIP6 downloads (default: full experiment range)",
+    )
+
+    # CORDEX-CMIP5
+    p_dl.add_argument("--cordex-dir", default="data/CORDEX_CMIP5")
+    p_dl.add_argument("--cordex-overwrite", action="store_true",
+                      help="Replace a CORDEX city CSV after a complete successful download")
+    p_dl.add_argument("--cordex-domain", choices=sorted(CORDEX_DOMAIN_MAP), default=None)
+    p_dl.add_argument("--cordex-gcm", default="mpi_m_mpi_esm_lr")
+    p_dl.add_argument("--cordex-rcm", default="ncar_regcm4")
+    p_dl.add_argument("--cordex-ensemble", default="r1i1p1")
+    p_dl.add_argument(
+        "--cordex-experiments", nargs="+", choices=sorted(CORDEX_EXP_YEARS),
+        default=["historical", "rcp_8_5"],
+    )
+    p_dl.add_argument(
+        "--cordex-var", nargs="+", choices=sorted(CORDEX_SUPPORTED_VARIABLES),
+        default=None, help="CORDEX variables (default: all supported variables)",
+    )
+    p_dl.add_argument(
+        "--cordex-historical-years", nargs=2, type=int, metavar=("START", "END"),
+        default=None, help="Historical CORDEX years (default: 1970–2005)",
+    )
+    p_dl.add_argument(
+        "--cordex-rcp85-years", nargs=2, type=int, metavar=("START", "END"),
+        default=None, help="RCP8.5 CORDEX years (default: 2006–2100)",
+    )
+    p_dl.add_argument(
+        "--cordex-months", nargs="+", choices=[f"{month:02d}" for month in range(1, 13)],
+        default=None, help="Months to download (default: all 12)",
     )
 
     return parser
@@ -2436,6 +2581,23 @@ def main() -> None:
             year_range=tuple(args.cmip6_years) if args.cmip6_years else None,
             output_dir=args.cmip6_dir,
         )
+
+    if "cordex" in sources:
+        for city in cities:
+            download_cordex_cmip5(
+                city=city,
+                cordex_domain=args.cordex_domain,
+                gcm=args.cordex_gcm,
+                rcm=args.cordex_rcm,
+                ensemble=args.cordex_ensemble,
+                experiments=args.cordex_experiments,
+                variables=args.cordex_var,
+                historical_years=tuple(args.cordex_historical_years) if args.cordex_historical_years else None,
+                rcp85_years=tuple(args.cordex_rcp85_years) if args.cordex_rcp85_years else None,
+                months=args.cordex_months,
+                output_dir=args.cordex_dir,
+                overwrite=args.cordex_overwrite,
+            )
 
 if __name__ == "__main__":
     main()
