@@ -1414,6 +1414,40 @@ def _merge_cmip6_city_frames(
     return merged.sort_values("time").reset_index(drop=True)
 
 
+def _cmip6_frame_covers_request(
+    frame: pd.DataFrame,
+    years: list[int],
+    variables: list[str],
+) -> bool:
+    """Return whether a CMIP6 frame has every requested field and year."""
+    required_columns = {CMIP6_VAR_SHORT.get(variable, variable) for variable in variables}
+    if not required_columns.issubset(frame.columns) or "time" not in frame.columns:
+        return False
+    try:
+        times = pd.to_datetime(frame["time"], errors="coerce")
+    except (TypeError, ValueError):
+        return False
+    if times.empty or times.isna().any() or times.duplicated().any():
+        return False
+    if not set(years).issubset(set(times.dt.year.unique())):
+        return False
+    return all(frame[column].notna().any() for column in required_columns)
+
+
+def _cmip6_csv_covers_request(
+    path: Path,
+    years: list[int],
+    variables: list[str],
+) -> bool:
+    """Return whether an existing CMIP6 CSV satisfies the requested fields/years."""
+    if not path.is_file():
+        return False
+    try:
+        return _cmip6_frame_covers_request(pd.read_csv(path), years, variables)
+    except (OSError, pd.errors.ParserError, ValueError):
+        return False
+
+
 def _cmip6_dataset_to_point_dfs(ds, city_points: dict[str, tuple[float, float]]) -> dict[str, pd.DataFrame]:
     """Extract nearest-grid time series from an opened CMIP6 dataset."""
     import numpy as np
@@ -1918,11 +1952,18 @@ def download_cmip6(
             for temporal_res, var_list in variable_groups.items():
                 suffix  = "" if temporal_res == "daily" else "_monthly"
                 out_csv = city_dir / f"{model}_{label}{suffix}.csv"
-                if out_csv.exists():
-                    logger.info(f"  {out_csv.name} exists, skipping")
+                if _cmip6_csv_covers_request(out_csv, years, var_list):
+                    logger.info(f"  {out_csv.name} covers requested fields and years, skipping")
                     continue
+                if out_csv.exists():
+                    logger.warning(
+                        "  Existing CMIP6 CSV is incomplete for requested fields/years; "
+                        "re-downloading: %s",
+                        out_csv,
+                    )
 
                 var_dfs: list[pd.DataFrame] = []
+                failed_variables: list[str] = []
                 pbar_desc = f"CMIP6 {city} {model} {label}"
 
                 for variable in tqdm(var_list, desc=pbar_desc, unit="var"):
@@ -1949,12 +1990,23 @@ def download_cmip6(
                         var_dfs.append(df_var.rename(columns=rename))
                         logger.info(f"    ✓ {short}")
                     except Exception as exc:
+                        failed_variables.append(variable)
                         logger.warning(f"    ✗ {variable}: {exc}")
                     finally:
                         if tmp_nc.exists():
                             tmp_nc.unlink()
                     time.sleep(1)
 
+                if failed_variables:
+                    logger.error(
+                        "Incomplete CMIP6 download for %s %s (%s); failed variables: %s. "
+                        "No CSV written.",
+                        model,
+                        label,
+                        temporal_res,
+                        ", ".join(failed_variables),
+                    )
+                    continue
                 if not var_dfs:
                     logger.error(f"No variables downloaded for {model} {label} ({temporal_res})")
                     continue
@@ -1963,7 +2015,18 @@ def download_cmip6(
                 for df_v in var_dfs[1:]:
                     merged = pd.merge(merged, df_v, on="time", how="outer")
                 merged = merged.sort_values("time").reset_index(drop=True)
-                merged.to_csv(out_csv, index=False)
+                if not _cmip6_frame_covers_request(merged, years, var_list):
+                    logger.error(
+                        "Merged CMIP6 data for %s %s (%s) failed field/year validation; "
+                        "no CSV written.",
+                        model,
+                        label,
+                        temporal_res,
+                    )
+                    continue
+                tmp_csv = out_csv.with_name(f".{out_csv.name}.tmp")
+                merged.to_csv(tmp_csv, index=False)
+                tmp_csv.replace(out_csv)
                 logger.info(f"CMIP6 saved → {out_csv} ({len(merged)} rows)")
 
 
@@ -1985,6 +2048,8 @@ def download_cmip6_for_cities(
     all_months = [f"{i:02d}" for i in range(1, 13)]
     all_days = [f"{i:02d}" for i in range(1, 32)]
     area = _cmip6_request_area(city_points)
+    output_root = Path(output_dir)
+    output_root.mkdir(parents=True, exist_ok=True)
     client = cdsapi.Client()
 
     for model in models:
@@ -2010,10 +2075,22 @@ def download_cmip6_for_cities(
 
             for temporal_res, var_list in variable_groups.items():
                 suffix = "" if temporal_res == "daily" else "_monthly"
-                pending_cities = [
-                    city for city in city_points
-                    if not (Path(output_dir) / city / f"{model}_{label}{suffix}.csv").exists()
-                ]
+                pending_cities = []
+                for city in city_points:
+                    out_csv = output_root / city / f"{model}_{label}{suffix}.csv"
+                    if _cmip6_csv_covers_request(out_csv, years, var_list):
+                        logger.info(
+                            "CMIP6 output covers requested fields and years: %s",
+                            out_csv,
+                        )
+                        continue
+                    if out_csv.exists():
+                        logger.warning(
+                            "Existing CMIP6 CSV is incomplete for requested fields/years; "
+                            "re-downloading: %s",
+                            out_csv,
+                        )
+                    pending_cities.append(city)
                 if not pending_cities:
                     logger.info(
                         "CMIP6 outputs already exist for all cities: model='%s', experiment='%s', resolution='%s'",
@@ -2022,6 +2099,7 @@ def download_cmip6_for_cities(
                     continue
 
                 city_frames: dict[str, list[pd.DataFrame]] = {city: [] for city in pending_cities}
+                failed_variables: list[str] = []
                 pbar_desc = f"CMIP6 {model} {label} ({len(pending_cities)} cities)"
 
                 for variable in tqdm(var_list, desc=pbar_desc, unit="var"):
@@ -2053,24 +2131,39 @@ def download_cmip6_for_cities(
                             city_frames[city].append(df_city.rename(columns=rename))
                         logger.info("    ✓ %s", CMIP6_VAR_SHORT.get(variable, variable))
                     except Exception as exc:
+                        failed_variables.append(variable)
                         logger.warning("    ✗ %s: %s", variable, exc)
                     finally:
                         if tmp_nc.exists():
                             tmp_nc.unlink()
                     time.sleep(1)
 
+                if failed_variables:
+                    logger.error(
+                        "Incomplete CMIP6 download for %s %s (%s); failed variables: %s. "
+                        "No CSV written.",
+                        model,
+                        label,
+                        temporal_res,
+                        ", ".join(failed_variables),
+                    )
+                    continue
+
                 for city in pending_cities:
                     merged = _merge_cmip6_city_frames(city_frames, city)
-                    if merged is None:
+                    if merged is None or not _cmip6_frame_covers_request(merged, years, var_list):
                         logger.error(
-                            "No variables downloaded for city='%s', model='%s', experiment='%s', resolution='%s'",
+                            "CMIP6 data for city='%s', model='%s', experiment='%s', resolution='%s' "
+                            "failed field/year validation; no CSV written.",
                             city, model, label, temporal_res,
                         )
                         continue
-                    city_dir = Path(output_dir) / city
+                    city_dir = output_root / city
                     city_dir.mkdir(parents=True, exist_ok=True)
                     out_csv = city_dir / f"{model}_{label}{suffix}.csv"
-                    merged.to_csv(out_csv, index=False)
+                    tmp_csv = out_csv.with_name(f".{out_csv.name}.tmp")
+                    merged.to_csv(tmp_csv, index=False)
+                    tmp_csv.replace(out_csv)
                     logger.info("CMIP6 saved → %s (%s rows)", out_csv, len(merged))
 
 
