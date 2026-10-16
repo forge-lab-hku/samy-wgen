@@ -50,10 +50,10 @@ Configure external data access once after installation.
    #   NSRDB email   : your@email.com
    ```
 
-**Copernicus CDS** (CMIP6 and CORDEX-CMIP5 climate projections)
+**Copernicus CDS** (ERA5-Land, CMIP6, and CORDEX-CMIP5)
 
 1. Register at [cds.climate.copernicus.eu](https://cds.climate.copernicus.eu)
-2. Accept the licence for each CDS dataset you plan to download: *CMIP6 climate projections* and/or *CORDEX regional climate projections*
+2. Accept the licence for each CDS dataset you plan to download: *ERA5-Land hourly time-series*, *CMIP6 climate projections*, and/or *CORDEX regional climate projections*
 3. Create `~/.cdsapirc`:
    ```ini
    # ~/.cdsapirc
@@ -211,6 +211,38 @@ data/
 
 CMIP6 data are downloaded as city-specific grid-point extractions using the CDS
 `area` parameter, so no large global files are stored locally.
+
+### Download ERA5-Land and calibrate its solar radiation
+
+ERA5-Land point time series are available hourly from 1950 onward. The downloader
+requests each selected variable into a separate NetCDF file under
+`data/ERA5_Land/<City>/`; by default it requests data through the latest
+available day (normally five days behind real time).
+Surface solar radiation is returned as hourly energy (J/m²) by the CDS time
+series product.
+
+```bash
+# Download all configured ERA5-Land variables for one city
+samy-download download --city Miami --data era5-land --era5-land-years 1950 2024
+
+# Or request only surface solar radiation
+samy-download download --city Miami --data era5-land \
+  --era5-land-years 1950 2024 \
+  --era5-land-var surface_solar_radiation_downwards
+
+# Calibrate ERA5-Land solar radiation with the overlapping NSRDB record
+samy-download calibrate-solar --city Miami \
+  --era5 data/ERA5_Land/Miami/era5_land_miami_surface_solar_radiation_downwards_19500101-20241231.nc \
+  --nsrdb data/NSRDB/nsrdb_miami_1998-2024.csv
+```
+
+Calibration converts hourly ERA5-Land solar energy to mean irradiance, learns
+monthly/hourly GHI scale factors and NSRDB diffuse fractions over their shared
+daylight period, then writes hourly `GHI`, `DNI`, and `DHI` in local standard
+time. The output retains ERA5-Land's longer time span; its pre-NSRDB years are
+an extrapolation of overlap-period calibration relationships, not independent
+solar observations. At least 24 usable daylight overlap hours are required.
+The default output is `data/ERA5_Land/calibrated/<city>_solar_calibrated.csv`.
 
 ### CORDEX-CMIP5 note
 
@@ -396,6 +428,8 @@ for year in [2030, 2050, 2080]:
 | `samy-download config` | Save NSRDB credentials to `~/.config/samy_wgen/credentials.yaml` |
 | `samy-download list-cmip6 [--detail]` | Inspect live CMIP6 CDS catalogue entries |
 | `samy-download list-cordex [--detail]` | Inspect live CORDEX CDS catalogue entries |
+| `samy-download download --city <city_ascii> --data era5-land` | Download hourly ERA5-Land point time series |
+| `samy-download calibrate-solar --city <city_ascii> --era5 <file> --nsrdb <file>` | Calibrate ERA5-Land GHI/DNI/DHI with overlapping NSRDB data |
 | `samy-download download --city <city_ascii> --data cordex` | Download CORDEX-CMIP5 historical and RCP8.5 city series |
 | `samy-download list-stations --city <city_ascii>` | List nearby ISD stations |
 | `samy-download download --city <city_ascii>` | Download ISD / NSRDB / CMIP6 (auto-select ISD station by coverage within 50 km) |

@@ -3,13 +3,14 @@
 Subcommands
 -----------
   list-stations   Print nearby ISD stations for a city (choose one, then download)
-  download        Download ISD / NSRDB / CMIP6 / CORDEX-CMIP5 for a city
+  download        Download ISD / NSRDB / ERA5-Land / CMIP6 / CORDEX-CMIP5 for a city
   extract-cmip6   Extract nearest-grid city series from local CMIP6 NetCDF files
 
 Credentials
 -----------
   NSRDB   : ~/.config/samy_wgen/credentials.yaml
               Run 'samy-download config' to write this file interactively.
+  ERA5-Land: ~/.cdsapirc
   CMIP6   : ~/.cdsapirc  (standard cdsapi config)
   CORDEX  : ~/.cdsapirc
   ISD     : none (public HTTPS archive)
@@ -18,6 +19,7 @@ Credentials
 from __future__ import annotations
 
 import argparse
+from datetime import date, timedelta
 import functools
 import json
 import logging
@@ -196,6 +198,15 @@ CORDEX_SUPPORTED_VARIABLES = set(CORDEX_VARS)
 CORDEX_DOMAIN_BY_CDS = {value: key for key, value in CORDEX_DOMAIN_MAP.items()}
 DEFAULT_ISD_YEAR_RANGE = (1970, 2024)
 DEFAULT_NSRDB_YEAR_RANGE = (1998, 2024)
+ERA5_LAND_DATASET = "reanalysis-era5-land-timeseries"
+ERA5_LAND_AVAILABILITY_LAG_DAYS = 5
+ERA5_LAND_VARIABLES = [
+    "2m_dewpoint_temperature",
+    "2m_temperature",
+    "surface_pressure",
+    "total_precipitation",
+    "surface_solar_radiation_downwards",
+]
 
 
 def _credentials_path() -> Path:
@@ -1897,6 +1908,102 @@ def download_nsrdb_for_cities(
         )
 
 
+# ─── ERA5-Land ────────────────────────────────────────────────────────────────
+
+def download_era5_land(
+    city: str,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    start_date: str = "1950-01-01",
+    end_date: Optional[str] = None,
+    output_dir: str = "data/ERA5_Land",
+    variables: Optional[List[str]] = None,
+    overwrite: bool = False,
+) -> list[Path]:
+    """Download hourly ERA5-Land point time series from the CDS.
+
+    One CDS request is made per variable so each response is a predictable
+    NetCDF file, even when the selected parameters belong to different CDS
+    storage groups. Surface solar radiation is de-accumulated by this CDS
+    time-series product and is stored as hourly energy in J m-2.
+    """
+    import cdsapi
+
+    city = _normalize_city_name(city)
+    lat, lon = _resolve_coords(city, lat, lon)
+    latest_available_date = date.today() - timedelta(days=ERA5_LAND_AVAILABILITY_LAG_DAYS)
+    end_date = end_date or latest_available_date.isoformat()
+    start = pd.Timestamp(start_date)
+    end = pd.Timestamp(end_date)
+    if start < pd.Timestamp("1950-01-01"):
+        raise ValueError("ERA5-Land time-series coverage starts on 1950-01-01")
+    if start > end:
+        raise ValueError("ERA5-Land start_date must be on or before end_date")
+    if end.date() > latest_available_date:
+        raise ValueError(
+            f"ERA5-Land time-series is normally available through {latest_available_date}; "
+            "choose an earlier end_date"
+        )
+    requested_variables = list(ERA5_LAND_VARIABLES if variables is None else variables)
+    if not requested_variables:
+        raise ValueError("Select at least one ERA5-Land variable")
+    unknown = sorted(set(requested_variables) - set(ERA5_LAND_VARIABLES))
+    if unknown:
+        raise ValueError(f"Unsupported ERA5-Land variables: {unknown}")
+
+    city_dir = Path(output_dir) / city
+    city_dir.mkdir(parents=True, exist_ok=True)
+    date_label = f"{start:%Y%m%d}-{end:%Y%m%d}"
+    client = cdsapi.Client()
+    outputs: list[Path] = []
+    for variable in requested_variables:
+        output_path = city_dir / f"era5_land_{city.lower()}_{variable}_{date_label}.nc"
+        outputs.append(output_path)
+        if output_path.exists() and not overwrite:
+            logger.info("ERA5-Land exists, skipping: %s", output_path)
+            continue
+        request = {
+            "variable": [variable],
+            "location": {"longitude": float(lon), "latitude": float(lat)},
+            "date": [f"{start:%Y-%m-%d}/{end:%Y-%m-%d}"],
+            "data_format": "netcdf",
+        }
+        partial_path = output_path.with_suffix(output_path.suffix + ".part")
+        try:
+            client.retrieve(ERA5_LAND_DATASET, request, str(partial_path))
+            if not partial_path.exists() or partial_path.stat().st_size == 0:
+                raise RuntimeError(f"CDS returned an empty ERA5-Land file for {variable}")
+            partial_path.replace(output_path)
+            logger.info("ERA5-Land saved → %s", output_path)
+        except Exception:
+            partial_path.unlink(missing_ok=True)
+            raise
+    return outputs
+
+
+def download_era5_land_for_cities(
+    cities: list[str],
+    start_date: str = "1950-01-01",
+    end_date: Optional[str] = None,
+    output_dir: str = "data/ERA5_Land",
+    variables: Optional[List[str]] = None,
+    overwrite: bool = False,
+) -> dict[str, list[Path]]:
+    """Download ERA5-Land point time series for several configured cities."""
+    canonical_cities = _normalize_city_args(cities)
+    return {
+        city: download_era5_land(
+            city=city,
+            start_date=start_date,
+            end_date=end_date,
+            output_dir=output_dir,
+            variables=variables,
+            overwrite=overwrite,
+        )
+        for city in canonical_cities
+    }
+
+
 # ─── CMIP6 ────────────────────────────────────────────────────────────────────
 
 def download_cmip6(
@@ -2432,6 +2539,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p_nsrdb = sub.add_parser("list-nsrdb", help="Inspect NSRDB sources and default coverage for one or more cities")
     p_nsrdb.add_argument("--city", required=True, nargs="+", help="ASCII city code(s) from cities_config.csv")
 
+    # ── calibrate-solar ────────────────────────────────────────────────────────
+    p_cal = sub.add_parser(
+        "calibrate-solar",
+        help="Calibrate ERA5-Land solar radiation with overlapping NSRDB observations",
+    )
+    p_cal.add_argument("--city", required=True, help="ASCII city code from cities_config.csv")
+    p_cal.add_argument("--era5", required=True, type=Path, help="ERA5-Land NetCDF or CSV containing surface solar radiation")
+    p_cal.add_argument("--nsrdb", required=True, type=Path, help="NSRDB CSV containing GHI, DNI, and DHI")
+    p_cal.add_argument("--output", type=Path, default=None, help="Output CSV (default: data/ERA5_Land/calibrated/<city>_solar_calibrated.csv)")
+    p_cal.add_argument("--utc-offset", type=float, default=None, help="Override city fixed-standard UTC offset in hours")
+
     # ── check-station ──────────────────────────────────────────────────────────
     p_cov = sub.add_parser("check-station", help="Inspect metadata year coverage for one ISD station")
     p_cov.add_argument("--isd-station", required=True, metavar="USAF-WBAN", help="ISD station id to inspect")
@@ -2446,7 +2564,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_dl.add_argument("--city", required=True, nargs="+", help="ASCII city code(s) from cities_config.csv")
     p_dl.add_argument(
         "--data", nargs="+",
-        choices=["isd", "nsrdb", "cmip6", "cordex"],
+        choices=["isd", "nsrdb", "cmip6", "cordex", "era5-land"],
         default=["isd", "nsrdb", "cmip6"],
         help="Data sources to download (default: isd nsrdb cmip6)",
     )
@@ -2466,6 +2584,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # NSRDB
     p_dl.add_argument("--nsrdb-dir", default="data/NSRDB")
+
+    # ERA5-Land
+    p_dl.add_argument("--era5-land-dir", default="data/ERA5_Land")
+    p_dl.add_argument(
+        "--era5-land-years", nargs=2, type=int, metavar=("START", "END"), default=None,
+        help="ERA5-Land year range (default: --years if supplied, otherwise 1950 through the latest available day)",
+    )
+    p_dl.add_argument(
+        "--era5-land-var", nargs="+", choices=ERA5_LAND_VARIABLES, default=None,
+        help="ERA5-Land variables (default: dewpoint, temperature, pressure, precipitation, and solar radiation)",
+    )
+    p_dl.add_argument("--era5-land-overwrite", action="store_true", help="Replace existing ERA5-Land NetCDF files")
 
     # CMIP6
     p_dl.add_argument("--cmip6-dir",  default="data/CMIP6")
@@ -2580,6 +2710,27 @@ def main() -> None:
         extract_cmip6_from_files(args.city, args.input, args.cmip6_dir, args.name)
         return
 
+    if args.command == "calibrate-solar":
+        from samy_wgen.utils.solar_calibration import calibrate_era5_land_solar
+        from samy_wgen.utils.time_utils import get_utc_offset
+
+        meta = _city_meta(args.city)
+        utc_offset = args.utc_offset
+        if utc_offset is None:
+            utc_offset = get_utc_offset(city=args.city)
+        output_path = args.output or Path("data/ERA5_Land/calibrated") / f"{args.city.lower()}_solar_calibrated.csv"
+        calibrated = calibrate_era5_land_solar(
+            args.era5,
+            args.nsrdb,
+            latitude=meta["lat"],
+            longitude=meta["lon"],
+            utc_offset_hours=utc_offset,
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        calibrated.to_csv(output_path, index=True, index_label="DATE")
+        logger.info("Calibrated solar data saved → %s (%s hourly rows)", output_path, len(calibrated))
+        return
+
     if args.command == "list-cordex":
         rows = _list_cordex_rows(
             domain=args.domain,
@@ -2691,6 +2842,26 @@ def main() -> None:
                 output_dir=args.cordex_dir,
                 overwrite=args.cordex_overwrite,
             )
+
+    if "era5-land" in sources:
+        era5_years = args.era5_land_years or args.years
+        if era5_years:
+            era5_start = f"{era5_years[0]:04d}-01-01"
+            era5_end = min(
+                pd.Timestamp(f"{era5_years[1]:04d}-12-31").date(),
+                date.today() - timedelta(days=ERA5_LAND_AVAILABILITY_LAG_DAYS),
+            ).isoformat()
+        else:
+            era5_start = "1950-01-01"
+            era5_end = (date.today() - timedelta(days=ERA5_LAND_AVAILABILITY_LAG_DAYS)).isoformat()
+        download_era5_land_for_cities(
+            cities=cities,
+            start_date=era5_start,
+            end_date=era5_end,
+            output_dir=args.era5_land_dir,
+            variables=args.era5_land_var,
+            overwrite=args.era5_land_overwrite,
+        )
 
 if __name__ == "__main__":
     main()
