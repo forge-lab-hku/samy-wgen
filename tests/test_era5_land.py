@@ -44,7 +44,10 @@ def test_download_era5_land_uses_cds_point_request_and_skips_existing(tmp_path):
     class FakeClient:
         def retrieve(self, dataset, request, target):
             calls.append((dataset, request, target))
-            Path(target).write_bytes(b"fake-netcdf")
+            start_date, end_date = request["date"][0].split("/")
+            times = pd.date_range(start_date, pd.Timestamp(end_date) + pd.Timedelta(days=1),
+                                  freq="h", inclusive="left")
+            _write_era5_nc(Path(target), times, np.ones(len(times)))
 
     with patch.dict("sys.modules", {"cdsapi": SimpleNamespace(Client=lambda: FakeClient())}):
         output = download_era5_land(
@@ -54,6 +57,9 @@ def test_download_era5_land_uses_cds_point_request_and_skips_existing(tmp_path):
             output_dir=str(tmp_path),
             variables=["surface_solar_radiation_downwards"],
         )
+        cache_files = list((tmp_path / ".cache" / "ERA5_Land" / "Miami").glob("*.nc"))
+        assert len(cache_files) == 1
+        output[0].write_bytes(b"damaged output")
         second_output = download_era5_land(
             "Miami",
             start_date="2001-01-01",
@@ -64,6 +70,7 @@ def test_download_era5_land_uses_cds_point_request_and_skips_existing(tmp_path):
 
     assert output == second_output
     assert output[0].is_file()
+    assert output[0].read_bytes() == cache_files[0].read_bytes()
     assert len(calls) == 1
     dataset, request, _ = calls[0]
     assert dataset == "reanalysis-era5-land-timeseries"

@@ -21,9 +21,11 @@ from __future__ import annotations
 import argparse
 from datetime import date, timedelta
 import functools
+import hashlib
 import json
 import logging
 import os
+import shutil
 import time
 import zipfile
 
@@ -1440,9 +1442,12 @@ def _cmip6_frame_covers_request(
         return False
     if times.empty or times.isna().any() or times.duplicated().any():
         return False
-    if not set(years).issubset(set(times.dt.year.unique())):
-        return False
-    return all(frame[column].notna().any() for column in required_columns)
+    requested_years = set(years)
+    for column in required_columns:
+        valid = frame[column].notna()
+        if not valid.any() or not requested_years.issubset(set(times[valid].dt.year.unique())):
+            return False
+    return True
 
 
 def _cmip6_csv_covers_request(
@@ -1457,6 +1462,88 @@ def _cmip6_csv_covers_request(
         return _cmip6_frame_covers_request(pd.read_csv(path), years, variables)
     except (OSError, pd.errors.ParserError, ValueError):
         return False
+
+
+def _cmip6_variable_covers_request(
+    frame: pd.DataFrame, years: list[int], variable: str
+) -> bool:
+    """Validate one extracted CMIP6 variable independently of its group."""
+    return _cmip6_frame_covers_request(frame, years, [variable])
+
+
+def _cmip6_cache_path(
+    output_root: Path, model: str, experiment: str, resolution: str,
+    variable: str, city: str, years: list[int], point: tuple[float, float],
+) -> Path:
+    """Return a coordinate- and request-specific variable cache path."""
+    coords = f"{point[0]:.6f},{point[1]:.6f}"
+    coord_hash = hashlib.sha256(coords.encode("utf-8")).hexdigest()[:12]
+    year_key = f"{min(years)}-{max(years)}_{hashlib.sha256(','.join(map(str, years)).encode()).hexdigest()[:8]}"
+    return (
+        output_root / ".cmip6_cache" / model / experiment / resolution
+        / city / f"{variable}_{year_key}_{coord_hash}.csv"
+    )
+
+
+def _read_cmip6_variable(path: Path, years: list[int], variable: str) -> pd.DataFrame | None:
+    """Read a one-variable cache or legacy CSV slice after coverage checks."""
+    short = CMIP6_VAR_SHORT.get(variable, variable)
+    try:
+        frame = pd.read_csv(path, parse_dates=["time"])
+    except (OSError, pd.errors.ParserError, ValueError, KeyError):
+        return None
+    if short not in frame.columns and variable in frame.columns:
+        frame = frame.rename(columns={variable: short})
+    if not _cmip6_variable_covers_request(frame, years, variable):
+        return None
+    return frame[["time", short]].copy()
+
+
+def _write_cmip6_variable(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    frame.to_csv(temporary, index=False)
+    temporary.replace(path)
+
+
+def _cmip6_existing_variable(
+    out_csv: Path, years: list[int], variable: str, cache_path: Path,
+) -> pd.DataFrame | None:
+    """Recover an individually valid field from an older group CSV."""
+    frame = _read_cmip6_variable(out_csv, years, variable)
+    if frame is not None:
+        _write_cmip6_variable(cache_path, frame)
+    return frame
+
+
+def _record_cmip6_failure(
+    output_root: Path, *, model: str, experiment: str, resolution: str,
+    variable: str, cities: list[str], error: str,
+) -> None:
+    """Persist a concise JSONL record so failed work is identifiable on restart."""
+    report = output_root / ".cmip6_cache" / "failures.jsonl"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "model": model, "experiment": experiment, "temporal_resolution": resolution,
+        "variable": variable, "cities": cities, "error": error,
+    }
+    with report.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _write_cmip6_final(out_csv: Path, frame: pd.DataFrame, years: list[int], variables: list[str]) -> bool:
+    """Atomically replace a group CSV only after its serialized form validates."""
+    temporary = out_csv.with_name(f".{out_csv.name}.tmp")
+    try:
+        frame.to_csv(temporary, index=False)
+        if not _cmip6_csv_covers_request(temporary, years, variables):
+            temporary.unlink(missing_ok=True)
+            return False
+        temporary.replace(out_csv)
+        return True
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _cmip6_dataset_to_point_dfs(ds, city_points: dict[str, tuple[float, float]]) -> dict[str, pd.DataFrame]:
@@ -1780,6 +1867,105 @@ def download_isd_for_cities(
 
 # ─── NSRDB ────────────────────────────────────────────────────────────────────
 
+def _nsrdb_year_cache_path(
+    output_dir: Path, city: str, year: int, interval: int,
+    lat: float, lon: float, source_url: str,
+) -> Path:
+    identity = f"{lat:.6f},{lon:.6f},{interval},{source_url},{','.join(NSRDB_ATTRS)}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    return output_dir / ".cache" / "NSRDB" / city / f"{year}_{interval}min_{digest}.csv"
+
+
+def _nsrdb_year_is_complete(frame: pd.DataFrame, year: int, interval: int) -> bool:
+    required = {"Year", "Month", "Day", "Hour", "Minute"}
+    aliases = {"ghi": "GHI", "dni": "DNI", "dhi": "DHI"}
+    required.update(aliases.get(column, column) for column in NSRDB_ATTRS)
+    if not required.issubset(frame.columns):
+        return False
+    try:
+        actual_years = pd.to_numeric(frame["Year"], errors="coerce")
+        timestamp = pd.to_datetime(
+            frame[["Year", "Month", "Day", "Hour", "Minute"]].rename(
+                columns={"Year": "year", "Month": "month", "Day": "day", "Hour": "hour", "Minute": "minute"}
+            ), errors="coerce",
+        )
+        if interval <= 0 or 60 % interval != 0:
+            return False
+        if actual_years.isna().any() or not actual_years.eq(year).all():
+            return False
+        if timestamp.isna().any() or timestamp.duplicated().any():
+            return False
+        expected = pd.date_range(f"{year}-01-01", f"{year + 1}-01-01", freq=f"{interval}min", inclusive="left")
+        expected = expected[~((expected.month == 2) & (expected.day == 29))]
+        if not timestamp.sort_values().reset_index(drop=True).equals(pd.Series(expected)):
+            return False
+        return not frame[list(required)].isna().any().any()
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _read_nsrdb_year(path: Path, year: int, interval: int) -> pd.DataFrame | None:
+    try:
+        frame = pd.read_csv(path)
+    except (OSError, pd.errors.ParserError, ValueError):
+        return None
+    return frame if _nsrdb_year_is_complete(frame, year, interval) else None
+
+
+def _write_nsrdb_csv(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    frame.to_csv(temporary, index=False)
+    temporary.replace(path)
+
+
+def _era5_land_time_coordinate(dataset):
+    return next((dataset[name] for name in ("valid_time", "time") if name in dataset.coords), None)
+
+
+def _era5_land_file_covers_request(
+    path: Path, variable: str, start: pd.Timestamp, end: pd.Timestamp,
+) -> bool:
+    """Validate the requested field and every requested hourly timestamp."""
+    import xarray as xr
+
+    aliases = {
+        "2m_dewpoint_temperature": {"d2m", "2m_dewpoint_temperature"},
+        "2m_temperature": {"t2m", "2m_temperature"},
+        "surface_pressure": {"sp", "surface_pressure"},
+        "total_precipitation": {"tp", "total_precipitation"},
+        "surface_solar_radiation_downwards": {"ssrd", "surface_solar_radiation_downwards"},
+    }
+    try:
+        with xr.open_dataset(path) as dataset:
+            if not (aliases[variable] & set(dataset.data_vars)):
+                return False
+            time_coordinate = _era5_land_time_coordinate(dataset)
+            if time_coordinate is None:
+                return False
+            actual = pd.DatetimeIndex(pd.to_datetime(time_coordinate.values, errors="coerce"))
+            expected = pd.date_range(start.normalize(), end.normalize() + pd.Timedelta(days=1),
+                                     freq="h", inclusive="left")
+            if actual.hasnans or actual.has_duplicates or len(actual) != len(expected):
+                return False
+            if not actual.sort_values().equals(expected):
+                return False
+            values = dataset[next(iter(aliases[variable] & set(dataset.data_vars)))].values
+            return bool(pd.notna(values).any())
+    except (OSError, ValueError, KeyError, ImportError):
+        return False
+
+
+def _atomic_copy(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    try:
+        shutil.copyfile(source, temporary)
+        temporary.replace(destination)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
 def download_nsrdb(
     city: str,
     lat: Optional[float] = None,
@@ -1789,7 +1975,7 @@ def download_nsrdb(
     interval: int = 60,
     max_retries: int = 3,
     retry_backoff_sec: float = 2.0,
-) -> None:
+) -> dict[str, list]:
     """Download NSRDB solar irradiance for a point location.
 
     Coordinates are looked up from cities_config.csv when *lat*/*lon* are omitted.
@@ -1825,7 +2011,9 @@ def download_nsrdb(
             f"No valid NSRDB years for '{city}' in the requested range. "
             f"Available: {overall_min}–{overall_max}."
         )
-        return
+        return {"success": [], "failed": [], "incomplete": [
+            {"city": city, "years": sorted(years), "reason": "no requested years are available"}
+        ]}
 
     def _url_for_year(yr: int) -> str | None:
         for url, mn, mx in sources:
@@ -1834,12 +2022,31 @@ def download_nsrdb(
         return None
 
     all_dfs: list[pd.DataFrame] = []
+    failures: list[dict] = []
     for i, year in enumerate(tqdm(valid_years, desc=f"NSRDB {city}", unit="yr")):
-        if i > 0:
-            time.sleep(2)  # respect NREL rate limit
         endpoint_url = _url_for_year(year)
         if endpoint_url is None:
             logger.warning(f"  {year}: no NSRDB source covers this year, skipping")
+            failures.append({"city": city, "year": year, "error": "no NSRDB source covers this year"})
+            continue
+        cache_path = _nsrdb_year_cache_path(out_dir, city, year, interval, lat, lon, endpoint_url)
+        cached = _read_nsrdb_year(cache_path, year, interval)
+        if cached is None:
+            # Reuse a valid year from pre-cache combined outputs when available.
+            for legacy_path in sorted(out_dir.glob(f"nsrdb_{city_lower}_*.csv")):
+                try:
+                    old = pd.read_csv(legacy_path)
+                    old_year = pd.to_numeric(old.get("Year"), errors="coerce")
+                    candidate = old.loc[old_year.eq(year)].copy()
+                except (OSError, pd.errors.ParserError, ValueError, AttributeError):
+                    continue
+                if _nsrdb_year_is_complete(candidate, year, interval):
+                    cached = candidate
+                    _write_nsrdb_csv(cache_path, cached)
+                    break
+        if cached is not None:
+            all_dfs.append(cached)
+            logger.info("NSRDB %s year %s restored from cache", city, year)
             continue
         params = {
             "api_key":    api_key,
@@ -1852,22 +2059,28 @@ def download_nsrdb(
             "email":      email,
         }
         logger.info(f"NSRDB {year} ...")
+        year_frame = None
         for attempt in range(1, max_retries + 1):
             try:
+                if attempt == 1 and i > 0:
+                    time.sleep(2)  # respect NREL rate limit between new year requests
                 r = session.get(f"{endpoint_url}.csv", params=params, timeout=300)
                 r.raise_for_status()
                 lines = r.text.strip().split("\n")
                 header = next((i for i, l in enumerate(lines) if l.startswith("Year,")), None)
                 if header is None:
-                    logger.warning(f"  {year}: unexpected response, skipping")
-                    break
+                    raise ValueError("unexpected response: Year header not found")
                 df = pd.read_csv(StringIO("\n".join(lines[header:])))
-                all_dfs.append(df)
-                logger.info(f"  {year} ✓ ({len(df)} rows)")
+                if not _nsrdb_year_is_complete(df, year, interval):
+                    raise ValueError(f"response failed annual completeness validation for {year}")
+                year_frame = df
+                _write_nsrdb_csv(cache_path, year_frame)
+                logger.info(f"  {year} ✓ ({len(df)} rows; cached)")
                 break
             except Exception as exc:
                 if attempt >= max_retries:
                     logger.warning(f"  {year} failed after {attempt} attempt(s): {exc}")
+                    failures.append({"city": city, "year": year, "error": str(exc)})
                     break
                 wait_s = retry_backoff_sec * attempt
                 logger.warning(
@@ -1875,16 +2088,39 @@ def download_nsrdb(
                     f"Retrying in {wait_s:.1f}s."
                 )
                 time.sleep(wait_s)
+        if year_frame is not None:
+            all_dfs.append(year_frame)
+
+    if failures or len(all_dfs) != len(valid_years):
+        logger.error("NSRDB incomplete for %s; failed years: %s", city,
+                     [item["year"] for item in failures])
+        return {"success": [], "failed": failures,
+                "incomplete": [{"city": city, "years": valid_years}]}
 
     if not all_dfs:
         logger.error("No NSRDB data downloaded.")
-        return
+        return {"success": [], "failed": failures,
+                "incomplete": [{"city": city, "years": valid_years}]}
 
-    combined = pd.concat(all_dfs, ignore_index=True)
-    y0, y1   = int(combined["Year"].min()), int(combined["Year"].max())
+    combined = pd.concat(all_dfs, ignore_index=True).sort_values(
+        ["Year", "Month", "Day", "Hour", "Minute"]
+    ).reset_index(drop=True)
+    y0, y1   = valid_years[0], valid_years[-1]
     out_path = out_dir / f"nsrdb_{city_lower}_{y0}-{y1}.csv"
-    combined.to_csv(out_path, index=False)
+    temporary = out_path.with_name(f".{out_path.name}.tmp")
+    try:
+        combined.to_csv(temporary, index=False)
+        check = pd.read_csv(temporary)
+        if not all(_nsrdb_year_is_complete(check.loc[pd.to_numeric(check["Year"], errors="coerce").eq(year)],
+                                            year, interval) for year in valid_years):
+            raise ValueError("merged NSRDB CSV failed annual completeness validation")
+        temporary.replace(out_path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
     logger.info(f"NSRDB saved → {out_path} ({len(combined)} rows, {y0}–{y1})")
+    return {"success": [{"city": city, "years": valid_years, "path": str(out_path)}],
+            "failed": [], "incomplete": []}
 
 
 def download_nsrdb_for_cities(
@@ -1894,11 +2130,12 @@ def download_nsrdb_for_cities(
     interval: int = 60,
     max_retries: int = 3,
     retry_backoff_sec: float = 2.0,
-) -> None:
+) -> dict[str, list]:
     """Download NSRDB data for multiple cities."""
     canonical_cities = _normalize_city_args(cities)
+    combined = {"success": [], "failed": [], "incomplete": []}
     for city in canonical_cities:
-        download_nsrdb(
+        result = download_nsrdb(
             city=city,
             years=years,
             output_dir=output_dir,
@@ -1906,6 +2143,9 @@ def download_nsrdb_for_cities(
             max_retries=max_retries,
             retry_backoff_sec=retry_backoff_sec,
         )
+        for key in combined:
+            combined[key].extend(result[key])
+    return combined
 
 
 # ─── ERA5-Land ────────────────────────────────────────────────────────────────
@@ -1959,8 +2199,20 @@ def download_era5_land(
     for variable in requested_variables:
         output_path = city_dir / f"era5_land_{city.lower()}_{variable}_{date_label}.nc"
         outputs.append(output_path)
-        if output_path.exists() and not overwrite:
+        cache_identity = f"{lat:.6f},{lon:.6f},{variable},{start:%Y%m%d},{end:%Y%m%d}"
+        coord_hash = hashlib.sha256(cache_identity.encode("utf-8")).hexdigest()[:16]
+        cache_path = (
+            Path(output_dir) / ".cache" / "ERA5_Land" / city
+            / f"{output_path.stem}_{coord_hash}.nc"
+        )
+        if output_path.exists() and not overwrite and _era5_land_file_covers_request(
+            output_path, variable, start, end
+        ):
             logger.info("ERA5-Land exists, skipping: %s", output_path)
+            continue
+        if not overwrite and _era5_land_file_covers_request(cache_path, variable, start, end):
+            _atomic_copy(cache_path, output_path)
+            logger.info("ERA5-Land restored from cache → %s", output_path)
             continue
         request = {
             "variable": [variable],
@@ -1968,12 +2220,16 @@ def download_era5_land(
             "date": [f"{start:%Y-%m-%d}/{end:%Y-%m-%d}"],
             "data_format": "netcdf",
         }
-        partial_path = output_path.with_suffix(output_path.suffix + ".part")
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        partial_path = cache_path.with_suffix(cache_path.suffix + ".part")
         try:
             client.retrieve(ERA5_LAND_DATASET, request, str(partial_path))
             if not partial_path.exists() or partial_path.stat().st_size == 0:
                 raise RuntimeError(f"CDS returned an empty ERA5-Land file for {variable}")
-            partial_path.replace(output_path)
+            if not _era5_land_file_covers_request(partial_path, variable, start, end):
+                raise RuntimeError(f"CDS returned incomplete ERA5-Land data for {variable}")
+            partial_path.replace(cache_path)
+            _atomic_copy(cache_path, output_path)
             logger.info("ERA5-Land saved → %s", output_path)
         except Exception:
             partial_path.unlink(missing_ok=True)
@@ -2015,7 +2271,7 @@ def download_cmip6(
     variables: Optional[List[str]] = None,
     year_range: Optional[tuple] = None,
     output_dir: str = "data/CMIP6",
-) -> None:
+) -> dict[str, list]:
     """Download CMIP6 projections for a city via CDS, extracting the nearest grid point.
 
     Coordinates are looked up from cities_config.csv when *lat*/*lon* are omitted.
@@ -2032,6 +2288,8 @@ def download_cmip6(
     all_days    = [f"{i:02d}" for i in range(1, 32)]
     client      = cdsapi.Client()
 
+    summary = {"success": [], "failed": [], "incomplete": []}
+    output_root = Path(output_dir)
     for model in models:
         city_dir   = Path(output_dir) / city
         city_dir.mkdir(parents=True, exist_ok=True)
@@ -2046,6 +2304,9 @@ def download_cmip6(
                     f"CMIP6 combination not available in CDS: model='{model}', experiment='{cds_exp}'. "
                     "Run 'samy-download list-cmip6' to inspect currently available combinations."
                 )
+                summary["incomplete"].append({"city": city, "model": model,
+                    "experiment": cds_exp, "variables": variables,
+                    "reason": "no supported variable group available"})
                 continue
 
             years = CMIP6_EXP_YEARS.get(cds_exp, [])
@@ -2053,6 +2314,8 @@ def download_cmip6(
                 years = [y for y in years if year_range[0] <= y <= year_range[1]]
             if not years:
                 logger.warning(f"No years available for experiment '{cds_exp}' with given range, skipping")
+                summary["incomplete"].append({"city": city, "model": model,
+                    "experiment": cds_exp, "variables": variables, "reason": "no requested years"})
                 continue
             label = CMIP6_EXP_LABEL[cds_exp]
 
@@ -2061,6 +2324,9 @@ def download_cmip6(
                 out_csv = city_dir / f"{model}_{label}{suffix}.csv"
                 if _cmip6_csv_covers_request(out_csv, years, var_list):
                     logger.info(f"  {out_csv.name} covers requested fields and years, skipping")
+                    summary["success"].append({"city": city, "model": model,
+                        "experiment": cds_exp, "temporal_resolution": temporal_res,
+                        "variables": var_list, "skipped": True})
                     continue
                 if out_csv.exists():
                     logger.warning(
@@ -2069,12 +2335,20 @@ def download_cmip6(
                         out_csv,
                     )
 
-                var_dfs: list[pd.DataFrame] = []
-                failed_variables: list[str] = []
+                city_frames: dict[str, list[pd.DataFrame]] = {city: []}
                 pbar_desc = f"CMIP6 {city} {model} {label}"
 
                 for variable in tqdm(var_list, desc=pbar_desc, unit="var"):
                     short   = CMIP6_VAR_SHORT.get(variable, variable)
+                    cache_path = _cmip6_cache_path(
+                        output_root, model, cds_exp, temporal_res, variable, city, years, (lat, lon)
+                    )
+                    cached = _read_cmip6_variable(cache_path, years, variable)
+                    if cached is None:
+                        cached = _cmip6_existing_variable(out_csv, years, variable, cache_path)
+                    if cached is not None:
+                        city_frames[city].append(cached)
+                        continue
                     tmp_nc  = city_dir / f"_tmp_{model}_{cds_exp}_{variable}.nc"
                     logger.info(f"  → {variable} ({short})")
                     try:
@@ -2094,47 +2368,49 @@ def download_cmip6(
                         nc_bytes = tmp_nc.read_bytes()
                         df_var   = _nc_bytes_to_point_df(nc_bytes, lat, lon)
                         rename   = {c: CMIP6_VAR_SHORT.get(c, c) for c in df_var.columns if c != "time"}
-                        var_dfs.append(df_var.rename(columns=rename))
+                        df_var = df_var.rename(columns=rename)[["time", short]]
+                        if not _cmip6_variable_covers_request(df_var, years, variable):
+                            raise ValueError(f"extracted data failed field/year validation: {short}")
+                        _write_cmip6_variable(cache_path, df_var)
+                        city_frames[city].append(df_var)
                         logger.info(f"    ✓ {short}")
                     except Exception as exc:
-                        failed_variables.append(variable)
+                        summary["failed"].append({"model": model, "experiment": cds_exp,
+                            "temporal_resolution": temporal_res, "variable": variable, "cities": [city], "error": str(exc)})
+                        summary["incomplete"].append({"city": city, "model": model,
+                            "experiment": cds_exp, "temporal_resolution": temporal_res, "variable": variable})
+                        _record_cmip6_failure(output_root, model=model, experiment=cds_exp,
+                            resolution=temporal_res, variable=variable, cities=[city], error=str(exc))
                         logger.warning(f"    ✗ {variable}: {exc}")
                     finally:
                         if tmp_nc.exists():
                             tmp_nc.unlink()
                     time.sleep(1)
 
-                if failed_variables:
-                    logger.error(
-                        "Incomplete CMIP6 download for %s %s (%s); failed variables: %s. "
-                        "No CSV written.",
-                        model,
-                        label,
-                        temporal_res,
-                        ", ".join(failed_variables),
-                    )
+                merged = _merge_cmip6_city_frames(city_frames, city)
+                if merged is None or not _cmip6_frame_covers_request(merged, years, var_list):
+                    logger.error("CMIP6 incomplete for city=%s model=%s experiment=%s resolution=%s",
+                                 city, model, cds_exp, temporal_res)
                     continue
-                if not var_dfs:
-                    logger.error(f"No variables downloaded for {model} {label} ({temporal_res})")
+                if not _write_cmip6_final(out_csv, merged, years, var_list):
+                    summary["incomplete"].append({"city": city, "model": model,
+                        "experiment": cds_exp, "temporal_resolution": temporal_res, "variables": var_list})
                     continue
-
-                merged = var_dfs[0]
-                for df_v in var_dfs[1:]:
-                    merged = pd.merge(merged, df_v, on="time", how="outer")
-                merged = merged.sort_values("time").reset_index(drop=True)
-                if not _cmip6_frame_covers_request(merged, years, var_list):
-                    logger.error(
-                        "Merged CMIP6 data for %s %s (%s) failed field/year validation; "
-                        "no CSV written.",
-                        model,
-                        label,
-                        temporal_res,
-                    )
-                    continue
-                tmp_csv = out_csv.with_name(f".{out_csv.name}.tmp")
-                merged.to_csv(tmp_csv, index=False)
-                tmp_csv.replace(out_csv)
+                summary["success"].append({"city": city, "model": model,
+                    "experiment": cds_exp, "temporal_resolution": temporal_res, "variables": var_list})
                 logger.info(f"CMIP6 saved → {out_csv} ({len(merged)} rows)")
+    logger.info("CMIP6 summary: %d successful outputs, %d failed items, %d incomplete outputs",
+                len(summary["success"]), len(summary["failed"]), len(summary["incomplete"]))
+    for item in summary["success"]:
+        logger.info("CMIP6 success: city=%s model=%s experiment=%s resolution=%s",
+                    item["city"], item["model"], item["experiment"], item["temporal_resolution"])
+    for item in summary["failed"]:
+        logger.error("CMIP6 failed: variable=%s cities=%s model=%s experiment=%s resolution=%s error=%s",
+                     item["variable"], item["cities"], item["model"], item["experiment"],
+                     item["temporal_resolution"], item["error"])
+    for item in summary["incomplete"]:
+        logger.error("CMIP6 incomplete: %s", item)
+    return summary
 
 
 def download_cmip6_for_cities(
@@ -2144,8 +2420,8 @@ def download_cmip6_for_cities(
     variables: Optional[List[str]] = None,
     year_range: Optional[tuple] = None,
     output_dir: str = "data/CMIP6",
-) -> None:
-    """Download CMIP6 projections for multiple cities using one CDS request per variable group."""
+) -> dict[str, list]:
+    """Download CMIP6 projections for multiple cities with per-variable recovery."""
     import cdsapi
 
     city_points = _resolve_city_points(cities)
@@ -2158,6 +2434,7 @@ def download_cmip6_for_cities(
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
     client = cdsapi.Client()
+    summary = {"success": [], "failed": [], "incomplete": []}
 
     for model in models:
         for cds_exp in experiments:
@@ -2170,6 +2447,9 @@ def download_cmip6_for_cities(
                     f"CMIP6 combination not available in CDS: model='{model}', experiment='{cds_exp}'. "
                     "Run 'samy-download list-cmip6' to inspect currently available combinations."
                 )
+                summary["incomplete"].append({"cities": list(city_points), "model": model,
+                    "experiment": cds_exp, "variables": variables,
+                    "reason": "no supported variable group available"})
                 continue
 
             years = CMIP6_EXP_YEARS.get(cds_exp, [])
@@ -2177,6 +2457,8 @@ def download_cmip6_for_cities(
                 years = [y for y in years if year_range[0] <= y <= year_range[1]]
             if not years:
                 logger.warning(f"No years available for experiment '{cds_exp}' with given range, skipping")
+                summary["incomplete"].append({"cities": list(city_points), "model": model,
+                    "experiment": cds_exp, "variables": variables, "reason": "no requested years"})
                 continue
             label = CMIP6_EXP_LABEL[cds_exp]
 
@@ -2190,13 +2472,10 @@ def download_cmip6_for_cities(
                             "CMIP6 output covers requested fields and years: %s",
                             out_csv,
                         )
+                        summary["success"].append({"city": city, "model": model,
+                            "experiment": cds_exp, "temporal_resolution": temporal_res,
+                            "variables": var_list, "skipped": True})
                         continue
-                    if out_csv.exists():
-                        logger.warning(
-                            "Existing CMIP6 CSV is incomplete for requested fields/years; "
-                            "re-downloading: %s",
-                            out_csv,
-                        )
                     pending_cities.append(city)
                 if not pending_cities:
                     logger.info(
@@ -2206,20 +2485,37 @@ def download_cmip6_for_cities(
                     continue
 
                 city_frames: dict[str, list[pd.DataFrame]] = {city: [] for city in pending_cities}
-                failed_variables: list[str] = []
                 pbar_desc = f"CMIP6 {model} {label} ({len(pending_cities)} cities)"
 
                 for variable in tqdm(var_list, desc=pbar_desc, unit="var"):
-                    tmp_nc = Path(output_dir) / f"_tmp_{model}_{cds_exp}_{variable}.nc"
-                    logger.info("  → %s", variable)
+                    short = CMIP6_VAR_SHORT.get(variable, variable)
+                    missing_cities = []
+                    for city in pending_cities:
+                        cache_path = _cmip6_cache_path(
+                            output_root, model, cds_exp, temporal_res, variable,
+                            city, years, city_points[city],
+                        )
+                        cached = _read_cmip6_variable(cache_path, years, variable)
+                        if cached is None:
+                            out_csv = output_root / city / f"{model}_{label}{suffix}.csv"
+                            cached = _cmip6_existing_variable(out_csv, years, variable, cache_path)
+                        if cached is None:
+                            missing_cities.append(city)
+                        else:
+                            city_frames[city].append(cached)
+                    if not missing_cities:
+                        continue
+                    tmp_nc = output_root / f"_tmp_{model}_{cds_exp}_{variable}.nc"
+                    logger.info("  → %s (%d cities)", variable, len(missing_cities))
                     try:
+                        request_points = {city: city_points[city] for city in missing_cities}
                         req: dict = {
                             "temporal_resolution": temporal_res,
                             "experiment": cds_exp,
                             "variable": variable,
                             "model": model,
                             "year": [str(y) for y in years],
-                            "area": area,
+                            "area": _cmip6_request_area(request_points),
                         }
                         if temporal_res == "daily":
                             req["month"] = all_months
@@ -2228,37 +2524,62 @@ def download_cmip6_for_cities(
 
                         city_dfs = _nc_bytes_to_point_dfs(
                             tmp_nc.read_bytes(),
-                            {city: city_points[city] for city in pending_cities},
+                            request_points,
                         )
                         rename = {}
                         for raw_col in next(iter(city_dfs.values())).columns:
                             if raw_col != "time":
                                 rename[raw_col] = CMIP6_VAR_SHORT.get(raw_col, raw_col)
-                        for city, df_city in city_dfs.items():
-                            city_frames[city].append(df_city.rename(columns=rename))
+                        city_errors = {}
+                        for city in missing_cities:
+                            try:
+                                df_city = city_dfs.get(city)
+                                if df_city is None:
+                                    raise ValueError(f"extracted data missing city {city}")
+                                df_city = df_city.rename(columns=rename)[["time", short]]
+                                if not _cmip6_variable_covers_request(df_city, years, variable):
+                                    raise ValueError(f"extracted data for {city} failed field/year validation")
+                                cache_path = _cmip6_cache_path(
+                                    output_root, model, cds_exp, temporal_res, variable,
+                                    city, years, city_points[city],
+                                )
+                                _write_cmip6_variable(cache_path, df_city)
+                                city_frames[city].append(df_city)
+                            except Exception as exc:
+                                city_errors[city] = str(exc)
+                        for city, error in city_errors.items():
+                            summary["failed"].append({"model": model, "experiment": cds_exp,
+                                "temporal_resolution": temporal_res, "variable": variable,
+                                "cities": [city], "error": error})
+                            summary["incomplete"].append({"city": city, "model": model,
+                                "experiment": cds_exp, "temporal_resolution": temporal_res,
+                                "variable": variable})
+                            _record_cmip6_failure(output_root, model=model, experiment=cds_exp,
+                                resolution=temporal_res, variable=variable, cities=[city], error=error)
                         logger.info("    ✓ %s", CMIP6_VAR_SHORT.get(variable, variable))
                     except Exception as exc:
-                        failed_variables.append(variable)
+                        for city in missing_cities:
+                            item = {"model": model, "experiment": cds_exp,
+                                "temporal_resolution": temporal_res, "variable": variable,
+                                "cities": [city], "error": str(exc)}
+                            summary["failed"].append(item)
+                            summary["incomplete"].append({"city": city, "model": model,
+                                "experiment": cds_exp, "temporal_resolution": temporal_res,
+                                "variable": variable})
+                        _record_cmip6_failure(output_root, model=model, experiment=cds_exp,
+                            resolution=temporal_res, variable=variable, cities=missing_cities, error=str(exc))
                         logger.warning("    ✗ %s: %s", variable, exc)
                     finally:
                         if tmp_nc.exists():
                             tmp_nc.unlink()
                     time.sleep(1)
 
-                if failed_variables:
-                    logger.error(
-                        "Incomplete CMIP6 download for %s %s (%s); failed variables: %s. "
-                        "No CSV written.",
-                        model,
-                        label,
-                        temporal_res,
-                        ", ".join(failed_variables),
-                    )
-                    continue
-
                 for city in pending_cities:
                     merged = _merge_cmip6_city_frames(city_frames, city)
                     if merged is None or not _cmip6_frame_covers_request(merged, years, var_list):
+                        summary["incomplete"].append({"city": city, "model": model,
+                            "experiment": cds_exp, "temporal_resolution": temporal_res,
+                            "variables": var_list})
                         logger.error(
                             "CMIP6 data for city='%s', model='%s', experiment='%s', resolution='%s' "
                             "failed field/year validation; no CSV written.",
@@ -2268,10 +2589,27 @@ def download_cmip6_for_cities(
                     city_dir = output_root / city
                     city_dir.mkdir(parents=True, exist_ok=True)
                     out_csv = city_dir / f"{model}_{label}{suffix}.csv"
-                    tmp_csv = out_csv.with_name(f".{out_csv.name}.tmp")
-                    merged.to_csv(tmp_csv, index=False)
-                    tmp_csv.replace(out_csv)
+                    if not _write_cmip6_final(out_csv, merged, years, var_list):
+                        summary["incomplete"].append({"city": city, "model": model,
+                            "experiment": cds_exp, "temporal_resolution": temporal_res,
+                            "variables": var_list})
+                        continue
+                    summary["success"].append({"city": city, "model": model,
+                        "experiment": cds_exp, "temporal_resolution": temporal_res,
+                        "variables": var_list})
                     logger.info("CMIP6 saved → %s (%s rows)", out_csv, len(merged))
+    logger.info("CMIP6 summary: %d successful outputs, %d failed items, %d incomplete outputs",
+                len(summary["success"]), len(summary["failed"]), len(summary["incomplete"]))
+    for item in summary["success"]:
+        logger.info("CMIP6 success: city=%s model=%s experiment=%s resolution=%s",
+                    item["city"], item["model"], item["experiment"], item["temporal_resolution"])
+    for item in summary["failed"]:
+        logger.error("CMIP6 failed: variable=%s cities=%s model=%s experiment=%s resolution=%s error=%s",
+                     item["variable"], item["cities"], item["model"], item["experiment"],
+                     item["temporal_resolution"], item["error"])
+    for item in summary["incomplete"]:
+        logger.error("CMIP6 incomplete: %s", item)
+    return summary
 
 
 # ─── CORDEX-CMIP5 ─────────────────────────────────────────────────────────────
@@ -2810,14 +3148,18 @@ def main() -> None:
 
     if "nsrdb" in sources:
         yr_start, yr_end = args.years if args.years else DEFAULT_NSRDB_YEAR_RANGE
-        download_nsrdb_for_cities(
+        summary = download_nsrdb_for_cities(
             cities=cities,
             years=list(range(yr_start, yr_end + 1)),
             output_dir=args.nsrdb_dir,
         )
+        if summary["failed"] or summary["incomplete"]:
+            logger.error("NSRDB required data remains incomplete: %s failed year(s), %s incomplete city output(s)",
+                         len(summary["failed"]), len(summary["incomplete"]))
+            raise SystemExit(1)
 
     if "cmip6" in sources:
-        download_cmip6_for_cities(
+        summary = download_cmip6_for_cities(
             cities=cities,
             models=args.models,
             experiments=args.experiments,
@@ -2825,6 +3167,10 @@ def main() -> None:
             year_range=tuple(args.cmip6_years) if args.cmip6_years else None,
             output_dir=args.cmip6_dir,
         )
+        if summary["failed"] or summary["incomplete"]:
+            logger.error("CMIP6 required data remains incomplete: %s failed item(s), %s incomplete output(s)",
+                         len(summary["failed"]), len(summary["incomplete"]))
+            raise SystemExit(1)
 
     if "cordex" in sources:
         for city in cities:

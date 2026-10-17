@@ -10,9 +10,11 @@ Slow integration tests (real network) run with:
 from __future__ import annotations
 
 import io
+import sys
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -429,8 +431,13 @@ class TestDownloadNsrdbUnit:
         header = "Source,Location ID,City,State,Country,Latitude,Longitude,Time Zone,Elevation\n"
         header += "NSRDB,123,Miami,FL,US,25.76,-80.19,-5,4\n"
         data = "Year,Month,Day,Hour,Minute,GHI,DNI,DHI,air_temperature,dew_point,relative_humidity,wind_speed,wind_direction,surface_pressure\n"
-        for h in range(8760):
-            data += f"{year},1,1,{h % 24},0,0,0,0,25.0,20.0,75.0,3.5,180,1013\n"
+        times = pd.date_range(f"{year}-01-01", f"{year + 1}-01-01", freq="h", inclusive="left")
+        times = times[~((times.month == 2) & (times.day == 29))]
+        for timestamp in times:
+            data += (
+                f"{year},{timestamp.month},{timestamp.day},{timestamp.hour},{timestamp.minute},"
+                "0,0,0,25.0,20.0,75.0,3.5,180,1013\n"
+            )
         return header + data
 
     def test_missing_env_vars_raises(self, tmp_path, monkeypatch):
@@ -469,6 +476,47 @@ class TestDownloadNsrdbUnit:
         assert len(output_files) == 1
         df = pd.read_csv(output_files[0])
         assert "GHI" in df.columns
+
+    def test_resumes_nsrdb_from_cached_successful_year(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_nsrdb
+
+        def response_for(year):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            response.text = self._mock_nsrdb_csv(year)
+            return response
+
+        session = MagicMock()
+        session.get.side_effect = [response_for(2000), RuntimeError("temporary failure"), response_for(2001)]
+        sources = [("https://example.test/nsrdb", 2000, 2001)]
+        with (
+            patch("samy_wgen.pipeline.download_data._load_nsrdb_credentials",
+                  return_value=("test_key", "test@example.com")),
+            patch("samy_wgen.pipeline.download_data._resolve_nsrdb_source_selection", return_value={
+                "query_success": True, "query_error": None, "fallback_used": False,
+                "fallback_reason": "", "raw_discovered_sources": [], "candidate_groups": [],
+                "selected_group": {"label": "test", "year_ranges": "2000-2001", "coverage_years": 2,
+                                   "source_keys": ["test"]},
+                "selected_sources": sources,
+            }),
+            patch("requests.Session", return_value=session),
+            patch("samy_wgen.pipeline.download_data.time.sleep"),
+        ):
+            first = download_nsrdb("Miami", 25.76, -80.19, [2000, 2001], output_dir=str(tmp_path),
+                                   max_retries=1)
+            assert first["failed"]
+            assert not list(tmp_path.glob("nsrdb_miami_*.csv"))
+            second = download_nsrdb("Miami", 25.76, -80.19, [2000, 2001], output_dir=str(tmp_path),
+                                    max_retries=1)
+
+        assert [call.kwargs["params"]["names"] for call in session.get.call_args_list] == [
+            "2000", "2001", "2001"
+        ]
+        assert not second["failed"] and not second["incomplete"]
+        final = pd.read_csv(tmp_path / "nsrdb_miami_2000-2001.csv")
+        assert set(final["Year"].unique()) == {2000, 2001}
+        assert len(final) == 2 * 8760
+        assert len(list((tmp_path / ".cache" / "NSRDB" / "Miami").glob("*.csv"))) == 2
 
     def test_filters_years_outside_coverage(self, tmp_path, monkeypatch):
         """Years outside query-reported coverage are silently skipped."""
@@ -1426,6 +1474,11 @@ class TestCdsConstraintHelpers:
 # ─── CMIP6 year_range filtering ───────────────────────────────────────────────
 
 class TestCmip6YearRange:
+    @pytest.fixture(autouse=True)
+    def cdsapi_stub(self):
+        with patch.dict(sys.modules, {"cdsapi": SimpleNamespace(Client=MagicMock())}):
+            yield
+
     def test_year_range_filters_historical(self):
         from samy_wgen.pipeline.download_data import CMIP6_EXP_YEARS
         year_range = (1990, 2000)
@@ -1578,6 +1631,172 @@ class TestCmip6YearRange:
         assert captured_requests[0]["area"] == [35.55, -119.74, 24.26, -78.69]
         assert (tmp_path / "Miami" / "mpi_esm1_2_lr_historical.csv").exists()
         assert (tmp_path / "Los_Angeles" / "mpi_esm1_2_lr_historical.csv").exists()
+
+    def test_cmip6_multicity_resumes_only_failed_variable(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cmip6_for_cities
+
+        requested = []
+        fail_pr = True
+        def fake_retrieve(_dataset, request, path):
+            nonlocal fail_pr
+            variable = request["variable"]
+            requested.append(variable)
+            if variable == "precipitation" and fail_pr:
+                fail_pr = False
+                raise RuntimeError("temporary CDS failure")
+            Path(path).write_bytes(b"fake")
+
+        mock_client = MagicMock()
+        mock_client.retrieve.side_effect = fake_retrieve
+        points = {"Miami": (25.76, -80.19), "Los_Angeles": (34.05, -118.24)}
+        # The precipitation request returns its corresponding field.
+        def extract_for_request(_bytes, city_points):
+            variable = requested[-1]
+            raw = "precipitation" if variable == "precipitation" else "near_surface_air_temperature"
+            return {city: pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), raw: [1.0]})
+                    for city in city_points}
+
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch("samy_wgen.pipeline.download_data._get_cmip6_variable_groups",
+                  return_value={"daily": ["near_surface_air_temperature", "precipitation"]}),
+            patch("samy_wgen.pipeline.download_data._resolve_city_points", return_value=points),
+            patch("samy_wgen.pipeline.download_data._nc_bytes_to_point_dfs", side_effect=extract_for_request),
+            patch("samy_wgen.pipeline.download_data.time.sleep"),
+        ):
+            first = download_cmip6_for_cities(["Miami", "Los_Angeles"], models=["mpi_esm1_2_lr"],
+                experiments=["historical"], year_range=(1995, 1995), output_dir=str(tmp_path))
+            assert len(first["failed"]) == 2
+            assert requested == ["near_surface_air_temperature", "precipitation"]
+
+            second = download_cmip6_for_cities(["Miami", "Los_Angeles"], models=["mpi_esm1_2_lr"],
+                experiments=["historical"], year_range=(1995, 1995), output_dir=str(tmp_path))
+
+        assert requested == ["near_surface_air_temperature", "precipitation", "precipitation"]
+        assert not second["failed"] and not second["incomplete"]
+        for city in points:
+            frame = pd.read_csv(tmp_path / city / "mpi_esm1_2_lr_historical.csv")
+            assert {"tas", "pr", "time"}.issubset(frame.columns)
+        failure_report = (tmp_path / ".cmip6_cache" / "failures.jsonl").read_text()
+        assert '"variable": "precipitation"' in failure_report
+        assert '"model": "mpi_esm1_2_lr"' in failure_report
+
+    def test_cmip6_single_city_resumes_only_failed_variable(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cmip6
+
+        requested = []
+        fail_pr = True
+        mock_client = MagicMock()
+        def retrieve(_dataset, request, path):
+            nonlocal fail_pr
+            variable = request["variable"]
+            requested.append(variable)
+            if variable == "precipitation" and fail_pr:
+                fail_pr = False
+                raise RuntimeError("temporary CDS failure")
+            Path(path).write_bytes(b"fake")
+        mock_client.retrieve.side_effect = retrieve
+        def extract(_bytes, _lat, _lon):
+            raw = "precipitation" if requested[-1] == "precipitation" else "near_surface_air_temperature"
+            return pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), raw: [1.0]})
+
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch("samy_wgen.pipeline.download_data._get_cmip6_variable_groups",
+                  return_value={"daily": ["near_surface_air_temperature", "precipitation"]}),
+            patch("samy_wgen.pipeline.download_data._nc_bytes_to_point_df", side_effect=extract),
+            patch("samy_wgen.pipeline.download_data.time.sleep"),
+        ):
+            first = download_cmip6("Miami", lat=25.76, lon=-80.19, models=["mpi_esm1_2_lr"],
+                experiments=["historical"], year_range=(1995, 1995), output_dir=str(tmp_path))
+            assert len(first["failed"]) == 1
+            download_cmip6("Miami", lat=25.76, lon=-80.19, models=["mpi_esm1_2_lr"],
+                experiments=["historical"], year_range=(1995, 1995), output_dir=str(tmp_path))
+
+        assert requested == ["near_surface_air_temperature", "precipitation", "precipitation"]
+        frame = pd.read_csv(tmp_path / "Miami" / "mpi_esm1_2_lr_historical.csv")
+        assert {"tas", "pr"}.issubset(frame.columns)
+
+    @pytest.mark.parametrize("cache_text", [
+        "not,a,valid,cache\n",
+        "time,tas\n1995-01-01,4.0\n",
+    ])
+    def test_cmip6_corrupt_and_undercovered_cache_is_requested_again(self, tmp_path, cache_text):
+        from samy_wgen.pipeline.download_data import download_cmip6_for_cities, _cmip6_cache_path
+
+        points = {"Miami": (25.76, -80.19)}
+        requested = []
+        mock_client = MagicMock()
+        def retrieve(_dataset, request, path):
+            requested.append(request["variable"])
+            Path(path).write_bytes(b"fake")
+        mock_client.retrieve.side_effect = retrieve
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch("samy_wgen.pipeline.download_data._get_cmip6_variable_groups",
+                  return_value={"daily": ["near_surface_air_temperature"]}),
+            patch("samy_wgen.pipeline.download_data._resolve_city_points", return_value=points),
+            patch("samy_wgen.pipeline.download_data._nc_bytes_to_point_dfs", return_value={
+                "Miami": pd.DataFrame({"time": pd.to_datetime(["1994-01-01", "1995-01-01"]),
+                                       "near_surface_air_temperature": [1.0, 2.0]})}),
+            patch("samy_wgen.pipeline.download_data.time.sleep"),
+        ):
+            cache = _cmip6_cache_path(tmp_path, "mpi_esm1_2_lr", "historical", "daily",
+                "near_surface_air_temperature", "Miami", [1994, 1995], points["Miami"])
+            cache.parent.mkdir(parents=True)
+            cache.write_text(cache_text)
+            download_cmip6_for_cities(["Miami"], models=["mpi_esm1_2_lr"], experiments=["historical"],
+                year_range=(1994, 1995), output_dir=str(tmp_path))
+        assert requested == ["near_surface_air_temperature"]
+
+    def test_cmip6_complete_csv_skips_all_requests(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cmip6_for_cities
+
+        output = tmp_path / "Miami" / "mpi_esm1_2_lr_historical.csv"
+        output.parent.mkdir(parents=True)
+        pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), "tas": [1.0]}).to_csv(output, index=False)
+        mock_client = MagicMock()
+        points = {"Miami": (25.76, -80.19)}
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch("samy_wgen.pipeline.download_data._get_cmip6_variable_groups",
+                  return_value={"daily": ["near_surface_air_temperature"]}),
+            patch("samy_wgen.pipeline.download_data._resolve_city_points", return_value=points),
+        ):
+            summary = download_cmip6_for_cities(["Miami"], models=["mpi_esm1_2_lr"],
+                experiments=["historical"], year_range=(1995, 1995), output_dir=str(tmp_path))
+        mock_client.retrieve.assert_not_called()
+        assert summary["success"] and summary["success"][0]["skipped"]
+
+    def test_cmip6_reuses_valid_field_from_incomplete_csv(self, tmp_path):
+        from samy_wgen.pipeline.download_data import download_cmip6_for_cities
+
+        output = tmp_path / "Miami" / "mpi_esm1_2_lr_historical.csv"
+        output.parent.mkdir(parents=True)
+        pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), "tas": [280.0]}).to_csv(output, index=False)
+        points = {"Miami": (25.76, -80.19)}
+        requested = []
+        mock_client = MagicMock()
+        def retrieve(_dataset, request, path):
+            requested.append(request["variable"])
+            Path(path).write_bytes(b"fake")
+        mock_client.retrieve.side_effect = retrieve
+        with (
+            patch("cdsapi.Client", return_value=mock_client),
+            patch("samy_wgen.pipeline.download_data._get_cmip6_variable_groups",
+                  return_value={"daily": ["near_surface_air_temperature", "precipitation"]}),
+            patch("samy_wgen.pipeline.download_data._resolve_city_points", return_value=points),
+            patch("samy_wgen.pipeline.download_data._nc_bytes_to_point_dfs", return_value={
+                "Miami": pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), "precipitation": [1.0]})}),
+            patch("samy_wgen.pipeline.download_data.time.sleep"),
+        ):
+            summary = download_cmip6_for_cities(["Miami"], models=["mpi_esm1_2_lr"],
+                experiments=["historical"], year_range=(1995, 1995), output_dir=str(tmp_path))
+
+        assert requested == ["precipitation"]
+        assert not summary["failed"] and not summary["incomplete"]
+        final = pd.read_csv(output)
+        assert {"tas", "pr"}.issubset(final.columns)
 
     def test_download_cordex_uses_constrained_plan(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_cordex_cmip5
