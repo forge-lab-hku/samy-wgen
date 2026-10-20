@@ -1846,6 +1846,7 @@ class TestCmip6YearRange:
                 ensemble="r1i1p1",
                 experiments=["historical"],
                 output_dir=str(tmp_path),
+                keep_parts=True,
             )
 
         assert len(captured_requests) == 2
@@ -1859,6 +1860,7 @@ class TestCmip6YearRange:
         assert "start_year" not in captured_requests[0]
         assert captured_requests[0]["area"] == [26.26, -80.69, 25.26, -79.69]
         assert (tmp_path / "NAM-22_mpi_m_mpi_esm_lr_ncar_regcm4_r1i1p1" / "Miami" / "historical.csv").exists()
+        assert len(list((tmp_path / "NAM-22_mpi_m_mpi_esm_lr_ncar_regcm4_r1i1p1" / "Miami").glob("_part_*.zip"))) == 2
 
     def test_cordex_zip_outputs_feed_delta_reader(self, tmp_path):
         from samy_wgen.pipeline.download_data import download_cordex_cmip5

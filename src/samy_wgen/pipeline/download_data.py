@@ -2637,6 +2637,15 @@ def _cordex_point_df(nc_bytes: bytes, lat: float, lon: float) -> pd.DataFrame:
     return combined.groupby("time", as_index=False).first().sort_values("time").reset_index(drop=True)
 
 
+def _cordex_year_point_df(nc_bytes: bytes, lat: float, lon: float, year: int) -> pd.DataFrame:
+    """Select one year, including when a retained ZIP covers several years."""
+    frame = _cordex_point_df(nc_bytes, lat, lon)
+    selected = frame[pd.to_datetime(frame["time"]).dt.year == year]
+    if selected.empty:
+        raise ValueError(f"CORDEX response has no daily values for {year}")
+    return selected.reset_index(drop=True)
+
+
 def _cordex_csv_covers_request(path: Path, years: list[int], months: list[str],
                                variables: list[str]) -> bool:
     """Check that an existing city CSV covers every requested full month."""
@@ -2669,6 +2678,7 @@ def download_cordex_cmip5(
     months: Optional[List[str]] = None,
     output_dir: str = "data/CORDEX_CMIP5",
     overwrite: bool = False,
+    keep_parts: bool = False,
 ) -> dict[str, Path]:
     """Download CORDEX-CMIP5 daily city series for the climate-delta reader.
 
@@ -2766,8 +2776,10 @@ def download_cordex_cmip5(
             for variable in plan["variable"]:
                 short = CORDEX_VAR_SHORT[str(variable)]
                 part_path = city_dir / f"_part_{experiment}_{year}_{short}_{''.join(months)}.zip"
+                requested = False
                 try:
                     if not part_path.exists():
+                        requested = True
                         req = {
                             "format": "zip",
                             "domain": str(plan["domain"]),
@@ -2784,7 +2796,7 @@ def download_cordex_cmip5(
                                      round(lat - 0.5, 2), round(lon + 0.5, 2)],
                         }
                         client.retrieve(CDS_CORDEX_DATASET, req, str(part_path))
-                    frame = _cordex_point_df(part_path.read_bytes(), lat, lon)
+                    frame = _cordex_year_point_df(part_path.read_bytes(), lat, lon, year)
                     if short not in frame:
                         raise ValueError(f"CORDEX response missing requested variable '{short}'")
                     variable_frames.append(frame[["time", short]])
@@ -2794,7 +2806,8 @@ def download_cordex_cmip5(
                     logger.warning("  %s %s failed: %s", year, short, exc)
                     failed_requests.append(f"{year}/{short}")
                     part_path.unlink(missing_ok=True)
-                time.sleep(1)
+                if requested:
+                    time.sleep(1)
             if len(variable_frames) == len(plan["variable"]):
                 df_year = variable_frames[0]
                 for frame in variable_frames[1:]:
@@ -2814,8 +2827,9 @@ def download_cordex_cmip5(
             raise ValueError(f"Duplicate CORDEX timestamps in {experiment} response")
         merged = merged.sort_values("time").reset_index(drop=True)
         merged.to_csv(out_csv, index=False)
-        for part_path in part_paths:
-            part_path.unlink(missing_ok=True)
+        if not keep_parts:
+            for part_path in part_paths:
+                part_path.unlink(missing_ok=True)
         logger.info(f"CORDEX saved → {out_csv} ({len(merged)} rows)")
         outputs[experiment] = out_csv
 
