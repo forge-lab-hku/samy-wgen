@@ -691,7 +691,7 @@ city_id,continent,city,city_ascii,country,country_iso2,latitude,longitude,cordex
 1156539782,Asia,Zunyi,Zunyi,China,CN,27.722,107.031,EAS-22
 1156051276,Asia,Ürümqi,Urumqi,China,CN,43.8225,87.6125,EAS-22
 1268203191,Asia,Tbilisi,Tbilisi,Georgia,GE,41.7225,44.7925,WAS-22
-1344982653,Asia,Hong Kong,Hong_Kong,Hong Kong,HK,22.3,114.2,EAS-22
+1344982653,Asia,Hong Kong,Hong_Kong,Hong Kong,HK,22.3,114.2,SEA-22
 1344538284,Asia,Kowloon,Kowloon,Hong Kong,HK,22.3167,114.1833,EAS-22
 1344745541,Asia,Sha Tin,Sha_Tin,Hong Kong,HK,22.3802,114.1898,EAS-22
 1356324522,Asia,Abhepur,Abhepur,India,IN,39.41,116.38,SEA-22
@@ -725,7 +725,7 @@ city_id,continent,city,city_ascii,country,country_iso2,latitude,longitude,cordex
 1356999503,Asia,Coimbatore,Coimbatore,India,IN,11.0008,76.9633,SEA-22
 1356872061,Asia,Cuttack,Cuttack,India,IN,20.5236,85.7881,SEA-22
 1356970407,Asia,Dehra Dūn,Dehra_Dun,India,IN,30.345,78.029,SEA-22
-1356872604,Asia,Delhi,Delhi,India,IN,28.61,77.23,SEA-22
+1356872604,Asia,Delhi,Delhi,India,IN,28.61,77.23,WAS-22
 1356103392,Asia,Dhanbād,Dhanbad,India,IN,23.7998,86.4305,SEA-22
 1356224695,Asia,Dhūlia,Dhulia,India,IN,20.8997,74.7697,SEA-22
 1356960169,Asia,Dispur,Dispur,India,IN,26.1397,91.7925,SEA-22

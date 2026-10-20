@@ -74,7 +74,7 @@ CORDEX_DOMAIN_MAP = {
     "EUR-11": "europe",
     "SAM-22": "south_america",
     "AFR-22": "africa",
-    "WAS-22": "west_asia",
+    "WAS-22": "south_asia",
     "EAS-22": "east_asia",
     "SEA-22": "south_east_asia",
     "AUS-22": "australasia",
