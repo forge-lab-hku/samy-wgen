@@ -243,15 +243,41 @@ samy-download download --city Miami --data era5-land \
 # Calibrate ERA5-Land solar radiation with the overlapping NSRDB record
 samy-download calibrate-solar --city Miami \
   --era5 data/ERA5_Land/Miami/era5_land_miami_surface_solar_radiation_downwards_19500101-20241231.nc \
-  --nsrdb data/NSRDB/nsrdb_miami_1998-2024.csv
+  --nsrdb data/NSRDB/nsrdb_miami_1998-2024.csv \
+  --nsrdb-time-basis auto --output output/miami_solar_lst.csv
+
+# With existing ISD and CMIP6 inputs, Stage 2 accepts the calibrated CSV directly
+samy-run --city Miami --nsrdb output/miami_solar_lst.csv --skip-download
 ```
 
 Calibration converts hourly ERA5-Land solar energy to mean irradiance, learns
-monthly/hourly GHI scale factors and NSRDB diffuse fractions over their shared
-daylight period, then writes hourly `GHI`, `DNI`, and `DHI` in local standard
-time. The output retains ERA5-Land's longer time span; its pre-NSRDB years are
+monthly/hourly GHI scale factors and clearness-conditioned NSRDB diffuse fractions
+over their shared daylight period, then writes hourly `DATE,GHI,DNI,DHI` in
+fixed local standard time (UTC plus the city standard offset, without DST).
+The adjacent `.metadata.json` records the selected NSRDB time basis and its
+evidence, UTC-to-LST shift, zenith comparison when available, overlap count,
+and closure-filter count.
+`--nsrdb-time-basis auto` (the default) compares UTC and fixed LST using the
+file's `Solar Zenith Angle` when present. Otherwise it compares the fraction
+of bright observations (`GHI>20 W/m²`) falling at calculated solar night under
+each interpretation. That fallback requires at least 1,000 bright observations
+spanning 180 days, a low night fraction for the selected basis, and a clear
+separation from the alternative. Ambiguous or short records require
+`--nsrdb-time-basis utc` or `lst` from source provenance. Filename and city
+name are never used to infer the time basis. NSRDB observations at
+`:30` are compared with ERA5 interpolated to that instant and their own zenith
+angle is used for closure screening.
+
+Existing NSRDB exports can have mixed time bases even within one archive. In
+one 24-file audit, 19 files with zenith angles were UTC and five older files
+without them were fixed LST. This audit is not a filename rule in the package:
+each new file is evaluated from its own solar evidence. The downloader requests
+`utc=false`, but that setting does not establish the time basis of an already
+existing CSV.
+
+The output retains ERA5-Land's longer time span; its pre-NSRDB years are
 an extrapolation of overlap-period calibration relationships, not independent
-solar observations. At least 24 usable daylight overlap hours are required.
+solar observations. At least 24 usable daylight overlap observations are required.
 The default output is `data/ERA5_Land/calibrated/<city>_solar_calibrated.csv`.
 
 ### CORDEX-CMIP5 note

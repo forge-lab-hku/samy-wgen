@@ -2901,6 +2901,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--nsrdb", required=True, type=Path, help="NSRDB CSV containing GHI, DNI, and DHI")
     p_cal.add_argument("--output", type=Path, default=None, help="Output CSV (default: data/ERA5_Land/calibrated/<city>_solar_calibrated.csv)")
     p_cal.add_argument("--utc-offset", type=float, default=None, help="Override city fixed-standard UTC offset in hours")
+    p_cal.add_argument(
+        "--nsrdb-time-basis", choices=["auto", "utc", "lst"], default="auto",
+        help="NSRDB timestamp basis; auto requires decisive zenith or GHI daylight evidence",
+    )
 
     # ── check-station ──────────────────────────────────────────────────────────
     p_cov = sub.add_parser("check-station", help="Inspect metadata year coverage for one ISD station")
@@ -3077,10 +3081,16 @@ def main() -> None:
             latitude=meta["lat"],
             longitude=meta["lon"],
             utc_offset_hours=utc_offset,
+            nsrdb_time_basis=args.nsrdb_time_basis,
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         calibrated.to_csv(output_path, index=True, index_label="DATE")
+        import json
+
+        metadata_path = output_path.with_suffix(".metadata.json")
+        metadata_path.write_text(json.dumps(calibrated.attrs, indent=2) + "\n")
         logger.info("Calibrated solar data saved → %s (%s hourly rows)", output_path, len(calibrated))
+        logger.info("Solar calibration time basis and sample counts → %s: %s", metadata_path, calibrated.attrs)
         return
 
     if args.command == "list-cordex":

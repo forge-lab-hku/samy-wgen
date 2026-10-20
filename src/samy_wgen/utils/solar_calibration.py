@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -98,7 +99,7 @@ def _read_era5_ssrd(path: str | Path, latitude: float, longitude: float) -> pd.S
 
 
 def _load_nsrdb(path: str | Path) -> pd.DataFrame:
-    """Load NSRDB GHI/DNI/DHI and aggregate its timestamps to hourly values."""
+    """Load observations at their recorded instant, including the minute and zenith."""
     raw = pd.read_csv(path)
     required = {"Year", "Month", "Day", "Hour", "GHI", "DNI", "DHI"}
     missing = sorted(required - set(raw.columns))
@@ -115,11 +116,15 @@ def _load_nsrdb(path: str | Path) -> pd.DataFrame:
         },
         errors="coerce",
     )
-    frame = raw[["GHI", "DNI", "DHI"]].apply(pd.to_numeric, errors="coerce")
+    columns = ["GHI", "DNI", "DHI"]
+    if "Solar Zenith Angle" in raw:
+        columns.append("Solar Zenith Angle")
+    frame = raw[columns].apply(pd.to_numeric, errors="coerce")
     frame.index = index
     frame = frame.loc[~frame.index.isna()].sort_index()
-    # NSRDB is requested in local standard time by this repository's downloader.
-    return frame.resample("h").mean()
+    if frame.index.has_duplicates:
+        raise ValueError("NSRDB contains duplicate observation timestamps")
+    return frame
 
 
 def _cos_zenith(latitude: float, longitude: float, utc_index: pd.DatetimeIndex) -> np.ndarray:
@@ -145,6 +150,81 @@ def _cos_zenith(latitude: float, longitude: float, utc_index: pd.DatetimeIndex) 
     )
 
 
+def _nsrdb_time_basis(
+    nsrdb: pd.DataFrame,
+    basis: Literal["auto", "utc", "lst"],
+    latitude: float,
+    longitude: float,
+    utc_offset_hours: float,
+) -> tuple[str, dict[str, float], dict[str, float], str]:
+    """Select UTC or fixed LST only from decisive solar evidence."""
+    if basis not in {"auto", "utc", "lst"}:
+        raise ValueError("nsrdb_time_basis must be auto, utc, or lst")
+    if basis != "auto":
+        return basis, {}, {}, "explicit parameter"
+    if utc_offset_hours == 0:
+        raise ValueError("Cannot infer NSRDB time basis at zero UTC offset; specify nsrdb_time_basis='utc' or 'lst'")
+    if "Solar Zenith Angle" not in nsrdb:
+        ghi = nsrdb["GHI"].to_numpy(dtype=float)
+        bright = np.isfinite(ghi) & (ghi > 20.0)
+        bright_times = nsrdb.index[bright]
+        if int(bright.sum()) < 1000 or (
+            len(bright_times) and bright_times.max() - bright_times.min() < pd.Timedelta(days=180)
+        ):
+            raise ValueError(
+                "Insufficient NSRDB daylight evidence to infer time basis; "
+                "specify nsrdb_time_basis='utc' or 'lst'"
+            )
+        night_fraction = {}
+        for candidate, shift in (("utc", 0.0), ("lst", -utc_offset_hours)):
+            utc_index = pd.DatetimeIndex(nsrdb.index + pd.to_timedelta(shift, unit="h"), tz="UTC")
+            predicted = _cos_zenith(latitude, longitude, utc_index)
+            night_fraction[candidate] = float(np.mean(predicted[bright] <= 0))
+        best = min(night_fraction, key=night_fraction.get)
+        other = "lst" if best == "utc" else "utc"
+        if (
+            night_fraction[best] > 0.03
+            or night_fraction[other] - night_fraction[best] < 0.03
+            or night_fraction[other] < 3 * night_fraction[best]
+        ):
+            raise ValueError(
+                f"Ambiguous NSRDB time basis from GHI daylight (UTC night fraction="
+                f"{night_fraction['utc']:.3f}, LST={night_fraction['lst']:.3f}); "
+                "specify nsrdb_time_basis='utc' or 'lst'"
+            )
+        return best, {}, night_fraction, "GHI daylight versus calculated solar night"
+    measured = np.cos(np.radians(nsrdb["Solar Zenith Angle"].to_numpy(dtype=float)))
+    scores = {}
+    for candidate, shift in (("utc", 0.0), ("lst", -utc_offset_hours)):
+        utc_index = pd.DatetimeIndex(nsrdb.index + pd.to_timedelta(shift, unit="h"), tz="UTC")
+        predicted = _cos_zenith(latitude, longitude, utc_index)
+        valid = np.isfinite(measured) & (measured > 0.1)
+        if int(valid.sum()) < 48:
+            raise ValueError("Insufficient NSRDB zenith evidence; specify nsrdb_time_basis='utc' or 'lst'")
+        scores[candidate] = float(np.mean(np.abs(measured[valid] - predicted[valid])))
+    best = min(scores, key=scores.get)
+    other = "lst" if best == "utc" else "utc"
+    if scores[best] > 0.08 or scores[other] - scores[best] < 0.04 or scores[other] < 2 * scores[best]:
+        raise ValueError(
+            f"Ambiguous NSRDB time basis (UTC MAE={scores['utc']:.3f}, "
+            f"LST MAE={scores['lst']:.3f}); specify nsrdb_time_basis='utc' or 'lst'"
+        )
+    return best, scores, {}, "Solar Zenith Angle comparison"
+
+
+def _era5_at_observations(era5_ghi: pd.Series, observation_index: pd.DatetimeIndex) -> pd.Series:
+    """Interpolate hourly ERA5 to the actual NSRDB observation instants."""
+    series = era5_ghi.reindex(era5_ghi.index.union(observation_index)).interpolate(method="time")
+    values = series.reindex(observation_index)
+    # Never bridge a missing ERA5 hour or extrapolate outside its coverage.
+    left = era5_ghi.index.searchsorted(observation_index, side="right") - 1
+    right = era5_ghi.index.searchsorted(observation_index, side="left")
+    valid = (left >= 0) & (right < len(era5_ghi))
+    gaps = np.full(len(observation_index), np.inf)
+    gaps[valid] = (era5_ghi.index[right[valid]] - era5_ghi.index[left[valid]]).total_seconds()
+    return values.where(valid & (gaps <= 3600))
+
+
 def calibrate_era5_land_solar(
     era5_path: str | Path,
     nsrdb_path: str | Path,
@@ -152,14 +232,15 @@ def calibrate_era5_land_solar(
     latitude: float,
     longitude: float,
     utc_offset_hours: float,
+    nsrdb_time_basis: Literal["auto", "utc", "lst"] = "auto",
     min_overlap_samples: int = 24,
 ) -> pd.DataFrame:
     """Return calibrated hourly GHI/DNI/DHI in local standard time.
 
     ERA5-Land surface solar radiation is an hourly energy amount in J m-2, so
     it is converted to W m-2 before calibration. NSRDB overlap is used to learn
-    monthly/hourly GHI scale factors and diffuse fractions. ERA5 UTC timestamps
-    are shifted to fixed local standard time to match the NSRDB download format.
+    monthly/hourly GHI scale factors and diffuse fractions. The output DATE is
+    fixed local standard time (UTC plus utc_offset_hours), without DST.
     """
     if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
         raise ValueError("Latitude/longitude are outside valid geographic bounds")
@@ -176,10 +257,18 @@ def calibrate_era5_land_solar(
 
     nsrdb = _load_nsrdb(nsrdb_path)
     if nsrdb.empty:
-        raise ValueError("NSRDB file contains no valid hourly observations")
-    overlap = era5_ghi.index.intersection(nsrdb.index)
-    era_overlap = era5_ghi.reindex(overlap)
-    nsr_overlap = nsrdb["GHI"].reindex(overlap)
+        raise ValueError("NSRDB file contains no valid observations")
+    basis, zenith_scores, night_fraction, basis_evidence = _nsrdb_time_basis(
+        nsrdb, nsrdb_time_basis, latitude, longitude, utc_offset_hours,
+    )
+    nsrdb_utc_index = pd.DatetimeIndex(
+        nsrdb.index + pd.to_timedelta(-utc_offset_hours if basis == "lst" else 0, unit="h"),
+        tz="UTC",
+    )
+    nsrdb_lst_index = (nsrdb_utc_index + pd.to_timedelta(utc_offset_hours, unit="h")).tz_localize(None)
+    nsrdb.index = nsrdb_lst_index
+    era_overlap = _era5_at_observations(era5_ghi, nsrdb_lst_index)
+    nsr_overlap = nsrdb["GHI"]
     usable = era_overlap.notna() & nsr_overlap.notna() & (era_overlap > 1.0) & (nsr_overlap > 10.0)
     if int(usable.sum()) < min_overlap_samples:
         raise ValueError(
@@ -207,31 +296,47 @@ def calibrate_era5_land_solar(
     )
     ghi = era5_ghi * factors
 
-    # Learn NSRDB diffuse fraction from high-quality daylight records.
-    nsrdb_utc_index = nsrdb.index + pd.to_timedelta(utc_offset_hours, unit="h")
-    nsrdb_cosz = _cos_zenith(latitude, longitude, nsrdb_utc_index)
-    daylight = (nsrdb_cosz > 0.05) & (nsrdb["GHI"].to_numpy() > 10)
+    # Use the NSRDB zenith at the actual observation instant for closure.
+    nsrdb_cosz = (
+        np.cos(np.radians(nsrdb["Solar Zenith Angle"].to_numpy(dtype=float)))
+        if "Solar Zenith Angle" in nsrdb
+        else _cos_zenith(latitude, longitude, nsrdb_utc_index)
+    )
+    daylight = np.isfinite(nsrdb_cosz) & (nsrdb_cosz > 0.05) & (nsrdb["GHI"].to_numpy() > 10)
     training = nsrdb.loc[daylight].copy()
     training["cosz"] = nsrdb_cosz[daylight]
     training["kd"] = (training["DHI"] / training["GHI"].clip(lower=1)).clip(0, 1)
     closure_error = np.abs(training["GHI"] - training["DNI"] * training["cosz"] - training["DHI"])
-    training = training.loc[closure_error <= training["GHI"] * 0.05]
+    training = training.loc[closure_error.notna() & (closure_error <= training["GHI"] * 0.05)]
     if training.empty:
         raise ValueError("NSRDB has no daylight rows with valid GHI = DNI*cos(zenith) + DHI closure")
     training["month"] = training.index.month
     training["hour"] = training.index.hour
+    # Clearness separates cloudy diffuse-dominated hours from clear direct sun.
+    training["clearness_bin"] = np.digitize(
+        (training["GHI"] / (1361.0 * training["cosz"])).clip(0, 1.5),
+        [0.3, 0.6],
+    )
     kd_global = float(training["kd"].median())
-    kd_month_hour = training.groupby(["month", "hour"])["kd"].median()
-    kd_month = training.groupby("month")["kd"].median()
+    kd_by_bin = training.groupby("clearness_bin")["kd"].median()
+    kd_month_bin = training.groupby(["month", "clearness_bin"])["kd"].median()
+    kd_month_hour_bin = training.groupby(["month", "hour", "clearness_bin"])["kd"].median()
 
     era5_utc_index = pd.DatetimeIndex(ghi.index + pd.to_timedelta(-utc_offset_hours, unit="h"), tz="UTC")
     cosz = _cos_zenith(latitude, longitude, era5_utc_index)
     calibrated_ghi = ghi.to_numpy(dtype=float).copy()
     calibrated_ghi[cosz <= 0] = 0.0
+    output_bins = np.digitize(
+        np.divide(calibrated_ghi, 1361.0 * np.maximum(cosz, 0.05)),
+        [0.3, 0.6],
+    )
     kd = np.array(
         [
-            kd_month_hour.get((ts.month, ts.hour), kd_month.get(ts.month, kd_global))
-            for ts in ghi.index
+            kd_month_hour_bin.get(
+                (ts.month, ts.hour, int(bin_id)),
+                kd_month_bin.get((ts.month, int(bin_id)), kd_by_bin.get(int(bin_id), kd_global)),
+            )
+            for ts, bin_id in zip(ghi.index, output_bins)
         ],
         dtype=float,
     )
@@ -247,4 +352,17 @@ def calibrate_era5_land_solar(
         {"GHI": calibrated_ghi, "DNI": dni, "DHI": dhi},
         index=pd.DatetimeIndex(ghi.index, name="DATE"),
     )
+    result.attrs.update({
+        "time_basis": "fixed LST",
+        "nsrdb_time_basis": basis,
+        "nsrdb_time_basis_evidence": basis_evidence,
+        "utc_offset_hours": utc_offset_hours,
+        "nsrdb_utc_to_lst_hours": utc_offset_hours if basis == "utc" else 0.0,
+        "zenith_mae": zenith_scores,
+        "ghi_night_fraction": night_fraction,
+        "overlap_samples": int(era_overlap.notna().sum()),
+        "ghi_fit_samples": int(usable.sum()),
+        "closure_daylight_samples": int(daylight.sum()),
+        "closure_pass_samples": len(training),
+    })
     return result

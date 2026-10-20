@@ -387,11 +387,14 @@ def _stage2_merge_nsrdb(isd_lst: pd.DataFrame, nsrdb_csv: Path,
     _print_title("Stage 2 Merge NSRDB")
     print(f"[stage 2] Merging NSRDB solar: {nsrdb_csv.name}")
     nsrdb = pd.read_csv(nsrdb_csv)
-    nsrdb["DATE"] = pd.to_datetime(
-        nsrdb[["Year", "Month", "Day", "Hour"]].rename(
-            columns={"Year": "year", "Month": "month", "Day": "day", "Hour": "hour"}
+    if "DATE" in nsrdb:
+        nsrdb["DATE"] = pd.to_datetime(nsrdb["DATE"], errors="raise")
+    else:
+        nsrdb["DATE"] = pd.to_datetime(
+            nsrdb[["Year", "Month", "Day", "Hour"]].rename(
+                columns={"Year": "year", "Month": "month", "Day": "day", "Hour": "hour"}
+            )
         )
-    )
     nsrdb = nsrdb.set_index("DATE").sort_index()
 
     solar_cols = [c for c in ["GHI", "DNI", "DHI"] if c in nsrdb.columns]
