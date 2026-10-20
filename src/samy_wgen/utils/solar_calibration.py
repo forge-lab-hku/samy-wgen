@@ -226,7 +226,7 @@ def calibrate_era5_land_solar(
 
     era5_utc_index = pd.DatetimeIndex(ghi.index + pd.to_timedelta(-utc_offset_hours, unit="h"), tz="UTC")
     cosz = _cos_zenith(latitude, longitude, era5_utc_index)
-    calibrated_ghi = ghi.to_numpy(dtype=float)
+    calibrated_ghi = ghi.to_numpy(dtype=float).copy()
     calibrated_ghi[cosz <= 0] = 0.0
     kd = np.array(
         [
