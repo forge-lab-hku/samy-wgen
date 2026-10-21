@@ -70,7 +70,7 @@ def _get_bundled_cities_config() -> Path:
 BASELINE_START = 1991
 BASELINE_END = 2010
 FORECAST_START = "2025-01-01"
-FORECAST_END = "2100-12-31"
+FORECAST_END = "2100-12-31 23:00"
 
 # Defaults for batch mode (relative to working directory)
 DEFAULT_ISD_MERGED_DIR = Path("data") / "ISD_complete_solar"
@@ -116,7 +116,7 @@ class RSVAROnlyPipeline(ForecastTo2100V5):
         )
 
     def forecast_rsvar_only(self, target_vars, start_date='2025-01-01',
-                            end_date='2100-12-31', chunk_years=5):
+                            end_date='2100-12-31 23:00', chunk_years=5):
         """Forecast using RS-VAR only (baseline + zero-mean anomaly)."""
         print("\n" + "="*80)
         print("GENERATING RS-VAR OUTPUT (NO CLIMATE DELTA)")

@@ -100,6 +100,7 @@ class ForecastTo2100V5:
 
         # Model components
         self.seasonal_profiles = {}  # Computed from baseline period only
+        self.seasonal_profile_filled_cells = {}  # Missing month-hour cells interpolated within month
         self.regime_probs = None
         self.regime_models = {}
         self.regime_residuals = {}   # VAR residuals per regime for ensemble bootstrap
@@ -323,7 +324,30 @@ class ForecastTo2100V5:
 
             # Group by month and hour, take mean (baseline period only)
             profile = data_with_time.groupby(['month', 'hour'])[var].mean()
+            full_index = pd.MultiIndex.from_product(
+                [range(1, 13), range(24)], names=['month', 'hour']
+            )
+            profile = profile.reindex(full_index)
+            missing = profile[profile.isna()].index.tolist()
+            if missing:
+                # Fill unobserved hours from the same month's diurnal cycle.
+                # Circular interpolation gives hour 0 neighbors at 23 and 1.
+                for month in range(1, 13):
+                    hours = profile.loc[month]
+                    known = hours.dropna()
+                    if known.empty:
+                        raise ValueError(f'No baseline seasonal profile for {var}, month {month}')
+                    x = known.index.to_numpy(dtype=float)
+                    y = known.to_numpy(dtype=float)
+                    interpolated = np.interp(
+                        np.arange(24),
+                        np.concatenate((x - 24, x, x + 24)),
+                        np.tile(y, 3),
+                    )
+                    profile.loc[month] = hours.fillna(pd.Series(interpolated, index=hours.index))
+                print(f'    Filled {len(missing)} empty month-hour profile cells for {var}: {missing}')
             self.seasonal_profiles[var] = profile
+            self.seasonal_profile_filled_cells[var] = missing
 
             var_mean = data_with_time[var].mean()
             seasonal_range = profile.max() - profile.min()
@@ -704,7 +728,7 @@ class ForecastTo2100V5:
         return probs_df
 
     def forecast_with_climate_delta(self, target_vars, start_date='2025-01-01',
-                                    end_date='2100-12-31', chunk_years=5):
+                                    end_date='2100-12-31 23:00', chunk_years=5):
         """
         Forecast using explicit climate-delta approach.
 
@@ -888,7 +912,7 @@ class ForecastTo2100V5:
         return forecast_df
 
     def forecast_without_climate_delta(self, target_vars, start_date='2025-01-01',
-                                       end_date='2100-12-31', chunk_years=5):
+                                       end_date='2100-12-31 23:00', chunk_years=5):
         """
         Forecast using baseline + RS-VAR anomaly only (NO climate delta).
 
@@ -1158,7 +1182,7 @@ class ForecastTo2100V5:
         return output_df
 
     def run_full_pipeline(self, chunk_years=5, test_stationarity=True,
-                          forecast_start='2025-01-01', forecast_end='2100-12-31'):
+                          forecast_start='2025-01-01', forecast_end='2100-12-31 23:00'):
         """Execute complete pipeline."""
         print("\n" + "="*80)
         print(f"CLIMATE-DELTA PIPELINE V5 (FIXED BASELINE: {self.baseline_start}-{self.baseline_end})")
@@ -1266,8 +1290,8 @@ if __name__ == "__main__":
                         help="End year of baseline period (default: 2010)")
     parser.add_argument("--forecast-start", type=str, default="2025-01-01",
                         help="Forecast start date (default: 2025-01-01)")
-    parser.add_argument("--forecast-end", type=str, default="2100-12-31",
-                        help="Forecast end date (default: 2100-12-31)")
+    parser.add_argument("--forecast-end", type=str, default="2100-12-31 23:00",
+                        help="Forecast end date (default: 2100-12-31 23:00)")
     parser.add_argument("--chunk-years", type=int, default=5,
                         help="Forecast chunk size in years")
     parser.add_argument("--skip-stationarity", action="store_true",

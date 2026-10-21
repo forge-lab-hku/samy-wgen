@@ -45,7 +45,7 @@ from samy_wgen.utils.city_utils import resolve_city, resolve_city_codes
 BASELINE_START = 1991
 BASELINE_END   = 2010
 FORECAST_START = "2025-01-01"
-FORECAST_END   = "2100-12-31"
+FORECAST_END   = "2100-12-31 23:00"
 DEFAULT_EPW_YEARS = "2030,2050,2080"
 DEFAULT_SSP    = "ssp245"
 DEFAULT_DOWNLOAD_DATA = ["isd", "nsrdb", "cmip6"]
