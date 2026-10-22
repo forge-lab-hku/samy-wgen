@@ -65,10 +65,15 @@ def enforce_solar_constraints(
             )
             output_df.loc[output_df["GHI"] < 0, "GHI"] = 0.0
         elif preserve == "GHI":
-            ghi = output_df.loc[day_mask, "GHI"].values
-            dni = output_df.loc[day_mask, "DNI"].values
-            dhi = np.maximum(ghi - dni * cos_z, 0.0)
-            output_df.loc[day_mask, "DHI"] = dhi
+            ghi = output_df.loc[day_mask, "GHI"].to_numpy(dtype=float)
+            dni = output_df.loc[day_mask, "DNI"].to_numpy(dtype=float)
+            dhi = ghi - dni * cos_z
+            if (dhi < -1e-6).any():
+                raise ValueError(
+                    "Solar components cannot close while preserving GHI; "
+                    "rework the solar signal instead of clipping GHI/DNI"
+                )
+            output_df.loc[day_mask, "DHI"] = np.maximum(dhi, 0.0)
         else:
             raise ValueError(f"Unsupported solar closure mode: {preserve}")
 
@@ -89,6 +94,29 @@ def apply_physics_qa(
 
     if "specific_humidity" in output_df.columns:
         output_df["specific_humidity"] = np.clip(output_df["specific_humidity"], 0, 0.06)
+
+    # The climate delta supplies huss and hurs independently. Treat huss as the
+    # moisture signal, then reconcile RH and dewpoint with temperature and
+    # pressure. Pressure is hPa in current RS-VAR inputs (accept Pa as well).
+    humidity_fields = {"temp", "pressure", "specific_humidity", "relative_humidity"}
+    if humidity_fields.issubset(output_df.columns):
+        temp = output_df["temp"].to_numpy(dtype=float)
+        pressure = output_df["pressure"].to_numpy(dtype=float)
+        pressure_hpa = np.where(pressure > 2000, pressure / 100, pressure)
+        if not np.isfinite(pressure_hpa).all() or (pressure_hpa <= 0).any():
+            raise ValueError("Cannot reconcile humidity with nonpositive/nonfinite pressure")
+        q = output_df["specific_humidity"].to_numpy(dtype=float)
+        es = 6.112 * np.exp(17.67 * temp / (temp + 243.5))
+        if not np.isfinite(es).all() or (es >= pressure_hpa).any():
+            raise ValueError("Cannot reconcile humidity with invalid saturation pressure")
+        e_min = 0.01 * es  # Match the 1% floor in calc_dewpoint_from_RH.
+        q_min = 0.622 * e_min / (pressure_hpa - 0.378 * e_min)
+        q_sat = 0.622 * es / (pressure_hpa - 0.378 * es)
+        q = np.clip(q, q_min, np.minimum(q_sat, 0.06))
+        e = q * pressure_hpa / (0.622 + 0.378 * q)
+        rh = np.clip(100 * e / es, 1, 100)
+        output_df["specific_humidity"] = q
+        output_df["relative_humidity"] = rh
 
     if "wind_speed" in output_df.columns:
         output_df["wind_speed"] = np.clip(output_df["wind_speed"], 0, None)
