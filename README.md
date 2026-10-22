@@ -404,6 +404,17 @@ merged.to_csv("output/miami_isd_solar.csv")
 
 ### Train RS-VAR and forecast
 
+Solar generation now uses bounded clearness index and horizontal beam share
+by default. The hourly input must be fixed local standard time and contain
+GHI, DNI, and DHI. `samy-rsvar` resolves the city longitude, screens invalid
+historical solar hours, fits the two logit coordinates with the other weather
+variables, and calibrates historical monthly GHI/DNI means. The RS-VAR output
+retains both latent columns so `samy-delta` or `samy-run` can apply a trailing
+20-year monthly projection `rsds` change while preserving component closure.
+Older RS-VAR files without those columns must be regenerated before applying
+a climate delta. See [bounded solar method](docs/bounded_solar.md) for equations,
+provenance, failure conditions, and limits.
+
 ```bash
 samy-rsvar --isd output/miami_isd_solar.csv --city Miami --output output/rsvar_miami.xlsx
 ```

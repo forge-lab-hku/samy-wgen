@@ -233,6 +233,7 @@ class TestDeterministicArtifacts:
             city="Beijing",
             ssp="ssp245",
             lat=39.9,
+            longitude=116.4,
             baseline_start=1991,
             baseline_end=2010,
             out_dir=tmp_path,

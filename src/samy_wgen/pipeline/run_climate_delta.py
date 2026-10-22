@@ -36,6 +36,20 @@ from samy_wgen.utils.physics_qa import (
     enforce_solar_constraints as shared_enforce_solar_constraints,
 )
 from samy_wgen.utils.city_utils import load_city_table, resolve_city_codes
+from samy_wgen.utils.solar_latent import LATENT_COLUMNS
+
+
+def _non_solar_for_delta(rsvar_df: pd.DataFrame, longitude: float | None) -> pd.DataFrame:
+    """Require the bounded solar representation in generated RS-VAR input."""
+    has_latent = set(LATENT_COLUMNS).issubset(rsvar_df.columns)
+    if not has_latent and not {"GHI", "DNI", "DHI"}.intersection(rsvar_df.columns):
+        return rsvar_df.copy()
+    if not has_latent or longitude is None:
+        raise ValueError(
+            "Climate delta requires solar_kt_logit, solar_beam_logit and city longitude; "
+            "regenerate RS-VAR with the bounded solar method"
+        )
+    return rsvar_df.drop(columns=["GHI", "DNI", "DHI", *LATENT_COLUMNS], errors="ignore").copy()
 
 def _get_bundled_cities_config() -> Path:
     ref = importlib.resources.files("samy_wgen.config").joinpath("cities_config.csv")
@@ -44,14 +58,13 @@ def _get_bundled_cities_config() -> Path:
 
 # Variable transformation types (consistent with V5 pipeline)
 ADDITIVE_VARS = {'temp', 'pressure', 'dewpoint'}
-MULTIPLICATIVE_VARS = {'wind_speed', 'GHI', 'DNI', 'DHI', 'relative_humidity', 'specific_humidity'}
+MULTIPLICATIVE_VARS = {'wind_speed', 'relative_humidity', 'specific_humidity'}
 
 # Mapping from forecast vars to CORDEX_CMIP5 vars
 VAR_TO_CORDEX = {
     'temp': 'tas_C',
     'pressure': 'ps_hPa',
     'wind_speed': 'sfcWind',
-    'GHI': 'rsds',
     'relative_humidity': 'hurs',
     'specific_humidity': 'huss',
 }
@@ -1128,6 +1141,7 @@ def apply_climate_delta(
     debug: bool = False,
     delta_mode: str = "daily",
     verbose: bool = True,
+    longitude: float | None = None,
 ):
     """
     Apply climate delta to RS-VAR output.
@@ -1144,7 +1158,7 @@ def apply_climate_delta(
         print(f"APPLYING CLIMATE DELTA: {model_name}")
         print("="*80)
 
-        output_df = rsvar_df.copy()
+        output_df = _non_solar_for_delta(rsvar_df, longitude)
 
         if debug:
             print("\n[DEBUG] RS-VAR columns:")
@@ -1237,6 +1251,11 @@ def apply_climate_delta(
 
         print(f"\nApplying physics QA...")
         output_df = apply_physics_qa(output_df, lat, preserve="GHI")
+        if set(LATENT_COLUMNS).issubset(rsvar_df.columns):
+            from samy_wgen.pipeline.solar_latent import apply_solar_latent_signal
+            output_df, _monthly_energy = apply_solar_latent_signal(
+                rsvar_df, output_df, cordex, lat, longitude,
+                baseline_start, baseline_end)
         _print_delta_statistics(delta_stats)
         _print_temperature_statistics_by_window(
             rsvar_df,
@@ -1265,6 +1284,7 @@ def apply_mixed_resolution_climate_delta(
     isd_path: Path = None,
     debug: bool = False,
     verbose: bool = True,
+    longitude: float | None = None,
 ):
     """Apply climate delta from mixed daily/monthly resolution data to RS-VAR output.
 
@@ -1291,7 +1311,7 @@ def apply_mixed_resolution_climate_delta(
         print(f"APPLYING MIXED RESOLUTION CLIMATE DELTA: {model_name}")
         print("="*80)
 
-        output_df = rsvar_df.copy()
+        output_df = _non_solar_for_delta(rsvar_df, longitude)
 
         daily_df = daily_df.copy()
         monthly_df = monthly_df.copy()
@@ -1366,6 +1386,12 @@ def apply_mixed_resolution_climate_delta(
 
         print(f"Applying physics QA...")
         output_df = apply_physics_qa(output_df, lat, preserve="GHI")
+        if set(LATENT_COLUMNS).issubset(rsvar_df.columns):
+            from samy_wgen.pipeline.solar_latent import apply_solar_latent_signal
+            solar_projection = daily_df if "rsds" in daily_df else monthly_df
+            output_df, _monthly_energy = apply_solar_latent_signal(
+                rsvar_df, output_df, solar_projection, lat, longitude,
+                baseline_start, baseline_end)
         _print_delta_statistics(delta_stats, verbose=verbose)
         _print_temperature_statistics_by_window_mixed(
             rsvar_df, daily_df, monthly_df, baseline, output_df,
@@ -1449,6 +1475,9 @@ def save_output(
     # Also save CSV
     csv_path = output_path.with_suffix('.csv')
     output_out.to_csv(csv_path, index=False)
+    monthly_energy = output_df.attrs.get("solar_monthly_energy")
+    if monthly_energy is not None:
+        monthly_energy.to_csv(csv_path.with_name(csv_path.stem + "_solar_monthly_energy.csv"), index=False)
     if verbose:
         print(f"  ✓ Saved CSV:   {csv_path}")
 
@@ -1550,6 +1579,7 @@ def main():
 
     # Avoid itertuples attribute access (IDE typing can get confused)
     cities_by_name = dict(zip(cities_df["city_ascii"], cities_df["latitude"].astype(float)))
+    longitudes_by_name = dict(zip(cities_df["city_ascii"], cities_df["longitude"].astype(float)))
 
     requested_cities = _normalize_city_args(args.city, cities_df, cities_config_path)
 
@@ -1584,6 +1614,7 @@ def main():
 
     for city in requested_cities:
         lat = cities_by_name[city]
+        longitude = longitudes_by_name[city]
         city_slug = _slug_city(city)
 
         # find rsvar file: prefer xlsx then csv
@@ -1626,7 +1657,8 @@ def main():
         mode_suffix = "_monthly" if args.delta_mode == "monthly" else ""
         out_xlsx = city_out_dir / f"forecast_{city_slug}_{projection_label}{mode_suffix}.xlsx"
 
-        if out_xlsx.exists() and not args.overwrite:
+        solar_schedule = out_xlsx.with_name(out_xlsx.stem + "_solar_monthly_energy.csv")
+        if out_xlsx.exists() and solar_schedule.exists() and not args.overwrite:
             print(f"  [SKIP] {projection_label}: output exists: {out_xlsx}")
             n_skip += 1
             continue
@@ -1682,6 +1714,7 @@ def main():
                 output_df, delta_stats = apply_mixed_resolution_climate_delta(
                     rsvar_df, daily_df, monthly_df_effective, baseline,
                     gcm=meta.get("model_name", gcm), rcm=rcm, lat=lat,
+                    longitude=longitude,
                     baseline_start=args.baseline_start,
                     baseline_end=args.baseline_end,
                     isd_path=isd_path,
@@ -1732,6 +1765,7 @@ def main():
                     gcm=gcm,
                     rcm=rcm,
                     lat=lat,
+                    longitude=longitude,
                     baseline_start=args.baseline_start,
                     baseline_end=args.baseline_end,
                     isd_path=isd_path,

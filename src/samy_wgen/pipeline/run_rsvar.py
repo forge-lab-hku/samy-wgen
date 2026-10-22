@@ -271,12 +271,13 @@ class RSVAROnlyPipeline(ForecastTo2100V5):
         return forecast_df
 
 
-def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True):
+def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True, longitude=None):
     """Run RS-VAR pipeline and save output to Excel.
 
     Args:
         isd_path: Path to ISD data file (assumed to be in LST - Local Standard Time)
         lat: Latitude
+        longitude: Longitude; resolved from bundled city configuration if omitted
         output_path: Output file path
         city: City name
     """
@@ -292,32 +293,22 @@ def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True):
         print(f"\nBaseline period: {BASELINE_START}-{BASELINE_END}")
         print(f"Forecast period: {FORECAST_START} to {FORECAST_END}")
 
-        pipeline = RSVAROnlyPipeline(
-            isd_solar_path=str(isd_path),
-            lat=lat,
-            baseline_start=BASELINE_START,
-            baseline_end=BASELINE_END,
+        if longitude is None:
+            configured = pd.read_csv(_get_bundled_cities_config())
+            match = configured.loc[configured.city_ascii == city, "longitude"]
+            if len(match) != 1:
+                raise ValueError(f"A unique longitude is required for {city}")
+            longitude = float(match.iloc[0])
+        from samy_wgen.pipeline.solar_latent import fit_solar_latent_rsvar
+
+        rsvar_output, pipeline, calibration, solar_info = fit_solar_latent_rsvar(
+            isd_path, latitude=lat, longitude=longitude,
+            baseline_start=BASELINE_START, baseline_end=BASELINE_END,
+            forecast_start=FORECAST_START, forecast_end=FORECAST_END,
             verbose=verbose,
         )
-
-        pipeline.load_isd_data()
-
-        target_vars = ['temp', 'pressure', 'wind_speed', 'GHI', 'DHI', 'DNI',
-                       'relative_humidity', 'specific_humidity']
-        target_vars = [v for v in target_vars if v in pipeline.isd_baseline.columns]
-
-        pipeline.extract_seasonal_profiles(target_vars)
-        pipeline.engineer_features()
-        pipeline.standardize_features(target_vars)
-        pipeline.train_regime_switching(k_regimes=3)
-        pipeline.train_regime_conditional_vars(target_vars)
-
-        rsvar_output = pipeline.forecast_rsvar_only(
-            target_vars,
-            start_date=FORECAST_START,
-            end_date=FORECAST_END,
-            chunk_years=10
-        )
+        target_vars = ['temp', 'pressure', 'wind_speed', 'relative_humidity',
+                       'specific_humidity', 'solar_kt_logit', 'solar_beam_logit']
 
         print("\n" + "="*80)
         print("SAVING TO EXCEL")
@@ -330,6 +321,7 @@ def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True):
         metadata = pd.DataFrame([
             ['isd_path', str(isd_path)],
             ['lat', lat],
+            ['longitude', longitude],
             ['baseline_start', BASELINE_START],
             ['baseline_end', BASELINE_END],
             ['forecast_start', FORECAST_START],
@@ -338,6 +330,10 @@ def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True):
             ['isd_baseline_temp_std', pipeline.isd_baseline['temp'].std()],
             ['n_hours', len(rsvar_output)],
             ['target_vars', ', '.join(target_vars)],
+            ['solar_method', 'bounded logit clearness index and horizontal beam share'],
+            ['solar_training_hours', solar_info['training_hours']],
+            ['solar_rejected_hours', solar_info['training_solar_screen']['training_solar_rejected_hours']],
+            ['solar_calibration_years', str(solar_info['generated_calibration_years'])],
             ['note', 'RS-VAR output without climate delta. Use apply_climate_delta.py to add climate signal.'],
         ], columns=['parameter', 'value'])
 
@@ -371,6 +367,7 @@ def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True):
         csv_path = output_path.with_suffix('.csv')
         rsvar_df.to_csv(csv_path, index=False)
         print(f"\n✓ Also saved CSV: {csv_path}")
+        calibration.to_csv(output_path.with_name(output_path.stem + '_solar_calibration.csv'), index=False)
 
     return rsvar_output, pipeline
 

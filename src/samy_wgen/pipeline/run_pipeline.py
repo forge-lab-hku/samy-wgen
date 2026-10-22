@@ -413,7 +413,7 @@ def _stage2_merge_nsrdb(isd_lst: pd.DataFrame, nsrdb_csv: Path,
     return csv_path
 
 
-def _stage3_rsvar(merged_csv: Path, lat: float, city: str,
+def _stage3_rsvar(merged_csv: Path, lat: float, longitude: float, city: str,
                    baseline_start: int, baseline_end: int,
                    forecast_start: str, forecast_end: str,
                    out_dir: Path, overwrite: bool) -> Path:
@@ -421,7 +421,8 @@ def _stage3_rsvar(merged_csv: Path, lat: float, city: str,
     from samy_wgen.pipeline.run_rsvar import run_and_save_rsvar
 
     xlsx_path = out_dir / "3_rsvar.xlsx"
-    if xlsx_path.exists() and not overwrite:
+    calibration_path = xlsx_path.with_name(xlsx_path.stem + "_solar_calibration.csv")
+    if xlsx_path.exists() and calibration_path.exists() and not overwrite:
         _print_title("Stage 3 Run RS-VAR")
         print(f"[stage 3] Cache hit: {xlsx_path.name}")
         return xlsx_path
@@ -439,7 +440,8 @@ def _stage3_rsvar(merged_csv: Path, lat: float, city: str,
         _rsvar_mod.BASELINE_END   = baseline_end
         _rsvar_mod.FORECAST_START = forecast_start
         _rsvar_mod.FORECAST_END   = forecast_end
-        run_and_save_rsvar(isd_path=merged_csv, lat=lat, output_path=xlsx_path, city=city, verbose=False)
+        run_and_save_rsvar(isd_path=merged_csv, lat=lat, output_path=xlsx_path,
+                           city=city, verbose=False, longitude=longitude)
     finally:
         _rsvar_mod.BASELINE_START = _orig_start
         _rsvar_mod.BASELINE_END   = _orig_end
@@ -451,7 +453,7 @@ def _stage3_rsvar(merged_csv: Path, lat: float, city: str,
 
 
 def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
-                           city: str, ssp: str, lat: float,
+                           city: str, ssp: str, lat: float, longitude: float,
                            baseline_start: int, baseline_end: int,
                            out_dir: Path, overwrite: bool,
                            gcm: str | None = None) -> pd.DataFrame:
@@ -464,7 +466,7 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
     )
 
     csv_path = out_dir / "4_delta_corrected.csv"
-    if csv_path.exists() and not overwrite:
+    if csv_path.exists() and (out_dir / "4_solar_monthly_energy.csv").exists() and not overwrite:
         _print_title("Stage 4 Apply Climate Delta")
         print(f"[stage 4] Cache hit: {csv_path.name}")
         return pd.read_csv(csv_path, parse_dates=["datetime"]).set_index("datetime")
@@ -492,12 +494,16 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
         gcm=gcm,
         rcm=None,
         lat=lat,
+        longitude=longitude,
         baseline_start=baseline_start,
         baseline_end=baseline_end,
         verbose=False,
     )
     output_df.index.name = "datetime"
     output_df.to_csv(csv_path)
+    monthly_energy = output_df.attrs.get("solar_monthly_energy")
+    if monthly_energy is not None:
+        monthly_energy.to_csv(out_dir / "4_solar_monthly_energy.csv", index=False)
     print(f"  saved: {csv_path.name} ({len(output_df):,} rows)")
     return output_df
 
@@ -712,6 +718,7 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             xlsx = _stage3_rsvar(
                 merged_csv=merged_csv,
                 lat=meta["lat"],
+                longitude=meta["lon"],
                 city=city,
                 baseline_start=args.baseline_start,
                 baseline_end=args.baseline_end,
@@ -726,6 +733,7 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             city=city,
             ssp=args.ssp,
             lat=meta["lat"],
+            longitude=meta["lon"],
             baseline_start=args.baseline_start,
             baseline_end=args.baseline_end,
             out_dir=out_dir,
