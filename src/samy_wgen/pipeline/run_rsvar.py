@@ -261,8 +261,11 @@ class RSVAROnlyPipeline(ForecastTo2100V5):
 
         forecast_df = pd.concat(all_forecasts)
 
-        # Enforce solar constraints (physical, not climate-related)
-        forecast_df = self._enforce_solar_constraints(forecast_df)
+        # Bounded solar is reconstructed and checked after the latent forecast.
+        # The legacy GHI constraint only applies to forecasts with GHI columns.
+        latent_solar = {'solar_kt_logit', 'solar_beam_logit'}
+        if 'GHI' in forecast_df or not latent_solar.issubset(forecast_df.columns):
+            forecast_df = self._enforce_solar_constraints(forecast_df)
 
         print(f"\n✓ RS-VAR forecast complete: {n_steps:,} hours")
         print(f"  Output = baseline_profile({self.baseline_start}-{self.baseline_end}) + RS_VAR_anomaly")
