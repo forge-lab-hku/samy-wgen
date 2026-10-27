@@ -145,7 +145,7 @@ def run_and_save_ensemble(
     regime_strength: float = 1.0,
     residual_scale: float = 1.0,
     block_size: int = 24,
-    centering_period: int = 365,
+    chunk_years: int = 5,
     seed: int = 0,
     target_vars: list[str] | None = None,
     verbose: bool = True,
@@ -165,6 +165,7 @@ def run_and_save_ensemble(
         regime_strength: [0,1] blending factor for 'ensemble' mode
         residual_scale:  [0,inf) multiplier on bootstrapped residuals
         block_size:      Hours per residual block (default 24)
+        chunk_years:     Nominal 8760-hour years per anomaly-centering chunk
         seed:            Base random seed; member m uses seed + m
         target_vars:     Variables to generate (default: all 8 weather vars)
 
@@ -206,7 +207,7 @@ def run_and_save_ensemble(
         block_size=block_size,
         regime_strength=regime_strength,
         residual_scale=residual_scale,
-        centering_period=centering_period,
+        chunk_years=chunk_years,
     )
 
     members = gen.generate(
@@ -309,8 +310,8 @@ def main():
                         help="Layer 2 intensity [0,inf): multiplier on bootstrapped residuals")
     parser.add_argument('--block-size', type=int, default=24,
                         help="Residual block size in hours (for block mode)")
-    parser.add_argument('--centering-period', type=int, default=365,
-                        help="Days between drift corrections (annual centering = 365)")
+    parser.add_argument('--chunk-years', type=int, default=5,
+                        help="Nominal 8760-hour years per anomaly-centering chunk")
     parser.add_argument('--seed', type=int, default=0, help="Base random seed")
 
     args = parser.parse_args()
@@ -329,7 +330,7 @@ def main():
         regime_strength=args.regime_strength,
         residual_scale=args.residual_scale,
         block_size=args.block_size,
-        centering_period=args.centering_period,
+        chunk_years=args.chunk_years,
         seed=args.seed,
     )
 
