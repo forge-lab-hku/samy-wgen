@@ -665,6 +665,8 @@ class ForecastTo2100V5:
     def _forecast_regime_probabilities(self, start_date, end_date):
         """Forecast regime probabilities using Markov transition matrix."""
         transition_matrix = self.ms_result.regime_transition
+        if transition_matrix.ndim == 3:
+            transition_matrix = transition_matrix[..., 0]
         k_regimes = transition_matrix.shape[0]
 
         last_regime_probs = self.regime_probs[:, -1]
@@ -692,7 +694,7 @@ class ForecastTo2100V5:
         current_probs = last_regime_probs.copy().reshape(-1, 1)
 
         for day_idx in range(n_days):
-            current_probs = transition_matrix.T @ current_probs
+            current_probs = transition_matrix @ current_probs
             blended = current_probs.flatten()
 
             if climatology is not None and len(climatology) > 0:

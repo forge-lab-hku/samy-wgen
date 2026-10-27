@@ -104,7 +104,7 @@ def test_fixed_seed_draws_and_carried_var_are_independent_of_chunk_size():
 
     # Fixed-seed draw snapshot from the pre-centering sampling sequence.
     np.testing.assert_array_equal(
-        recorded[0][0][0][0][:12], [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0]
+        recorded[0][0][0][0][:12], [0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0]
     )
     np.testing.assert_allclose(
         recorded[0][1][0][:3], [[0.09, 0.19], [0.10, 0.185], [0.11, 0.18]]

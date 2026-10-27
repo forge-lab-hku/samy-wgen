@@ -158,12 +158,12 @@ class AnomalyGenerator:
 
         keep_idx = np.array(keep_labels, dtype=int)
         transition_sub = transition[np.ix_(keep_idx, keep_idx)]
-        row_sums = transition_sub.sum(axis=1, keepdims=True)
+        col_sums = transition_sub.sum(axis=0, keepdims=True)
         transition_sub = np.divide(
             transition_sub,
-            row_sums,
-            out=np.full_like(transition_sub, 1.0 / max(1, transition_sub.shape[1])),
-            where=row_sums > 0,
+            col_sums,
+            out=np.full_like(transition_sub, 1.0 / max(1, transition_sub.shape[0])),
+            where=col_sums > 0,
         )
 
         posterior_sub = np.maximum(posterior[keep_idx], 1e-12)
@@ -256,7 +256,7 @@ class AnomalyGenerator:
 
         for d in range(n_days):
             # Propagate probability vector
-            current_probs = self._transition.T @ current_probs
+            current_probs = self._transition @ current_probs
             current_probs = np.maximum(current_probs, 1e-12)
             current_probs /= current_probs.sum()
             soft_probs[d] = current_probs
@@ -289,7 +289,7 @@ class AnomalyGenerator:
             soft_probs = np.empty((n_days, self._k), dtype=float)
             current_probs = self._last_posterior.copy()
             for d in range(n_days):
-                current_probs = self._transition.T @ current_probs
+                current_probs = self._transition @ current_probs
                 current_probs = np.maximum(current_probs, 1e-12)
                 current_probs /= current_probs.sum()
                 soft_probs[d] = current_probs
