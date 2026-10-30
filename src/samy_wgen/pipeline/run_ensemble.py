@@ -140,7 +140,7 @@ def run_and_save_ensemble(
     n_members: int = 50,
     start_date: str = '2025-01-01',
     end_date: str = '2025-12-31',
-    regime_mode: str = 'soft',
+    regime_mode: str = 'ensemble',
     residual_mode: str = 'deterministic',
     regime_strength: float = 1.0,
     residual_scale: float = 1.0,
@@ -298,7 +298,7 @@ def main():
                         help="Number of ensemble members M")
     parser.add_argument('--start', default='2025-01-01', help="Forecast start date")
     parser.add_argument('--end', default='2025-12-31', help="Forecast end date")
-    parser.add_argument('--regime-mode', default='soft',
+    parser.add_argument('--regime-mode', default='ensemble',
                         choices=['soft', 'hard', 'ensemble'],
                         help="Layer 1: regime path generation mode")
     parser.add_argument('--regime-strength', type=float, default=1.0,

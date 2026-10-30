@@ -121,7 +121,7 @@ def test_ensemble_block_member_stays_finite_and_bounded():
     assert member["specific_humidity"].abs().max() < 0.1
 
 
-def _make_minimal_generator(*, residual_mode: str = "block", block_size: int = 3) -> AnomalyGenerator:
+def _make_minimal_generator(*, residual_mode: str = "deterministic", block_size: int = 3) -> AnomalyGenerator:
     idx = pd.date_range("2000-01-01 00:00:00", periods=4, freq="h")
     resid0 = pd.DataFrame(
         [[1.0], [2.0], [3.0], [4.0]],

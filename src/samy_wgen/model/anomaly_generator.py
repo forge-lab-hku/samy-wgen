@@ -47,7 +47,7 @@ class AnomalyGenerator:
 
     Usage:
         gen = AnomalyGenerator(fitted_model, regime_mode='ensemble',
-                               residual_mode='block', regime_strength=1.0,
+                               residual_mode='deterministic', regime_strength=1.0,
                                residual_scale=1.0)
         members = gen.generate(n_members=50, start_date='2025-01-01',
                                end_date='2025-12-31', seed=0)
@@ -59,7 +59,7 @@ class AnomalyGenerator:
         self,
         fitted_model: "ForecastTo2100V5",
         regime_mode: str = 'ensemble',
-        residual_mode: str = 'block',
+        residual_mode: str = 'deterministic',
         block_size: int = 24,
         regime_strength: float = 1.0,
         residual_scale: float = 1.0,

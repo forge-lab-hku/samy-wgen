@@ -171,7 +171,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--regime-mode", default="ensemble",
                         choices=["soft", "hard", "ensemble"],
                         help="Regime sampling mode (ensemble mode)")
-    parser.add_argument("--residual-mode", default="block",
+    parser.add_argument("--residual-mode", default="deterministic",
                         choices=["deterministic", "iid", "block", "parametric"],
                         help="Residual sampling mode (ensemble mode)")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed")
