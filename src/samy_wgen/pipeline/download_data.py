@@ -1261,6 +1261,40 @@ def get_isd_station_coverage(
     }
 
 
+def _cmip6_calendar_time_index(values) -> pd.DatetimeIndex:
+    """Map decoded CMIP6 calendar dates to civil Gregorian timestamps.
+
+    Standard and noleap calendars retain their month/day labels. For a 360-day
+    calendar, daily positions are mapped proportionally across each Gregorian
+    year so the seasonal phase is preserved.
+    """
+    import calendar as _calendar
+    import datetime as _datetime
+
+    values = list(values)
+    if not values:
+        return pd.DatetimeIndex([])
+    first = values[0]
+    if not hasattr(first, "calendar"):
+        return pd.DatetimeIndex(pd.to_datetime(values))
+
+    cal = str(first.calendar).lower()
+    converted = []
+    for value in values:
+        if cal in {"360_day", "360"}:
+            source_day = (int(value.month) - 1) * 30 + int(value.day) - 1
+            target_days = 366 if _calendar.isleap(int(value.year)) else 365
+            target_day = round(source_day * (target_days - 1) / 359)
+            base = _datetime.datetime(int(value.year), 1, 1) + _datetime.timedelta(days=target_day)
+            converted.append(base.replace(hour=int(value.hour), minute=int(value.minute),
+                                           second=int(value.second), microsecond=int(value.microsecond)))
+        else:
+            converted.append(_datetime.datetime(int(value.year), int(value.month), int(value.day),
+                                               int(value.hour), int(value.minute), int(value.second),
+                                               int(value.microsecond)))
+    return pd.DatetimeIndex(converted)
+
+
 def _nc_bytes_to_point_df(nc_bytes: bytes, lat: float, lon: float) -> pd.DataFrame:
     """Extract a time-series DataFrame at the nearest grid point from NetCDF bytes.
 
@@ -1304,7 +1338,7 @@ def _nc_bytes_to_point_df(nc_bytes: bytes, lat: float, lon: float) -> pd.DataFra
         dist = (lat_arr - lat) ** 2 + (lon_arr - lon_target) ** 2
         li, lj = np.unravel_index(np.argmin(dist), dist.shape)
 
-    time_index = pd.to_datetime(ds["time"].values)
+    time_index = _cmip6_calendar_time_index(ds["time"].values)
     series: list[pd.Series] = []
 
     for var in ds.data_vars:
@@ -1353,7 +1387,7 @@ def _nc_bytes_to_point_dfs(
 
     lat_arr = ds[lat_name].values
     lon_arr = ds[lon_name].values
-    time_index = pd.to_datetime(ds["time"].values)
+    time_index = _cmip6_calendar_time_index(ds["time"].values)
 
     city_series: dict[str, list[pd.Series]] = {city: [] for city in city_points}
     city_indices: dict[str, tuple[int, int]] = {}
@@ -1558,7 +1592,7 @@ def _cmip6_dataset_to_point_dfs(ds, city_points: dict[str, tuple[float, float]])
         raise ValueError(f"time coordinate not found. Available: {list(ds.coords)}")
 
     lat_arr, lon_arr = ds[lat_name].values, ds[lon_name].values
-    time_index = pd.to_datetime(ds["time"].values)
+    time_index = _cmip6_calendar_time_index(ds["time"].values)
     city_indices: dict[str, tuple[int, int]] = {}
     for city, (lat, lon) in city_points.items():
         lon_target = lon % 360 if lon_arr.min() >= 0 and lon_arr.max() > 180 else lon
