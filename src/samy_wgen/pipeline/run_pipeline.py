@@ -171,9 +171,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--regime-mode", default="ensemble",
                         choices=["soft", "hard", "ensemble"],
                         help="Regime sampling mode (ensemble mode)")
-    parser.add_argument("--residual-mode", default="deterministic",
-                        choices=["deterministic", "iid", "block", "parametric"],
-                        help="Residual sampling mode (ensemble mode)")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed")
 
     parser.add_argument("--download-data", nargs="+",
@@ -630,7 +627,7 @@ def _output_ddy_files(merged_csv: Path, output_df: pd.DataFrame,
 
 
 def _stage3_ensemble(merged_csv: Path, lat: float,
-                      n_members: int, regime_mode: str, residual_mode: str,
+                      n_members: int, regime_mode: str,
                       forecast_start: str, forecast_end: str,
                       baseline_start: int, baseline_end: int,
                       seed: int, out_dir: Path) -> Path:
@@ -639,7 +636,7 @@ def _stage3_ensemble(merged_csv: Path, lat: float,
 
     _print_title("Stage 3 Run Ensemble")
     print(f"[stage 3] Generating {n_members} ensemble members")
-    print(f"  regime_mode={regime_mode!r}  residual_mode={residual_mode!r}")
+    print(f"  regime_mode={regime_mode!r}")
 
     run_and_save_ensemble(
         isd_path=merged_csv,
@@ -649,7 +646,6 @@ def _stage3_ensemble(merged_csv: Path, lat: float,
         start_date=forecast_start,
         end_date=forecast_end,
         regime_mode=regime_mode,
-        residual_mode=residual_mode,
         seed=seed,
         verbose=False,
     )
@@ -781,7 +777,6 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             lat=meta["lat"],
             n_members=args.members,
             regime_mode=args.regime_mode,
-            residual_mode=args.residual_mode,
             forecast_start=args.start,
             forecast_end=args.end,
             baseline_start=args.baseline_start,

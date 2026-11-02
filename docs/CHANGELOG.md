@@ -12,6 +12,7 @@
 - Added live NSRDB source and coverage inspection to improve source selection and grouped downloads.
 
 ### Changed
+- Simplified ensemble generation to regime-path sampling with zero VAR innovations.
 - Standardized user-facing city codes as ASCII identifiers and derive local solar time offsets from city coordinates.
 - Switched NOAA ISD downloads from FTP to HTTPS.
 - Updated CMIP6 handling to preserve daily and monthly inputs together and determine temporal resolution per variable.

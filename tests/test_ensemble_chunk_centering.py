@@ -1,4 +1,4 @@
-"""Generation-chunk centering must leave stochastic propagation and draws intact."""
+"""Generation-chunk centering must leave regime sampling and VAR propagation intact."""
 
 from types import SimpleNamespace
 
@@ -19,20 +19,9 @@ def _generator(chunk_years: int) -> AnomalyGenerator:
         )
         for regime in (0, 1)
     }
-    index = pd.date_range("2000-01-01", periods=48, freq="h")
-    residuals = {
-        regime: pd.DataFrame(
-            np.column_stack((np.arange(48) / 100, np.arange(48)[::-1] / 200))
-            + regime,
-            index=index,
-            columns=names,
-        )
-        for regime in (0, 1)
-    }
     baseline_index = pd.date_range("2000-12-31", periods=24, freq="h")
     model = SimpleNamespace(
         regime_models=models,
-        regime_residuals=residuals,
         ms_result=SimpleNamespace(regime_transition=np.array([[0.8, 0.2], [0.3, 0.7]])),
         regime_probs=np.array([[0.6], [0.4]]),
         isd_baseline=pd.DataFrame({"temp": 0.0, "pressure": 0.0}, index=baseline_index),
@@ -42,7 +31,7 @@ def _generator(chunk_years: int) -> AnomalyGenerator:
             for var, scale in (("temp", 1.0), ("pressure", 2.0))
         },
     )
-    return AnomalyGenerator(model, regime_mode="ensemble", residual_mode="block",
+    return AnomalyGenerator(model, regime_mode="ensemble",
                             chunk_years=chunk_years)
 
 
@@ -74,9 +63,7 @@ def test_fixed_seed_draws_and_carried_var_are_independent_of_chunk_size():
     for chunk_years in (1, 2):
         generator = _generator(chunk_years)
         paths = []
-        residuals = []
         original_path = generator._get_regime_path
-        original_residuals = generator._draw_residuals
         original_propagate = generator._propagate
         raw = []
 
@@ -85,43 +72,29 @@ def test_fixed_seed_draws_and_carried_var_are_independent_of_chunk_size():
             paths.append((path.copy(), probs.copy()))
             return path, probs
 
-        def record_residuals(*args, **kwargs):
-            result = original_residuals(*args, **kwargs)
-            residuals.append(result.copy())
-            return result
-
         def record_propagate(*args, **kwargs):
             result = original_propagate(*args, **kwargs)
             raw.append(result.copy())
             return result
 
         generator._get_regime_path = record_path
-        generator._draw_residuals = record_residuals
         generator._propagate = record_propagate
         members = generator.generate(2, str(index[0]), str(index[-1]), seed=17)
-        recorded.append((paths, residuals, raw))
+        recorded.append((paths, raw))
         outputs.append(members)
 
     # Fixed-seed draw snapshot from the pre-centering sampling sequence.
     np.testing.assert_array_equal(
         recorded[0][0][0][0][:12], [0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0]
     )
-    np.testing.assert_allclose(
-        recorded[0][1][0][:3], [[0.09, 0.19], [0.10, 0.185], [0.11, 0.18]]
-    )
-
     for member in range(2):
         np.testing.assert_array_equal(recorded[0][0][member][0], recorded[1][0][member][0])
         np.testing.assert_array_equal(recorded[0][0][member][1], recorded[1][0][member][1])
-        np.testing.assert_array_equal(recorded[0][2][member], recorded[1][2][member])
-        for day in range(len(index) // 24):
-            draw_index = member * (len(index) // 24) + day
-            np.testing.assert_array_equal(recorded[0][1][draw_index], recorded[1][1][draw_index])
-
+        np.testing.assert_array_equal(recorded[0][1][member], recorded[1][1][member])
         for output, chunk_hours in ((outputs[0][member], 8760),
                                     (outputs[1][member], 17520)):
             anomaly = output.to_numpy() - seasonal
-            raw = recorded[0][2][member]
+            raw = recorded[0][1][member]
             for start in range(0, len(index), chunk_hours):
                 stop = min(start + chunk_hours, len(index))
                 np.testing.assert_allclose(anomaly[start:stop].mean(axis=0), 0, atol=1e-12)
@@ -136,13 +109,13 @@ def test_fixed_seed_draws_and_carried_var_are_independent_of_chunk_size():
         weights = _generator(1)._day_weights(
             day, recorded[0][0][member][0], recorded[0][0][member][1]
         )
-        previous = recorded[0][2][member][8759]
+        previous = recorded[0][1][member][8759]
         expected = sum(
             weights[regime] * (np.array([regime + 0.5, 2 * regime - 0.3])
                                + 0.4 * previous)
             for regime in (0, 1)
-        ) + recorded[0][1][member * (len(index) // 24) + day][0]
-        np.testing.assert_allclose(recorded[0][2][member][8760], expected)
+        )
+        np.testing.assert_allclose(recorded[0][1][member][8760], expected)
 
     assert not outputs[0][0].equals(outputs[1][0])
 
@@ -150,3 +123,9 @@ def test_fixed_seed_draws_and_carried_var_are_independent_of_chunk_size():
 def test_chunk_years_must_be_positive():
     with pytest.raises(ValueError, match="chunk_years must be positive"):
         _generator(0)
+
+
+def test_residual_sampling_is_not_a_public_option():
+    generator = _generator(1)
+    with pytest.raises(TypeError, match="residual_mode"):
+        AnomalyGenerator(generator.model, residual_mode="block")

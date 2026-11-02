@@ -3,22 +3,14 @@
 Ensemble Anomaly Generation Pipeline
 
 Generates M stochastic ensemble members of synthetic weather anomalies using the
-RS-VAR model with two independently controllable randomization layers:
+RS-VAR model with regime-path sampling and zero VAR innovations.
 
-  Layer 1 (regime_mode):    how the regime sequence is drawn per member
-    'soft'      deterministic probability-weighted blend (existing behavior)
-    'hard'      deterministic argmax path (no member diversity)
+  regime_mode:
+    'soft'      deterministic probability-weighted blend
+    'hard'      deterministic argmax path
     'ensemble'  per-member Markov chain sampling
 
-  Layer 2 (residual_mode):  how the VAR innovation is sampled
-    'deterministic'  no noise (reproduces existing forecast_without_climate_delta)
-    'iid'            i.i.d. residual row per hourly step
-    'block'          24h contiguous block per day (preserves within-day autocorrelation)
-    'parametric'     N(0, Sigma_regime) draw
-
-  Strength controls:
-    --regime-strength [0,1]     blending between soft and hard regime assignment (ensemble mode only)
-    --residual-scale  [0,inf)   scalar multiplier on bootstrapped residuals
+  --regime-strength [0,1] blends soft and sampled regime weights.
 
 OUTPUT:
     output_dir/member_000.parquet, member_001.parquet, ...
@@ -27,18 +19,15 @@ OUTPUT:
 USAGE:
     samy-ensemble --isd data/ISD/Miami_with_solar.csv --city Miami \\
                   --members 50 --out-dir output/ensemble/ \\
-                  --regime-mode soft --residual-mode deterministic \\
+                  --regime-mode soft \\
                   --start 2025-01-01 --end 2025-12-31
 
     # Reproduce existing soft-mode behavior (regression check)
     samy-ensemble --isd data/ISD/Miami_with_solar.csv --city Miami \\
-                  --members 1 --regime-mode soft --residual-mode deterministic
+                  --members 1 --regime-mode soft
 
-    # Ablation: regime diversity only
-    samy-ensemble ... --regime-mode ensemble --residual-mode deterministic
-
-    # Ablation: residual diversity only
-    samy-ensemble ... --regime-mode soft --residual-mode block
+    # Regime-path ensemble
+    samy-ensemble ... --regime-mode ensemble
 """
 
 import argparse
@@ -141,10 +130,7 @@ def run_and_save_ensemble(
     start_date: str = '2025-01-01',
     end_date: str = '2025-12-31',
     regime_mode: str = 'ensemble',
-    residual_mode: str = 'deterministic',
     regime_strength: float = 1.0,
-    residual_scale: float = 1.0,
-    block_size: int = 24,
     chunk_years: int = 5,
     seed: int = 0,
     target_vars: list[str] | None = None,
@@ -161,10 +147,7 @@ def run_and_save_ensemble(
         start_date:      Forecast start (inclusive)
         end_date:        Forecast end (inclusive)
         regime_mode:     'soft' | 'hard' | 'ensemble'
-        residual_mode:   'deterministic' | 'iid' | 'block' | 'parametric'
         regime_strength: [0,1] blending factor for 'ensemble' mode
-        residual_scale:  [0,inf) multiplier on bootstrapped residuals
-        block_size:      Hours per residual block (default 24)
         chunk_years:     Nominal 8760-hour years per anomaly-centering chunk
         seed:            Base random seed; member m uses seed + m
         target_vars:     Variables to generate (default: all 8 weather vars)
@@ -196,17 +179,13 @@ def run_and_save_ensemble(
     print("\n" + "="*80)
     print(f"ENSEMBLE GENERATION: {n_members} members")
     print(f"  regime_mode={regime_mode!r}  regime_strength={regime_strength}")
-    print(f"  residual_mode={residual_mode!r}  residual_scale={residual_scale}")
     print(f"  period: {start_date} → {end_date}")
     print("="*80)
 
     gen = AnomalyGenerator(
         fitted_model=pipeline,
         regime_mode=regime_mode,
-        residual_mode=residual_mode,
-        block_size=block_size,
         regime_strength=regime_strength,
-        residual_scale=residual_scale,
         chunk_years=chunk_years,
     )
 
@@ -228,8 +207,8 @@ def run_and_save_ensemble(
 
     # --- Save ensemble summary ---
     summary_path = output_dir / "ensemble_summary.xlsx"
-    _save_summary(members, summary_path, regime_mode, residual_mode,
-                  regime_strength, residual_scale, n_members, start_date, end_date, seed)
+    _save_summary(members, summary_path, regime_mode,
+                  regime_strength, n_members, start_date, end_date, seed)
     print(f"✓ Summary saved: {summary_path}")
 
     return output_dir
@@ -239,9 +218,7 @@ def _save_summary(
     members: list[pd.DataFrame],
     path: Path,
     regime_mode: str,
-    residual_mode: str,
     regime_strength: float,
-    residual_scale: float,
     n_members: int,
     start_date: str,
     end_date: str,
@@ -259,11 +236,11 @@ def _save_summary(
     meta = pd.DataFrame({
         'Parameter': [
             'n_members', 'start_date', 'end_date', 'seed',
-            'regime_mode', 'regime_strength', 'residual_mode', 'residual_scale',
+            'regime_mode', 'regime_strength',
         ],
         'Value': [
             n_members, start_date, end_date, seed,
-            regime_mode, regime_strength, residual_mode, residual_scale,
+            regime_mode, regime_strength,
         ],
     })
 
@@ -300,16 +277,9 @@ def main():
     parser.add_argument('--end', default='2025-12-31', help="Forecast end date")
     parser.add_argument('--regime-mode', default='ensemble',
                         choices=['soft', 'hard', 'ensemble'],
-                        help="Layer 1: regime path generation mode")
+                        help="Regime path generation mode")
     parser.add_argument('--regime-strength', type=float, default=1.0,
-                        help="Layer 1 intensity [0,1]: 0=pure soft, 1=pure Markov sample (ensemble mode only)")
-    parser.add_argument('--residual-mode', default='deterministic',
-                        choices=['deterministic', 'iid', 'block', 'parametric'],
-                        help="Layer 2: residual sampling mode")
-    parser.add_argument('--residual-scale', type=float, default=1.0,
-                        help="Layer 2 intensity [0,inf): multiplier on bootstrapped residuals")
-    parser.add_argument('--block-size', type=int, default=24,
-                        help="Residual block size in hours (for block mode)")
+                        help="Regime intensity [0,1]: 0=pure soft, 1=pure Markov sample (ensemble mode only)")
     parser.add_argument('--chunk-years', type=int, default=5,
                         help="Nominal 8760-hour years per anomaly-centering chunk")
     parser.add_argument('--seed', type=int, default=0, help="Base random seed")
@@ -326,10 +296,7 @@ def main():
         start_date=args.start,
         end_date=args.end,
         regime_mode=args.regime_mode,
-        residual_mode=args.residual_mode,
         regime_strength=args.regime_strength,
-        residual_scale=args.residual_scale,
-        block_size=args.block_size,
         chunk_years=args.chunk_years,
         seed=args.seed,
     )

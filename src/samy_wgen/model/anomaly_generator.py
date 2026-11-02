@@ -1,11 +1,9 @@
 """
 AnomalyGenerator: post-inference stochastic anomaly generation for RS-VAR ensemble.
 
-Two independently controllable layers:
-  Layer 1 (regime_mode):    how the regime sequence is drawn per member
-  Layer 2 (residual_mode):  how the VAR innovation epsilon is sampled
+Regime paths control member diversity; VAR innovations are zero.
 
-Layer 1 — regime_mode:
+regime_mode:
   'soft'      deterministic probability-weighted blend (existing behavior)
   'hard'      deterministic argmax path (no member diversity from regimes)
   'ensemble'  per-member Markov chain sampling (stochastic regime paths)
@@ -14,15 +12,6 @@ Layer 1 — regime_mode:
     blends one-hot sampled label toward soft probability vector
     0 = collapses to soft; 1 = pure sampled Markov path
 
-Layer 2 — residual_mode:
-  'deterministic'  no noise (reproduces existing forecast_without_climate_delta)
-  'iid'            i.i.d. residual row per hourly step
-  'block'          24h contiguous residual block per day (preserves within-day autocorrelation)
-  'parametric'     N(0, Sigma_regime) draw
-
-  residual_scale in [0, inf):
-    scalar multiplier on the bootstrapped epsilon before adding to VAR propagation
-    0 = no noise; 1 = full empirical amplitude
 """
 
 from __future__ import annotations
@@ -37,7 +26,6 @@ if TYPE_CHECKING:
     from samy_wgen.model.rsvar import ForecastTo2100V5
 
 _REGIME_MODES = ('soft', 'hard', 'ensemble')
-_RESIDUAL_MODES = ('deterministic', 'iid', 'block', 'parametric')
 
 
 class AnomalyGenerator:
@@ -47,8 +35,7 @@ class AnomalyGenerator:
 
     Usage:
         gen = AnomalyGenerator(fitted_model, regime_mode='ensemble',
-                               residual_mode='deterministic', regime_strength=1.0,
-                               residual_scale=1.0)
+                               regime_strength=1.0)
         members = gen.generate(n_members=50, start_date='2025-01-01',
                                end_date='2025-12-31', seed=0)
         # members: list of 50 DataFrames, each (8760 x n_vars)
@@ -59,23 +46,15 @@ class AnomalyGenerator:
         self,
         fitted_model: "ForecastTo2100V5",
         regime_mode: str = 'ensemble',
-        residual_mode: str = 'deterministic',
-        block_size: int = 24,
         regime_strength: float = 1.0,
-        residual_scale: float = 1.0,
         chunk_years: int = 5,
     ):
         if regime_mode not in _REGIME_MODES:
             raise ValueError(f"regime_mode must be one of {_REGIME_MODES}")
-        if residual_mode not in _RESIDUAL_MODES:
-            raise ValueError(f"residual_mode must be one of {_RESIDUAL_MODES}")
 
         self.model = fitted_model
         self.regime_mode = regime_mode
-        self.residual_mode = residual_mode
-        self.block_size = block_size
         self.regime_strength = float(regime_strength)
-        self.residual_scale = float(residual_scale)
         self.chunk_years = int(chunk_years)
         if self.chunk_years <= 0:
             raise ValueError("chunk_years must be positive")
@@ -83,11 +62,6 @@ class AnomalyGenerator:
         # Validate required model attributes
         if not fitted_model.regime_models:
             raise RuntimeError("Model has no fitted regime_models. Run train_regime_conditional_vars() first.")
-        if residual_mode != 'deterministic' and not fitted_model.regime_residuals:
-            raise RuntimeError(
-                "Model has no regime_residuals. Ensure rsvar.py stores result.resid.values "
-                "in train_regime_conditional_vars()."
-            )
 
         self._regimes = sorted(fitted_model.regime_models.keys())
         self._transition = self._get_transition_matrix()
@@ -101,12 +75,6 @@ class AnomalyGenerator:
         self._deviation_vars = None
         self._build_var_params()
 
-        # Pre-slice residuals into blocks
-        self._residual_blocks = {}    # regime -> list of (block_size, n_vars) arrays
-        self._residual_pool = {}      # regime -> (n_obs, n_vars) for iid sampling
-        self._residual_cov = {}       # regime -> (n_vars, n_vars) for parametric
-        if residual_mode != 'deterministic':
-            self._build_residual_structures()
 
     def _stdout_context(self):
         verbose = bool(getattr(self.model, "verbose", True))
@@ -133,7 +101,7 @@ class AnomalyGenerator:
         """
         Align regime labels with the probability-space dimensions.
 
-        `regime_models` / `regime_residuals` are keyed by the original regime labels
+        `regime_models` are keyed by the original regime labels
         (typically integers from the Markov model), while `ms_result.regime_transition`
         and `regime_probs` always live in dense positional space. If some regimes were
         dropped during downstream fitting, we must subset the dense matrices to the
@@ -186,55 +154,6 @@ class AnomalyGenerator:
             if self._n_vars is None:
                 self._n_vars = result.coefs.shape[2]
                 self._deviation_vars = result.model.endog_names
-
-    def _build_residual_structures(self):
-        """Build residual pools and contiguous block candidates from stored residuals."""
-        for regime_i in self._regimes:
-            resid = self.model.regime_residuals.get(regime_i)
-            if resid is None:
-                continue
-            if isinstance(resid, pd.DataFrame):
-                resid_df = resid.copy()
-            else:
-                resid_df = pd.DataFrame(np.asarray(resid, dtype=float))
-
-            resid_values = resid_df.to_numpy(dtype=float, copy=False)
-            self._residual_pool[regime_i] = resid_values
-            self._residual_blocks[regime_i] = self._extract_contiguous_blocks(resid_df)
-
-            if resid_values.shape[0] > 1:
-                self._residual_cov[regime_i] = np.cov(resid_values.T)
-            else:
-                self._residual_cov[regime_i] = np.eye(resid_values.shape[1])
-
-    def _extract_contiguous_blocks(self, resid_df: pd.DataFrame) -> np.ndarray:
-        """Return only truly contiguous hourly residual windows of length block_size."""
-        values = resid_df.to_numpy(dtype=float, copy=False)
-        if len(values) == 0:
-            return np.empty((0, self.block_size, self._n_vars), dtype=float)
-
-        if not isinstance(resid_df.index, pd.DatetimeIndex):
-            n_blocks = len(values) // self.block_size
-            if n_blocks == 0:
-                return np.empty((0, self.block_size, self._n_vars), dtype=float)
-            trimmed = values[: n_blocks * self.block_size]
-            return trimmed.reshape(n_blocks, self.block_size, self._n_vars)
-
-        if len(values) < self.block_size:
-            return np.empty((0, self.block_size, self._n_vars), dtype=float)
-
-        blocks = []
-        timestamps = resid_df.index
-        expected_step = pd.Timedelta(hours=1)
-        for start in range(0, len(values) - self.block_size + 1):
-            window = timestamps[start:start + self.block_size]
-            deltas = np.diff(window.to_numpy())
-            if len(deltas) == self.block_size - 1 and np.all(deltas == expected_step.to_numpy()):
-                blocks.append(values[start:start + self.block_size])
-
-        if not blocks:
-            return np.empty((0, self.block_size, self._n_vars), dtype=float)
-        return np.stack(blocks, axis=0)
 
     # ------------------------------------------------------------------
     # Layer 1: regime path generation
@@ -330,95 +249,6 @@ class AnomalyGenerator:
         return blended
 
     # ------------------------------------------------------------------
-    # Layer 2: residual sampling
-    # ------------------------------------------------------------------
-
-    def _normalize_weights(self, weights: np.ndarray | None, regime: int | None = None) -> np.ndarray:
-        """Convert optional regime weights or a hard regime label to a probability vector."""
-        if weights is not None:
-            probs = np.asarray(weights, dtype=float).copy()
-        elif regime is not None:
-            probs = np.zeros(self._k, dtype=float)
-            probs[self._regimes.index(regime)] = 1.0
-        else:
-            probs = np.full(self._k, 1.0 / self._k, dtype=float)
-
-        probs = np.maximum(probs, 0.0)
-        total = probs.sum()
-        if total <= 0:
-            return np.full(self._k, 1.0 / self._k, dtype=float)
-        return probs / total
-
-    def _draw_residuals(
-        self,
-        n_hours: int,
-        rng: np.random.Generator,
-        weights: np.ndarray | None = None,
-        regime: int | None = None,
-    ) -> np.ndarray:
-        """
-        Returns (n_hours, n_vars) array of innovations scaled by residual_scale.
-        For 'block': samples ceil(n_hours/block_size) blocks, trims to n_hours.
-        For 'iid':   samples n_hours rows independently.
-        For 'parametric': draws from N(0, Sigma).
-        For 'deterministic': returns zeros.
-        """
-        if self.residual_mode == 'deterministic' or self.residual_scale == 0.0:
-            return np.zeros((n_hours, self._n_vars), dtype=float)
-
-        probs = self._normalize_weights(weights, regime=regime)
-
-        if self.residual_mode == 'block':
-            n_blocks_needed = int(np.ceil(n_hours / self.block_size))
-            chosen_blocks = []
-            for _ in range(n_blocks_needed):
-                regime_idx = int(rng.choice(self._k, p=probs))
-                regime_label = self._regimes[regime_idx]
-                blocks = self._residual_blocks.get(regime_label)
-                if blocks is not None and len(blocks) > 0:
-                    chosen_blocks.append(blocks[rng.integers(0, len(blocks))])
-                    continue
-
-                pool = self._residual_pool.get(regime_label)
-                if pool is None or len(pool) == 0:
-                    chosen_blocks.append(np.zeros((self.block_size, self._n_vars), dtype=float))
-                    continue
-                idx = rng.integers(0, len(pool), size=self.block_size)
-                chosen_blocks.append(pool[idx])
-
-            eps = np.vstack(chosen_blocks)[:n_hours]
-
-        elif self.residual_mode == 'iid':
-            regime_draws = rng.choice(self._k, size=n_hours, p=probs)
-            eps = np.zeros((n_hours, self._n_vars), dtype=float)
-            for regime_idx, regime_label in enumerate(self._regimes):
-                mask = regime_draws == regime_idx
-                if not np.any(mask):
-                    continue
-                pool = self._residual_pool.get(regime_label)
-                if pool is None or len(pool) == 0:
-                    continue
-                idx = rng.integers(0, len(pool), size=int(mask.sum()))
-                eps[mask] = pool[idx]
-
-        elif self.residual_mode == 'parametric':
-            regime_draws = rng.choice(self._k, size=n_hours, p=probs)
-            eps = np.zeros((n_hours, self._n_vars), dtype=float)
-            for regime_idx, regime_label in enumerate(self._regimes):
-                mask = regime_draws == regime_idx
-                if not np.any(mask):
-                    continue
-                cov = self._residual_cov.get(regime_label, np.eye(self._n_vars))
-                eps[mask] = rng.multivariate_normal(
-                    np.zeros(self._n_vars), cov, size=int(mask.sum())
-                )
-
-        else:
-            return np.zeros((n_hours, self._n_vars), dtype=float)
-
-        return eps * self.residual_scale
-
-    # ------------------------------------------------------------------
     # Propagation
     # ------------------------------------------------------------------
 
@@ -454,10 +284,10 @@ class AnomalyGenerator:
         forecast_index: pd.DatetimeIndex,
     ) -> np.ndarray:
         """
-        Core VAR propagation with regime-weighted coefficients and bootstrapped residuals.
+        Core VAR propagation with regime-weighted coefficients and zero innovations.
 
         Propagate the hourly VAR continuously. Generation-chunk centering is applied
-        afterward, without changing the carried VAR state or stochastic draws.
+        afterward, without changing the carried VAR state or sampled regime paths.
 
         Args:
             sampled_path:   (n_days,) regime label per day
@@ -480,15 +310,8 @@ class AnomalyGenerator:
             # Blending weights for this day
             weights = self._day_weights(d, sampled_path, soft_probs)  # (k,)
 
-            eps = self._draw_residuals(
-                self.block_size,
-                rng,
-                weights=weights,
-                regime=sampled_path[d],
-            )  # (24, n_vars)
-
-            for h in range(self.block_size):
-                t = d * self.block_size + h
+            for h in range(24):
+                t = d * 24 + h
                 if t >= n_hours:
                     break
 
@@ -500,7 +323,6 @@ class AnomalyGenerator:
                     mu = self._intercepts[regime_i]
                     phi = self._coefs[regime_i]
                     A_t += weights[i] * (mu + phi @ A_prev)
-                A_t += eps[h]
 
                 anomaly[t] = A_t
                 A_prev = A_t
@@ -652,9 +474,7 @@ class AnomalyGenerator:
         """
         Generate M ensemble members.
 
-        Each member is jointly sampled from both layers:
-          - Layer 1: one independent regime path (or deterministic path for 'soft'/'hard')
-          - Layer 2: one set of residual draws for that member
+        Each member uses an independent regime path in ensemble mode.
 
         Args:
             n_members:  number of ensemble members M
@@ -677,7 +497,7 @@ class AnomalyGenerator:
             initial_y = self._get_initial_y()
 
             members = []
-            if self.regime_mode == 'soft' and self.residual_mode == 'deterministic':
+            if self.regime_mode == 'soft':
                 compatible = self._generate_soft_deterministic_compatible(forecast_index)
                 return [compatible.copy() for _ in range(n_members)]
 

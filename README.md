@@ -121,7 +121,6 @@ output/Miami/
 | `--epw-years` | `2030,2050,2080` | Years to export as EPW (deterministic) |
 | `--members` | `50` | Ensemble member count |
 | `--regime-mode` | `ensemble` | Regime sampling: `soft`/`hard`/`ensemble` |
-| `--residual-mode` | `block` | Residual sampling: `deterministic`/`iid`/`block`/`parametric` |
 | `--overwrite` | `false` | Ignore all cached intermediate files |
 | `--data-dir` | `data` | Root directory for ISD / NSRDB / CMIP6 |
 | `--out-dir` | `output/<city_ascii>` | Output directory |
@@ -131,6 +130,8 @@ output/Miami/
 | `--gcm` | automatic | Optional CMIP6 GCM selector: `MPI-ESM1-2-LR`, `CNRM-ESM2-1`, or `MRI-ESM2-0` |
 | `--rsvar-input` | — | Reuse an existing RS-VAR XLSX/CSV instead of running Stage 3 (single-city mode) |
 | `--skip-download` | `false` | Require inputs to already exist locally |
+
+Ensemble members vary through regime paths; VAR innovations are zero.
 
 ---
 

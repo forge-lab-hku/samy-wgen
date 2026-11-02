@@ -117,17 +117,10 @@ def test_validation_temp_distributions_print_and_save_csv():
     generator_configs = {
         "soft + deterministic": dict(
             regime_mode="soft",
-            residual_mode="deterministic",
             regime_strength=1.0,
         ),
         "ensemble + deterministic": dict(
             regime_mode="ensemble",
-            residual_mode="deterministic",
-            regime_strength=1.0,
-        ),
-        "ensemble + block": dict(
-            regime_mode="ensemble",
-            residual_mode="block",
             regime_strength=1.0,
         ),
     }
@@ -136,7 +129,6 @@ def test_validation_temp_distributions_print_and_save_csv():
     for name, kwargs in generator_configs.items():
         generator = AnomalyGenerator(
             fitted_model=ensemble_pipeline,
-            residual_scale=1.0,
             **kwargs,
         )
         n_members = 1 if name == "soft + deterministic" else N_STOCHASTIC_MEMBERS
@@ -157,9 +149,6 @@ def test_validation_temp_distributions_print_and_save_csv():
         "soft + deterministic": _summarize_df(outputs["soft + deterministic"][0]),
         f"ensemble + deterministic ({N_STOCHASTIC_MEMBERS}m)": _summarize_members(
             outputs["ensemble + deterministic"]
-        ),
-        f"ensemble + block ({N_STOCHASTIC_MEMBERS}m)": _summarize_members(
-            outputs["ensemble + block"]
         ),
     }
     summary = pd.DataFrame(summary_rows).T
