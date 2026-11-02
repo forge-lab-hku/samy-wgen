@@ -1,5 +1,7 @@
 # samy-wgen
 
+> **Research branch:** `research/residual-sampling` preserves residual sampling for internal development and reproducibility. The `block` mode produced unrealistic weather tails in ensemble experiments; the residual modes are not part of the supported public interface. Use `main` for the public package.
+
 Stochastic weather generation for long-term climate projections (2025–2100), producing hourly EPW files via a Regime-Switching VAR (RS-VAR) model with CMIP6 climate deltas.
 
 ---
