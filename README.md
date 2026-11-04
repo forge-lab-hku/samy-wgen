@@ -12,22 +12,22 @@ Stochastic weather generation for long-term climate projections (2025–2100), p
 **With conda (recommended)**
 
 ```bash
-git clone https://github.com/<org>/samy-wgen.git
+git clone https://github.com/forge-lab-hku/samy-wgen.git
 cd samy-wgen
 
 conda create -n samy-wgen python=3.11
 conda activate samy-wgen
 
-pip install -e .          # core dependencies
-pip install -e ".[dev]"   # + dev/test dependencies
+python -m pip install -e .          # core dependencies
+# For development and tests, use python -m pip install -e ".[dev]" instead.
 ```
 
 **With pip only**
 
 ```bash
-git clone https://github.com/<org>/samy-wgen.git
+git clone https://github.com/forge-lab-hku/samy-wgen.git
 cd samy-wgen
-pip install -e .
+python -m pip install -e .
 ```
 
 Python ≥ 3.10 required. All dependencies are declared in `pyproject.toml` and installed automatically.
@@ -58,20 +58,25 @@ Configure external data access once after installation.
    ```ini
    # ~/.cdsapirc
    url: https://cds.climate.copernicus.eu/api
-   key: <UID>:<API-key>          # shown on your CDS profile page
+   key: <your-CDS-API-key>
    ```
 
 ---
 
 ## Quickstart — one-click pipeline
 
-`samy-run` chains all stages automatically, downloads missing inputs by default, and caches intermediate outputs so re-runs are fast.
-All user-facing city values use the canonical ASCII city code from `src/samy_wgen/config/cities_config.csv`.
+After configuring the NSRDB and CDS credentials above, run this from the repository root:
 
 ```bash
-# Deterministic forecast — Miami, SSP2-4.5, auto-download missing ISD/NSRDB/CMIP6 inputs
 samy-run --city Miami
+```
 
+`samy-run` downloads missing ISD, NSRDB, and CMIP6 inputs, trains RS-VAR, applies the CMIP6 signal, and writes EPW and DDY files. The first run downloads decades of weather and projection data and can take substantial time. Intermediate deterministic outputs are cached for later runs. This example requires network access and accepted CDS dataset licences; it is not an offline demo.
+All user-facing city values use the canonical ASCII city code from `src/samy_wgen/config/cities_config.csv`.
+
+Other examples:
+
+```bash
 # Batch one-click run for multiple cities
 samy-run --city Miami Los_Angeles
 
@@ -79,15 +84,15 @@ samy-run --city Miami Los_Angeles
 samy-run --city Miami --start 2025-01-01 --end 2060-12-31 --ssp ssp585
 
 # Keep one-click mode but customize automatic download inputs
-samy-run --city Miami --cmip6-models mpi_esm1_2_lr cnrm_esm2_1 --download-years 1991 2024
+samy-run --city Miami --cmip6-models mpi_esm1_2_lr cnrm_esm2_1 --download-years 1998 2024
 
-# Stochastic ensemble — 50 members
+# Stochastic regime-path ensemble — 50 members (Parquet and summary XLSX, no EPW)
 samy-run --city Miami --mode ensemble --members 50
 
 # Disable automatic download and use only pre-existing local files
 samy-run --city Miami --skip-download
 
-# Force all stages to recompute from scratch
+# Recompute deterministic stages and outputs
 samy-run --city Miami --overwrite
 ```
 
@@ -98,11 +103,15 @@ output/Miami/
 ├── 1_isd_lst.csv              LST-converted ISD  (cached)
 ├── 2_isd_solar_lst.csv        + NSRDB solar merge (cached)
 ├── 3_rsvar.xlsx               RS-VAR output       (cached, deterministic)
+├── 3_rsvar_solar_calibration.csv  solar calibration (deterministic)
 ├── 4_delta_corrected.csv      climate-delta series (cached, deterministic)
+├── 4_solar_monthly_energy.csv  solar energy schedule (deterministic)
 ├── EPW/
+│   ├── Miami_historical_2000.epw
 │   ├── Miami_ssp245_2030.epw
 │   ├── Miami_ssp245_2050.epw
 │   └── Miami_ssp245_2080.epw
+├── DDY/                       baseline and future design-day files
 └── ensemble/                  (ensemble mode only)
     ├── member_000.parquet
     ├── ...
@@ -116,7 +125,7 @@ output/Miami/
 | `--city` | *(required)* | ASCII city code matching `cities_config.csv` |
 | `--mode` | `deterministic` | `deterministic` or `ensemble` |
 | `--baseline-start/end` | `1991` / `2010` | Training baseline period |
-| `--start` / `--end` | `2025-01-01` / `2100-12-31` | Forecast window |
+| `--start` / `--end` | `2025-01-01` / `2100-12-31 23:00` | Forecast window |
 | `--ssp` | `ssp245` | CMIP6 scenario |
 | `--epw-years` | `2030,2050,2080` | Years to export as EPW (deterministic) |
 | `--members` | `50` | Ensemble member count |
@@ -131,7 +140,7 @@ output/Miami/
 | `--rsvar-input` | — | Reuse an existing RS-VAR XLSX/CSV instead of running Stage 3 (single-city mode) |
 | `--skip-download` | `false` | Require inputs to already exist locally |
 
-Ensemble members vary through regime paths; VAR innovations are zero.
+Ensemble members vary through regime paths; VAR innovations are zero. Ensemble mode currently checks for CMIP6 files even though it does not apply climate deltas to the members. It writes Parquet and XLSX files, not EPW or DDY files.
 
 ---
 
@@ -390,7 +399,7 @@ df = resample_isd_hourly(df)     # hourly mean; wind_dir uses mode to avoid circ
 ### Merge with NSRDB solar data
 
 ```python
-nsrdb = pd.read_csv("data/NSRDB/nsrdb_miami.csv")
+nsrdb = pd.read_csv("data/NSRDB/nsrdb_miami_1998-2024.csv")
 nsrdb["DATE"] = pd.to_datetime(
     nsrdb[["Year","Month","Day","Hour"]].rename(
         columns={"Year":"year","Month":"month","Day":"day","Hour":"hour"}
@@ -417,7 +426,7 @@ a climate delta. See [bounded solar method](docs/bounded_solar.md) for equations
 provenance, failure conditions, and limits.
 
 ```bash
-samy-rsvar --isd output/miami_isd_solar.csv --city Miami --output output/rsvar_miami.xlsx
+samy-rsvar --isd output/miami_isd_solar.csv --city Miami --output output/RSVAR/rsvar_output_Miami.xlsx
 ```
 
 ```python
@@ -426,7 +435,7 @@ from samy_wgen.pipeline.run_rsvar import run_and_save_rsvar
 run_and_save_rsvar(
     isd_path="output/miami_isd_solar.csv",
     lat=25.7617,
-    output_path="output/rsvar_miami.xlsx",
+    output_path="output/RSVAR/rsvar_output_Miami.xlsx",
     city="Miami",
 )
 ```
@@ -434,22 +443,28 @@ run_and_save_rsvar(
 ### Apply CMIP6 climate delta
 
 ```bash
-samy-delta --rsvar-dir output/ --city Miami --out-dir output/delta/
+samy-delta --rsvar-dir output/RSVAR --city Miami --ssp ssp245 \
+  --projection-root data/CMIP6 --out-dir output/delta/
 ```
 
 ```python
+from pathlib import Path
 from samy_wgen.pipeline.run_climate_delta import (
-    load_cmip6_or_cordex6, compute_cordex_baseline,
-    load_rsvar_output, apply_climate_delta,
+    load_cmip6_projection, compute_mixed_resolution_baseline,
+    load_rsvar_output, apply_mixed_resolution_climate_delta,
 )
 
-daily_df, _, _ = load_cmip6_or_cordex6("data/CMIP6", city="Miami", ssp="ssp245")
-baseline = compute_cordex_baseline(daily_df, baseline_start=1991, baseline_end=2010)
-rsvar_df, _ = load_rsvar_output("output/rsvar_miami.xlsx")
+daily_df, monthly_df, meta = load_cmip6_projection(
+    Path("data/CMIP6"), city="Miami", ssp="ssp245"
+)
+baseline = compute_mixed_resolution_baseline(
+    daily_df, monthly_df, 1991, 2010, var_resolution_config={}
+)
+rsvar_df, _ = load_rsvar_output(Path("output/RSVAR/rsvar_output_Miami.xlsx"))
 
-output_df, _ = apply_climate_delta(
-    rsvar_df=rsvar_df, cordex=daily_df, baseline=baseline,
-    gcm="MPI-ESM1-2-LR", rcm=None, lat=25.7617,
+output_df, _ = apply_mixed_resolution_climate_delta(
+    rsvar_df, daily_df, monthly_df, baseline,
+    gcm=meta["model_name"], rcm=None, lat=25.7617, longitude=-80.1918,
 )
 output_df.to_csv("output/miami_mpi_ssp245.csv")
 ```
@@ -457,8 +472,10 @@ output_df.to_csv("output/miami_mpi_ssp245.csv")
 ### Generate EPW files
 
 ```python
+from pathlib import Path
 from samy_wgen.pipeline.gen_samy import _write_epw_for_year
 
+Path("output/EPW").mkdir(parents=True, exist_ok=True)
 for year in [2030, 2050, 2080]:
     _write_epw_for_year(
         df=output_df, year=year,
