@@ -1,0 +1,34 @@
+{% macro item(target, label) -%}
+<li><a href="{{ pathto(target) }}"{{ ' class="active" aria-current="page"'|safe if pagename == target else '' }}>{{ label }}</a></li>
+{%- endmacro %}
+<nav class="guide-nav" aria-label="Section navigation">
+  <p class="guide-nav-title">Guide</p>
+  <ul>
+    {{ item('index', 'Overview') }}
+    {{ item('getting-started', 'Quick start') }}
+    {{ item('workflows', 'Workflow overview') }}
+    {{ item('workflow/download', '1. Download data') }}
+    {{ item('workflow/prepare', '2. Prepare observations') }}
+    {{ item('workflow/rsvar', '3. Fit RS-VAR and forecast') }}
+    {{ item('workflow/delta', '4. Apply climate signal') }}
+    {{ item('workflow/output', '5. Export and inspect') }}
+  </ul>
+  <p class="guide-nav-title">API reference</p>
+  <ul>
+    {{ item('api/index', 'API overview') }}
+    {{ item('api/data_fetch', 'Data fetch') }}
+    {{ item('api/data_preprocessing', 'Data pre-processing') }}
+    {{ item('api/rsvar', 'RS-VAR') }}
+    {{ item('api/climate_signal', 'Climate signal') }}
+    {{ item('api/weather_files_output', 'Weather files output') }}
+  </ul>
+  <p class="guide-nav-title">CLI reference</p>
+  <ul>
+    {{ item('cli/index', 'CLI overview') }}
+    {{ item('cli/run', 'samy-run') }}
+    {{ item('cli/download', 'samy-download') }}
+    {{ item('cli/rsvar', 'samy-rsvar') }}
+    {{ item('cli/delta', 'samy-delta') }}
+    {{ item('cli/ensemble', 'samy-ensemble') }}
+  </ul>
+</nav>

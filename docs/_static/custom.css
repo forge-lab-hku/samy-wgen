@@ -1,0 +1,50 @@
+:root { --ink: #263445; --muted: #617182; --line: #d9e1e8; --accent: #156c85; }
+body { color: var(--ink); font-size: 16px; line-height: 1.65; }
+.site-header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 2.5rem; padding: .7rem max(2rem, calc((100% - 1200px)/2)); background: #fff; border-bottom: 1px solid var(--line); }
+.site-brand { color: var(--ink); font-size: 1.12rem; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.site-tabs { display: flex; flex-wrap: wrap; gap: 1.6rem; }
+.site-tabs a { color: var(--muted); text-decoration: none; font-weight: 600; padding: .35rem .1rem; border-bottom: 2px solid transparent; }
+.site-tabs a:hover, .site-tabs a.active { color: var(--accent); border-bottom-color: var(--accent); }
+.github-link { margin-left: auto; display: inline-flex; flex: 0 0 auto; align-items: center; color: var(--ink); padding: .5rem; border-radius: 50%; }
+.github-link img { display: block; width: 24px; height: 24px; object-fit: contain; }
+.github-link:hover { color: var(--accent); background: #edf4f6; }
+div.document { margin-top: 1.5rem; }
+div.sphinxsidebar { margin-top: 0; }
+@media (min-width: 876px) { div.sphinxsidebar { top: 5rem; max-height: calc(100vh - 5.5rem); overflow-y: auto; } }
+.guide-nav-title { color: var(--muted); font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin: 1.2rem 0 .35rem; }
+.guide-nav ul { list-style: none; margin: 0; padding: 0; }
+.guide-nav li { margin: 0; }
+.guide-nav a { display: block; padding: .32rem .45rem; color: var(--ink); text-decoration: none; border-radius: 4px; }
+.guide-nav a:hover { background: #edf4f6; color: var(--accent); }
+.guide-nav a.active { color: var(--accent); background: #edf4f6; font-weight: 700; }
+div.body { max-width: 830px; }
+div.body h1, div.body h2, div.body h3 { line-height: 1.25; color: var(--ink); }
+div.body h1 { font-size: 2rem; }
+div.body h2 { margin-top: 1.8em; }
+div.body p, div.body li { max-width: 78ch; }
+div.body pre { overflow-x: auto; }
+div.body dl.py { margin: 1.7rem 0 2.2rem; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+div.body dl.py > dt.sig { background: #f4f7f9; padding: .75rem 1rem; line-height: 1.6; white-space: normal; overflow-wrap: anywhere; }
+div.body dl.py > dt.sig .sig-prename { display: none; }
+div.body dl.py > dt.sig .sig-name { font-weight: 700; color: #18354c; }
+div.body dl.py > dt.sig .headerlink { float: right; font-size: .85rem; }
+div.body dl.py > dd { margin: 0; padding: .85rem 1rem 1rem; }
+div.body dl.py > dd > p:first-child { margin-top: 0; }
+div.body dl.field-list { margin: 1rem 0 0; }
+div.body dl.field-list > dt { display: block; background: #f0f2f4; padding: .2rem .45rem; font-weight: 700; }
+div.body dl.field-list > dd { margin: .35rem 0 .85rem; padding: 0 .45rem; }
+div.body dl.field-list ul { margin: .3rem 0; padding-left: 1.35rem; }
+div.body dl.field-list li { margin: .2rem 0; }
+div.body table.docutils { width: 100%; border: 1px solid var(--line); border-collapse: separate; border-spacing: 0; border-radius: 7px; overflow: hidden; }
+div.body table.docutils th { background: #f4f7f9; color: var(--ink); text-align: left; }
+div.body table.docutils td, div.body table.docutils th { padding: .55rem .7rem; border: 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+div.body table.docutils tbody tr:last-child td { border-bottom: 0; }
+div.body .highlight { background: #f6f8fa; border: 1px solid var(--line); border-radius: 5px; padding: .35rem .55rem; }
+div.body .highlight-console { margin: 1rem 0 1.5rem; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 7px; background: #f4f7f9; }
+div.body .highlight-console .highlight { border: 0; background: transparent; padding: .35rem .8rem; }
+div.body .highlight-console pre { color: #18394b; font-size: 1.02rem; font-weight: 600; line-height: 1.55; }
+div.body pre.literal-block { margin: 1rem 0 1.5rem; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: 7px; background: #f4f7f9; color: #343d48; font-size: 1rem; font-weight: 400; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+div.body pre.literal-block strong { color: #18354c; font-weight: 750; }
+div.body table.docutils td code { font-weight: 700; color: #175b75; background: #edf5f8; padding: .05rem .2rem; border-radius: 3px; }
+a { text-underline-offset: 2px; }
+@media (max-width: 875px) { .site-header { padding: .7rem 1rem; gap: 1rem; } .site-tabs { gap: .7rem; } div.document { width: auto; margin: 1rem; } div.sphinxsidebar { float: none; width: auto; } div.documentwrapper { float: none; width: auto; } div.bodywrapper { margin: 0; } }

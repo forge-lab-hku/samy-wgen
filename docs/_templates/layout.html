@@ -1,0 +1,15 @@
+{% extends "!layout.html" %}
+{% block content %}
+<header class="site-header">
+  <a class="site-brand" href="{{ pathto('index') }}">samy-wgen</a>
+  <nav class="site-tabs" aria-label="Main navigation">
+    <a href="{{ pathto('workflows') }}" class="{{ 'active' if pagename == 'index' or pagename == 'workflows' or pagename.startswith('workflow/') or pagename == 'getting-started' else '' }}">Guide</a>
+    <a href="{{ pathto('api/index') }}" class="{{ 'active' if pagename.startswith('api/') else '' }}">API reference</a>
+    <a href="{{ pathto('cli/index') }}" class="{{ 'active' if pagename.startswith('cli/') else '' }}">CLI reference</a>
+  </nav>
+  <a class="github-link" href="https://github.com/forge-lab-hku/samy-wgen" aria-label="samy-wgen on GitHub" title="GitHub repository">
+    <img src="{{ pathto('_static/github-mark.svg', 1) }}" alt="" width="24" height="24">
+  </a>
+</header>
+{{ super() }}
+{% endblock %}

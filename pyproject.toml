@@ -37,6 +37,9 @@ dev = [
     "pytest>=7.4",
     "pytest-timeout>=2.1",
 ]
+docs = [
+    "sphinx>=7.2,<9",
+]
 
 [project.scripts]
 samy-run = "samy_wgen.pipeline.run_pipeline:main"
