@@ -4,6 +4,8 @@ Building energy simulation needs hourly weather at a specific site. Climate proj
 
 The scenario-conditioned Actual Meteorological Year (sAMY) workflow addresses this gap by separating hourly weather structure learned from observations from the imposed climate signal. This package prepares station weather and solar observations, fits a regime-switching vector autoregressive (RS-VAR) model, applies a selected climate projection, and exports hourly weather for building simulation.
 
+**Development status:** This package is under active development. The core functionality has been implemented, but comprehensive testing and validation are still ongoing. APIs and outputs may change before the first stable release.
+
 **Documentation:** [samy-wgen documentation](https://forge-lab-hku.github.io/samy-wgen/)
 
 **Citation:** Guo, H. & He, K. (2026). Scenario-conditioned actual meteorological years (sAMY): A stochastic weather generator using multi-decadal observations. *Energy and Buildings*, **364**, 117508. [doi:10.1016/j.enbuild.2026.117508](https://doi.org/10.1016/j.enbuild.2026.117508)
@@ -11,9 +13,6 @@ The scenario-conditioned Actual Meteorological Year (sAMY) workflow addresses th
 ---
 
 ## Installation
-
-> **Dev status** — the package has not yet been published to PyPI and is under active development.
-> A stable release is planned for the future.
 
 **With conda (recommended)**
 
