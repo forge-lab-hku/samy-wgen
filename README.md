@@ -1,6 +1,12 @@
 # samy-wgen
 
-Stochastic weather generation for long-term climate projections (2025–2100), producing hourly EPW files via a Regime-Switching VAR (RS-VAR) model with CMIP6 climate deltas.
+Building energy simulation needs hourly weather at a specific site. Climate projections are usually supplied at coarser spatial and temporal scales, while a typical meteorological year combines selected historical months into one representative year. This leaves a gap for studies of long, continuous future weather sequences.
+
+The scenario-conditioned Actual Meteorological Year (sAMY) workflow addresses this gap by separating hourly weather structure learned from observations from the imposed climate signal. This package prepares station weather and solar observations, fits a regime-switching vector autoregressive (RS-VAR) model, applies a selected climate projection, and exports hourly weather for building simulation.
+
+**Documentation:** [samy-wgen documentation](https://forge-lab-hku.github.io/samy-wgen/)
+
+**Citation:** Guo, H. & He, K. (2026). Scenario-conditioned actual meteorological years (sAMY): A stochastic weather generator using multi-decadal observations. *Energy and Buildings*, **364**, 117508. [doi:10.1016/j.enbuild.2026.117508](https://doi.org/10.1016/j.enbuild.2026.117508)
 
 ---
 
@@ -71,8 +77,7 @@ After configuring the NSRDB and CDS credentials above, run this from the reposit
 samy-run --city Miami
 ```
 
-`samy-run` downloads missing ISD, NSRDB, and CMIP6 inputs, trains RS-VAR, applies the CMIP6 signal, and writes EPW and DDY files. The first run downloads decades of weather and projection data and can take substantial time. Intermediate deterministic outputs are cached for later runs. This example requires network access and accepted CDS dataset licences; it is not an offline demo.
-All user-facing city values use the canonical ASCII city code from `src/samy_wgen/config/cities_config.csv`.
+`samy-run` downloads missing ISD, NSRDB, and CMIP6 inputs, trains RS-VAR, applies the CMIP6 signal, and writes EPW and DDY files. The first run downloads decades of weather and projection data and can take substantial time. Intermediate deterministic outputs are cached for later runs. This example requires network access and accepted CDS dataset licences; it is not an offline demo. All user-facing city values use the canonical ASCII city code from `src/samy_wgen/config/cities_config.csv`.
 
 Other examples:
 
@@ -83,426 +88,31 @@ samy-run --city Miami Los_Angeles
 # Custom forecast window and scenario
 samy-run --city Miami --start 2025-01-01 --end 2060-12-31 --ssp ssp585
 
-# Keep one-click mode but customize automatic download inputs
+# Customize automatic download inputs
 samy-run --city Miami --cmip6-models mpi_esm1_2_lr cnrm_esm2_1 --download-years 1998 2024
 
-# Stochastic regime-path ensemble — 50 members (Parquet and summary XLSX, no EPW)
+# Generate stochastic regime-path members
 samy-run --city Miami --mode ensemble --members 50
 
-# Disable automatic download and use only pre-existing local files
+# Use only pre-existing local files
 samy-run --city Miami --skip-download
 
 # Recompute deterministic stages and outputs
 samy-run --city Miami --overwrite
 ```
 
-Outputs land in `output/<city_ascii>/`:
-
-```
-output/Miami/
-├── 1_isd_lst.csv              LST-converted ISD  (cached)
-├── 2_isd_solar_lst.csv        + NSRDB solar merge (cached)
-├── 3_rsvar.xlsx               RS-VAR output       (cached, deterministic)
-├── 3_rsvar_solar_calibration.csv  solar calibration (deterministic)
-├── 4_delta_corrected.csv      climate-delta series (cached, deterministic)
-├── 4_solar_monthly_energy.csv  solar energy schedule (deterministic)
-├── EPW/
-│   ├── Miami_historical_2000.epw
-│   ├── Miami_ssp245_2030.epw
-│   ├── Miami_ssp245_2050.epw
-│   └── Miami_ssp245_2080.epw
-├── DDY/                       baseline and future design-day files
-└── ensemble/                  (ensemble mode only)
-    ├── member_000.parquet
-    ├── ...
-    └── ensemble_summary.xlsx
-```
-
-### Key parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--city` | *(required)* | ASCII city code matching `cities_config.csv` |
-| `--mode` | `deterministic` | `deterministic` or `ensemble` |
-| `--baseline-start/end` | `1991` / `2010` | Training baseline period |
-| `--start` / `--end` | `2025-01-01` / `2100-12-31 23:00` | Forecast window |
-| `--ssp` | `ssp245` | CMIP6 scenario |
-| `--epw-years` | `2030,2050,2080` | Years to export as EPW (deterministic) |
-| `--members` | `50` | Ensemble member count |
-| `--regime-mode` | `ensemble` | Regime sampling: `soft`/`hard`/`ensemble` |
-| `--overwrite` | `false` | Ignore all cached intermediate files |
-| `--data-dir` | `data` | Root directory for ISD / NSRDB / CMIP6 |
-| `--out-dir` | `output/<city_ascii>` | Output directory |
-| `--download-data` | `isd nsrdb cmip6` | Missing datasets to auto-download before running |
-| `--isd-radius` | `50` | Radius used for automatic ISD station selection |
-| `--cmip6-models` | `mpi_esm1_2_lr` | CMIP6 model(s) used for automatic download |
-| `--gcm` | automatic | Optional CMIP6 GCM selector: `MPI-ESM1-2-LR`, `CNRM-ESM2-1`, or `MRI-ESM2-0` |
-| `--rsvar-input` | — | Reuse an existing RS-VAR XLSX/CSV instead of running Stage 3 (single-city mode) |
-| `--skip-download` | `false` | Require inputs to already exist locally |
-
-Ensemble members vary through regime paths; VAR innovations are zero. Ensemble mode currently checks for CMIP6 files even though it does not apply climate deltas to the members. It writes Parquet and XLSX files, not EPW or DDY files.
+For individual commands, `samy-download` retrieves or inspects input data, `samy-rsvar` fits the weather model, and `samy-delta` applies a climate projection signal. Run a command with `--help` to see its options; detailed command references are in the [documentation](https://forge-lab-hku.github.io/samy-wgen/cli/index.html).
 
 ---
 
-## Downloading input data
+## Workflow
 
-Before running the pipeline, three data sources must be present for each city.
-`samy-download` handles all three from the command line.
+The one-click command follows these stages. Each stage can also be inspected in the [workflow guide](https://forge-lab-hku.github.io/samy-wgen/workflows.html).
 
-### 1 · Inspect candidate ISD stations
+1. **Download data:** obtain historical station weather and solar observations, plus climate projection data for the selected city and scenario.
+2. **Prepare observations:** parse station records, convert timestamps to local standard time, and align the weather and solar variables into an hourly input series.
+3. **Fit RS-VAR and generate weather:** learn multivariate hourly behavior from the observations, then generate a continuous hourly trajectory or regime-path members.
+4. **Apply the climate signal:** calculate changes from the selected projection relative to a historical baseline and apply them to the generated weather series.
+5. **Write weather files:** save the resulting time series and export selected years as EPW files, with DDY files for building energy simulation workflows.
 
-ISD files are keyed by station ID. You can inspect nearby stations explicitly:
-
-```bash
-samy-download list-stations --city Miami
-```
-
-If `--isd-station` is omitted, `samy-download download` and `samy-run` now auto-select the station with the best time coverage inside a 50 km radius.
-
-### 2 · Inspect live CMIP6 availability
-
-CMIP6 downloads are backed by the live CDS catalogue. You can inspect which
-model / experiment / temporal-resolution / variable combinations are currently
-available before downloading:
-
-```bash
-# List currently available CMIP6 models
-samy-download list-cmip6
-
-# Expand to experiment / resolution / variable rows
-samy-download list-cmip6 --detail
-
-# Filter the live catalogue
-samy-download list-cmip6 \
-  --experiment ssp2_4_5 \
-  --resolution daily \
-  --var near_surface_air_temperature
-```
-
-`samy-download download` uses the same CDS constraint checks before requesting
-CMIP6 data, so unavailable model / experiment combinations are skipped early.
-
-### 3 · Download all data
-
-```bash
-# ISD + NSRDB + CMIP6 (default set)
-samy-download download \
-  --city Miami
-
-# Limit the ISD/NSRDB year range (speeds up initial testing)
-samy-download download \
-  --city Miami \
-  --years 1991 2024
-
-# Batch multiple cities, with per-city ISD station overrides
-samy-download download \
-  --city Montreal Toronto \
-  --isd-station Montreal=716270-94792 Toronto=716240-99999
-
-# Download additional CMIP6 models or scenarios
-samy-download download \
-  --city Miami \
-  --data cmip6 \
-  --models mpi_esm1_2_lr cnrm_esm2_1 mri_esm2_0 \
-  --experiments historical ssp2_4_5 ssp5_8_5
-
-# Extract city series from locally available CMIP6 NetCDF or ZIP-wrapped NetCDF files
-samy-download extract-cmip6 \
-  --city Miami \
-  --input /path/to/cmip6-file.nc
-```
-
-Files are written directly to the paths the pipeline expects:
-
-```
-data/
-├── ISD/Miami/722020-12839_MIAMI_INTERNATIONAL_AIRPORT/
-│   ├── 722020-12839-1991.gz
-│   └── ...
-├── NSRDB/nsrdb_miami_1991-2024.csv
-├── CMIP6/Miami/
-│   ├── mpi_esm1_2_lr_historical.csv
-│   ├── mpi_esm1_2_lr_ssp245.csv
-│   └── mpi_esm1_2_lr_ssp245_monthly.csv
-```
-
-CMIP6 data are downloaded as city-specific grid-point extractions using the CDS
-`area` parameter, so no large global files are stored locally.
-For offline archives, `extract-cmip6` writes the nearest-grid city series under
-`data/CMIP6/<City>/`. Daily and monthly variables from the selected GCM can be
-used together; temporal resolution is handled per variable.
-
-### Download ERA5-Land and calibrate its solar radiation
-
-ERA5-Land point time series are available hourly from 1950 onward. The downloader
-requests each selected variable into a separate NetCDF file under
-`data/ERA5_Land/<City>/`; by default it requests data through the latest
-available day (normally five days behind real time).
-Surface solar radiation is returned as hourly energy (J/m²) by the CDS time
-series product.
-
-```bash
-# Download all configured ERA5-Land variables for one city
-samy-download download --city Miami --data era5-land --era5-land-years 1950 2024
-
-# Or request only surface solar radiation
-samy-download download --city Miami --data era5-land \
-  --era5-land-years 1950 2024 \
-  --era5-land-var surface_solar_radiation_downwards
-
-# Calibrate ERA5-Land solar radiation with the overlapping NSRDB record
-samy-download calibrate-solar --city Miami \
-  --era5 data/ERA5_Land/Miami/era5_land_miami_surface_solar_radiation_downwards_19500101-20241231.nc \
-  --nsrdb data/NSRDB/nsrdb_miami_1998-2024.csv \
-  --nsrdb-time-basis auto --output output/miami_solar_lst.csv
-
-# With existing ISD and CMIP6 inputs, Stage 2 accepts the calibrated CSV directly
-samy-run --city Miami --nsrdb output/miami_solar_lst.csv --skip-download
-```
-
-Calibration converts hourly ERA5-Land solar energy to mean irradiance, learns
-monthly/hourly GHI scale factors and clearness-conditioned NSRDB diffuse fractions
-over their shared daylight period, then writes hourly `DATE,GHI,DNI,DHI` in
-fixed local standard time (UTC plus the city standard offset, without DST).
-The adjacent `.metadata.json` records the selected NSRDB time basis and its
-evidence, UTC-to-LST shift, zenith comparison when available, overlap count,
-and closure-filter count.
-`--nsrdb-time-basis auto` (the default) compares UTC and fixed LST using the
-file's `Solar Zenith Angle` when present. Otherwise it compares the fraction
-of bright observations (`GHI>20 W/m²`) falling at calculated solar night under
-each interpretation. That fallback requires at least 1,000 bright observations
-spanning 180 days, a low night fraction for the selected basis, and a clear
-separation from the alternative. Ambiguous or short records require
-`--nsrdb-time-basis utc` or `lst` from source provenance. Filename and city
-name are never used to infer the time basis. NSRDB observations at
-`:30` are compared with ERA5 interpolated to that instant and their own zenith
-angle is used for closure screening.
-
-Existing NSRDB exports can have mixed time bases even within one archive. In
-one 24-file audit, 19 files with zenith angles were UTC and five older files
-without them were fixed LST. This audit is not a filename rule in the package:
-each new file is evaluated from its own solar evidence. The downloader requests
-`utc=false`, but that setting does not establish the time basis of an already
-existing CSV.
-
-The output retains ERA5-Land's longer time span; its pre-NSRDB years are
-an extrapolation of overlap-period calibration relationships, not independent
-solar observations. At least 24 usable daylight overlap observations are required.
-The default output is `data/ERA5_Land/calibrated/<city>_solar_calibrated.csv`.
-
-### CORDEX-CMIP5 note
-
-Use `samy-download list-cordex --domain NAM-22 --detail` to inspect available
-GCM/RCM combinations, then download a city with `--data cordex`:
-
-```bash
-samy-download download --city Los_Angeles --data cordex \
-  --cordex-gcm mpi_m_mpi_esm_lr --cordex-rcm ncar_regcm4
-```
-
-By default, the downloader requests the historical and RCP8.5 experiments,
-all supported daily variables and the configured experiment year ranges. A
-small January sample should use a separate output directory:
-
-```bash
-samy-download download --city Los_Angeles --data cordex \
-  --cordex-gcm mpi_m_mpi_esm_lr --cordex-rcm ncar_regcm4 \
-  --cordex-var 2m_air_temperature surface_pressure \
-  --cordex-historical-years 2000 2000 --cordex-rcp85-years 2006 2006 \
-  --cordex-months 01 --cordex-dir tests/output/cordex_la_smoke
-```
-
-This sample checks the data path, not a production climate baseline. Existing
-CSVs are skipped only when they cover all requested full months and variables;
-otherwise use another `--cordex-dir` or `--cordex-overwrite`.
-
-The downloader extracts the nearest model grid cell and writes CSV files in
-the layout expected by `samy-delta`:
-
-```text
-data/CORDEX_CMIP5/<domain>_<gcm>_<rcm>_<ensemble>/
-└── <CitySlug>/
-    ├── historical.csv
-    └── rcp85.csv
-```
-
-Each CSV has a `time` column and available model variables such as `tas`,
-`ps`, `huss`, `hurs`, `sfcWind`, and `rsds`. To apply the downloaded signal to
-an existing RS-VAR forecast, point `--projection-root` to the variant folder:
-
-```bash
-samy-delta --city Los_Angeles --rsvar-dir output/RSVAR \
-  --projection-type cordex-cmip5 \
-  --projection-root data/CORDEX_CMIP5/NAM-22_mpi_m_mpi_esm_lr_ncar_regcm4_r1i1p1 \
-  --gcm mpi_m_mpi_esm_lr --rcm ncar_regcm4
-```
-
-`samy-delta` computes the climate baseline and daily or monthly delta from
-these raw city series. The default baseline is 1991–2010; both historical and
-RCP8.5 data must cover the requested baseline years. Externally prepared CSVs
-can use the same city-folder layout.
-
-Recommended sources:
-
-- CORDEX official access guide:
-  [How to access CORDEX-CMIP5 data](https://cordex.org/data-access/cordex-cmip5-data/how-to-access-cordex-cmip5-data/)
-- Copernicus CDS CORDEX dataset page:
-  [projections-cordex-domains-single-levels](https://cds.climate.copernicus.eu/datasets/projections-cordex-domains-single-levels?tab=download)
-
-### `samy-download` reference
-
-| Subcommand | Purpose |
-|------------|---------|
-| `config` | Save NSRDB credentials to `~/.config/samy_wgen/credentials.yaml` |
-| `list-cmip6 [--detail]` | List available CMIP6 model / experiment / resolution / variable combinations from the live CDS catalogue |
-| `list-cmip6 --experiment <exp> --resolution <res> --var <var>` | Filter live CMIP6 catalogue rows before download |
-| `list-cordex [--detail]` | Inspect live CORDEX catalogue combinations from CDS |
-| `download --city <city_ascii> --data cordex [--cordex-gcm ... --cordex-rcm ...]` | Download CORDEX-CMIP5 city CSVs for `samy-delta` |
-| `extract-cmip6 --city <city_ascii> --input <NETCDF...>` | Extract nearest-grid city series from local CMIP6 NetCDF or ZIP-wrapped NetCDF files |
-| `list-stations --city <city_ascii> [--radius 150]` | Print nearby ISD stations sorted by distance |
-| `download --city <city_ascii> [--isd-station <USAF-WBAN>]` | Download ISD + NSRDB + CMIP6 for one city; otherwise auto-select best-coverage ISD station within 50 km |
-| `download --city <city_ascii_1> <city_ascii_2> ...` | Batch-download multiple cities; CMIP6 requests are grouped into shared bounding-box fetches |
-| `download --city <city_ascii_1> <city_ascii_2> --isd-station <city_ascii_1=id> <city_ascii_2=id>` | Override ISD station IDs per city in batch mode |
-| `download --models mpi_esm1_2_lr cnrm_esm2_1` | Specify CMIP6 models |
-| `download --experiments historical ssp2_4_5 ssp5_8_5` | Specify CMIP6 CDS experiment names |
-
----
-
-## Python API
-
-For finer control, call individual pipeline stages directly.
-
-### Parse ISD
-
-```python
-from samy_wgen.utils.parse_ISD import process_station_directory
-
-csv_path = process_station_directory(
-    station_dir="data/ISD/Miami/722020-12839_MIAMI_INTERNATIONAL_AIRPORT",
-    output_dir="output/",
-)
-```
-
-### Remap fields, UTC → LST, resample to hourly
-
-```python
-import pandas as pd
-from samy_wgen.utils.parse_ISD import remap_isd_columns, resample_isd_hourly
-from samy_wgen.utils.time_utils import utc_to_lst
-
-df = pd.read_csv(csv_path, parse_dates=["datestamp"]).set_index("datestamp").sort_index()
-df = remap_isd_columns(df)       # rename ISD fields → temp, dewpoint, pressure, wind_speed, wind_dir
-df = utc_to_lst(df, "Miami")     # UTC → LST (fixed offset, no DST)
-df = resample_isd_hourly(df)     # hourly mean; wind_dir uses mode to avoid circular-mean error
-```
-
-### Merge with NSRDB solar data
-
-```python
-nsrdb = pd.read_csv("data/NSRDB/nsrdb_miami_1998-2024.csv")
-nsrdb["DATE"] = pd.to_datetime(
-    nsrdb[["Year","Month","Day","Hour"]].rename(
-        columns={"Year":"year","Month":"month","Day":"day","Hour":"hour"}
-    )
-)
-solar = nsrdb.set_index("DATE")[["GHI","DNI","DHI"]].clip(lower=0).resample("h").mean()
-
-merged = df.join(solar, how="inner").ffill(limit=3).bfill(limit=3)
-merged.index.name = "DATE"
-merged.to_csv("output/miami_isd_solar.csv")
-```
-
-### Train RS-VAR and forecast
-
-Solar generation now uses bounded clearness index and horizontal beam share
-by default. The hourly input must be fixed local standard time and contain
-GHI, DNI, and DHI. `samy-rsvar` resolves the city longitude, screens invalid
-historical solar hours, fits the two logit coordinates with the other weather
-variables, and calibrates historical monthly GHI/DNI means. The RS-VAR output
-retains both latent columns so `samy-delta` or `samy-run` can apply a trailing
-20-year monthly projection `rsds` change while preserving component closure.
-Older RS-VAR files without those columns must be regenerated before applying
-a climate delta. See [bounded solar method](docs/bounded_solar.md) for equations,
-provenance, failure conditions, and limits.
-
-```bash
-samy-rsvar --isd output/miami_isd_solar.csv --city Miami --output output/RSVAR/rsvar_output_Miami.xlsx
-```
-
-```python
-from samy_wgen.pipeline.run_rsvar import run_and_save_rsvar
-
-run_and_save_rsvar(
-    isd_path="output/miami_isd_solar.csv",
-    lat=25.7617,
-    output_path="output/RSVAR/rsvar_output_Miami.xlsx",
-    city="Miami",
-)
-```
-
-### Apply CMIP6 climate delta
-
-```bash
-samy-delta --rsvar-dir output/RSVAR --city Miami --ssp ssp245 \
-  --projection-root data/CMIP6 --out-dir output/delta/
-```
-
-```python
-from pathlib import Path
-from samy_wgen.pipeline.run_climate_delta import (
-    load_cmip6_projection, compute_mixed_resolution_baseline,
-    load_rsvar_output, apply_mixed_resolution_climate_delta,
-)
-
-daily_df, monthly_df, meta = load_cmip6_projection(
-    Path("data/CMIP6"), city="Miami", ssp="ssp245"
-)
-baseline = compute_mixed_resolution_baseline(
-    daily_df, monthly_df, 1991, 2010, var_resolution_config={}
-)
-rsvar_df, _ = load_rsvar_output(Path("output/RSVAR/rsvar_output_Miami.xlsx"))
-
-output_df, _ = apply_mixed_resolution_climate_delta(
-    rsvar_df, daily_df, monthly_df, baseline,
-    gcm=meta["model_name"], rcm=None, lat=25.7617, longitude=-80.1918,
-)
-output_df.to_csv("output/miami_mpi_ssp245.csv")
-```
-
-### Generate EPW files
-
-```python
-from pathlib import Path
-from samy_wgen.pipeline.gen_samy import _write_epw_for_year
-
-Path("output/EPW").mkdir(parents=True, exist_ok=True)
-for year in [2030, 2050, 2080]:
-    _write_epw_for_year(
-        df=output_df, year=year,
-        out_path=f"output/EPW/Miami_MPI_SSP245_{year}.epw",
-        location="Miami-FL-USA", lat=25.7617, lon=-80.1918,
-        tz=-5.0, elevation_m=2.0,
-    )
-```
-
----
-
-## CLI reference
-
-| Command | Description |
-|---------|-------------|
-| `samy-download config` | Save NSRDB credentials to `~/.config/samy_wgen/credentials.yaml` |
-| `samy-download list-cmip6 [--detail]` | Inspect live CMIP6 CDS catalogue entries |
-| `samy-download list-cordex [--detail]` | Inspect live CORDEX CDS catalogue entries |
-| `samy-download download --city <city_ascii> --data era5-land` | Download hourly ERA5-Land point time series |
-| `samy-download calibrate-solar --city <city_ascii> --era5 <file> --nsrdb <file>` | Calibrate ERA5-Land GHI/DNI/DHI with overlapping NSRDB data |
-| `samy-download download --city <city_ascii> --data cordex` | Download CORDEX-CMIP5 historical and RCP8.5 city series |
-| `samy-download extract-cmip6 --city <city_ascii> --input <NETCDF...>` | Extract nearest-grid city series from local CMIP6 NetCDF file(s) |
-| `samy-download list-stations --city <city_ascii>` | List nearby ISD stations |
-| `samy-download download --city <city_ascii>` | Download ISD / NSRDB / CMIP6 (auto-select ISD station by coverage within 50 km) |
-| `samy-run --city <city_ascii>` | Full pipeline with auto-download of missing ISD / NSRDB / CMIP6 inputs |
-| `samy-run --city <city_ascii> --mode ensemble` | Full pipeline in ensemble mode |
-| `samy-rsvar --isd <csv> --city <city_ascii> --output <xlsx>` | Train RS-VAR + forecast only |
-| `samy-delta --rsvar-dir <dir> --city <city_ascii> --projection-type cmip6 --projection-root <dir> --ssp <scenario>` | Apply CMIP6 delta to RS-VAR output |
-| `samy-delta --rsvar-dir <dir> --city <city_ascii> --projection-type cordex-cmip5 --projection-root <dir>` | Apply CORDEX-CMIP5 delta from compatible city-folder CSV inputs |
-| `samy-ensemble --isd <csv> --city <city_ascii> --members 50 ...` | Generate stochastic ensemble members |
+For direct Python use, see the [API reference](https://forge-lab-hku.github.io/samy-wgen/api/index.html); for command-line options, see the [CLI reference](https://forge-lab-hku.github.io/samy-wgen/cli/index.html).
