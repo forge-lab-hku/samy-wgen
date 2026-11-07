@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - pending release
+
+This is the first version prepared for a public release. Earlier `0.1.x` entries below document development milestones; they were not tagged releases.
 
 ### Added
 - Added the `samy-download` data-retrieval CLI, automatic missing-input downloads in `samy-run`, and batched multi-city downloads with per-city ISD station overrides.
@@ -23,7 +25,7 @@
 - Harden RS-VAR fitting and regime-label handling for sparse assignments and non-finite posterior output.
 - Use dewpoint as a fallback when yearly EPW humidity inputs are unavailable, and generalize DDY generation for baseline and future periods.
 
-## [0.1.2] - 2026-04-10
+## Development milestone 0.1.2 - 2026-04-10
 
 ### Added
 - `pipeline/run_pipeline.py` — one-click `samy-run` CLI that chains ISD parse → LST remap → NSRDB merge → RS-VAR → CMIP6 delta → EPW in a single command; supports `--mode deterministic` (default) and `--mode ensemble`
@@ -41,7 +43,7 @@
   - `stage6_cordex_baseline_doy.csv` → `5_cordex_baseline_doy.csv`
   - `stage7_*.csv` → `6_*.csv`
 
-## [0.1.1] - 2026-04-10
+## Development milestone 0.1.1 - 2026-04-10
 
 ### Added
 - Added strict deterministic compatibility path in `AnomalyGenerator` so `regime_mode='soft'` + `residual_mode='deterministic'` can reproduce legacy RS-VAR output
@@ -56,7 +58,7 @@
 - Fixed block residual sampling to use truly contiguous hourly windows instead of naive reshape on regime-filtered rows
 - Fixed soft-regime residual generation to support probability-weighted innovation draws across regimes (`iid`, `block`, `parametric`)
 
-## [0.1.0] - 2026-04-07
+## Development milestone 0.1.0 - 2026-04-07
 
 ### Added
 - Initial Python package structure with `src` layout (`samy_wgen`)

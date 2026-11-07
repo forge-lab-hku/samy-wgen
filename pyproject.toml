@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "samy-wgen"
-version = "0.1.0"
+version = "0.2.0"
 description = "Stochastic future weather EPW generation using RS-VAR + CMIP5/6 climate deltas"
 readme = "README.md"
 license = { text = "MIT" }
@@ -50,11 +50,6 @@ samy-download = "samy_wgen.pipeline.download_data:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/samy_wgen"]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "src/samy_wgen/config/cities_config.csv",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -6,7 +6,7 @@ Pipeline:
     → process_csv_to_yearly_epw() → EPW files
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from samy_wgen.model.rsvar import ForecastTo2100V5
 from samy_wgen.pipeline.run_rsvar import RSVAROnlyPipeline
