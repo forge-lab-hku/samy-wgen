@@ -52,7 +52,8 @@ Fit, forecast, and projection options
    * - ``--epw-years Y1,Y2,...``
      - Deterministic EPW years; default ``2030,2050,2080``.
    * - ``--elevation METRES``
-     - Elevation in EPW header; default 0.
+     - Override selected ISD station elevation. By default, the CLI reads
+       ``ISD/isd-history.csv``; if no matching elevation exists, supply this option.
    * - ``--members N``
      - Ensemble member count; default 50.
    * - ``--regime-mode soft|hard|ensemble``

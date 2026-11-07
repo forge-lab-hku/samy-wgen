@@ -30,6 +30,7 @@ USAGE:
 """
 
 import argparse
+import math
 import tempfile
 from pathlib import Path
 from typing import Iterable
@@ -92,6 +93,25 @@ def _load_city_meta(city: str) -> dict:
     }
 
 
+def _station_elevation(station_dir: Path, history_path: Path, override: float | None) -> float:
+    """Resolve selected ISD station elevation, with an explicit CLI override."""
+    if override is not None:
+        return override
+    station_id = station_dir.name.split("_", 1)[0]
+    if not history_path.exists():
+        raise SystemExit(f"ERROR: {history_path} is unavailable; pass --elevation")
+    try:
+        usaf, wban = station_id.split("-", 1)
+        history = pd.read_csv(history_path, dtype={"USAF": str, "WBAN": str})
+        match = history.loc[(history["USAF"] == usaf) & (history["WBAN"] == wban)]
+        elevation = float(match.iloc[0]["ELEV(M)"])
+    except (ValueError, IndexError, KeyError) as exc:
+        raise SystemExit(f"ERROR: no elevation for ISD station {station_id}; pass --elevation") from exc
+    if not math.isfinite(elevation) or not -1000 <= elevation < 9999.9:
+        raise SystemExit(f"ERROR: invalid elevation for ISD station {station_id}; pass --elevation")
+    return elevation
+
+
 def _find_isd_dir(city: str, base: Path) -> Path:
     """Return the first station sub-directory under base/ISD/<city>/."""
     city_dir = base / "ISD" / city
@@ -146,8 +166,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Optional existing 3_rsvar.xlsx/CSV to reuse instead of running Stage 3; single-city mode only.")
     parser.add_argument("--out-dir", default=None,
                         help="Output directory (default: output/<city>)")
-    parser.add_argument("--elevation", type=float, default=0.0,
-                        help="Station elevation in metres (used for EPW header)")
+    parser.add_argument("--elevation", type=float, default=None,
+                        help="Station elevation in metres; defaults to selected station in ISD history")
 
     parser.add_argument("--baseline-start", type=int, default=BASELINE_START,
                         help="Baseline period start year")
@@ -536,6 +556,7 @@ def _output_historical_epw(merged_csv: Path, city: str, meta: dict, out_dir: Pat
         lon=meta["lon"],
         tz=meta["tz"],
         elevation_m=meta.get("elevation_m", 0.0),
+        pressure_reference="sea_level",
     )
     print(f"  [EPW] {epw_path.name}")
     return epw_path
@@ -570,6 +591,7 @@ def _output_epw(output_df: pd.DataFrame, epw_years: list[int],
             lon=meta["lon"],
             tz=meta["tz"],
             elevation_m=meta.get("elevation_m", 0.0),
+            pressure_reference="sea_level",
         )
         print(f"  [EPW] {epw_path.name}")
         written.append(epw_path)
@@ -672,7 +694,8 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
     isd_station_dir, nsrdb_csv, cmip6_dir = _ensure_pipeline_inputs(args, data_dir, city, cmip6_dir)
 
     meta = _load_city_meta(city)
-    meta["elevation_m"] = args.elevation
+    meta["elevation_m"] = _station_elevation(
+        isd_station_dir, data_dir / "ISD" / "isd-history.csv", args.elevation)
 
     epw_years = [int(y.strip()) for y in args.epw_years.split(",")]
     ow = args.overwrite

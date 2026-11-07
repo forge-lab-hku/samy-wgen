@@ -53,13 +53,11 @@ def get_timezone_offset(latitude, longitude):
         print(f"  Using approximate timezone from longitude")
         return round(longitude / 15.0)
 
-    # Get UTC offset for the timezone (using a date in winter to avoid DST)
+    # EPW uses local standard time. January is summer in the Southern Hemisphere.
     tz = pytz.timezone(tz_name)
-    # Use January 15 to avoid DST
-    dt = datetime(2020, 1, 15, 12, 0, 0)
-    offset = tz.utcoffset(dt).total_seconds() / 3600.0
-
-    return offset
+    offsets = [tz.localize(datetime(2020, month, 15, 12)).utcoffset().total_seconds() / 3600.0
+               for month in (1, 7)]
+    return min(offsets)
 
 
 def load_city_metadata(config_path):
@@ -81,11 +79,16 @@ def load_city_metadata(config_path):
             'longitude': row['longitude'],
             'country': row['country']
         }
+        for field in ('state', 'wmo_code', 'elevation_m', 'timezone', 'pressure_reference'):
+            if field in cities_df.columns and pd.notna(row[field]):
+                city_metadata[row['city']][field] = row[field]
 
     return city_metadata
 
 
-def epw_header(city, state, country, lat, lon, tz, elevation_m=0, wmo_code="722950"):
+def epw_header(city, state, country, lat, lon, tz, elevation_m=0,
+               wmo_code="000000", start_day="Monday", source="TMY",
+               pressure_note="station"):
     """
     Generate EPW header lines.
 
@@ -104,15 +107,15 @@ def epw_header(city, state, country, lat, lon, tz, elevation_m=0, wmo_code="7229
     """
     lines = []
     lines.append(
-        f"LOCATION,{city},{state},{country},TMY,{wmo_code},{lat:.3f},{lon:.3f},{tz:.1f},{elevation_m:.1f}"
+        f"LOCATION,{city},{state},{country},{source},{wmo_code},{lat:.3f},{lon:.3f},{tz:.1f},{elevation_m:.1f}"
     )
     lines.append("DESIGN CONDITIONS,0")
     lines.append("TYPICAL/EXTREME PERIODS,0")
     lines.append("GROUND TEMPERATURES,0")
     lines.append("HOLIDAYS/DAYLIGHT SAVINGS,No,0,0,0")
-    lines.append("COMMENTS 1,Generated from TMY data (1991-2020)")
-    lines.append("COMMENTS 2,Created by create_epw_ddy.py")
-    lines.append("DATA PERIODS,1,1,Data,Sunday, 1/ 1,12/31")
+    lines.append(f"COMMENTS 1,Generated from {source} hourly data")
+    lines.append(f"COMMENTS 2,Created by create_epw_ddy.py; pressure={pressure_note}")
+    lines.append(f"DATA PERIODS,1,1,Data,{start_day}, 1/ 1,12/31")
     return "\n".join(lines) + "\n"
 
 
@@ -146,16 +149,14 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
 
     # Get city metadata
     if city_name not in city_metadata:
-        print(f"  Warning: City {city_name} not found in config, using default location")
-        lat, lon, country = 34.05, -118.24, "USA"  # Default to LA coordinates
-        state = "CA"
-        wmo_code = "722950"
-        tz = -8.0
+        raise ValueError(f"City {city_name} not found in metadata")
     else:
         lat = city_metadata[city_name]['latitude']
         lon = city_metadata[city_name]['longitude']
         country = city_metadata[city_name]['country']
-        tz = get_timezone_offset(lat, lon)
+        tz = city_metadata[city_name].get('timezone')
+        if tz is None:
+            tz = get_timezone_offset(lat, lon)
 
         # Determine state from city name (simple mapping)
         state_map = {
@@ -164,7 +165,7 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
             'Toronto': 'ON',
             'Montreal': 'QC'
         }
-        state = state_map.get(city_name, '')
+        state = city_metadata[city_name].get('state', state_map.get(city_name, ''))
 
         # WMO code mapping
         wmo_map = {
@@ -173,7 +174,11 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
             'Toronto': '716240',
             'Montreal': '716270'
         }
-        wmo_code = wmo_map.get(city_name, '000000')
+        wmo_code = city_metadata[city_name].get('wmo_code', wmo_map.get(city_name, '000000'))
+        elevation_m = float(city_metadata[city_name].get('elevation_m', 0.0))
+        pressure_reference = city_metadata[city_name].get('pressure_reference', 'station')
+        if pressure_reference not in ('station', 'sea_level'):
+            raise ValueError("pressure_reference must be 'station' or 'sea_level'")
 
     # Ensure we have 8760 hours (no leap day)
     if len(df) > 8760:
@@ -181,14 +186,24 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
         mask_leap = ~((df.index.month == 2) & (df.index.day == 29))
         df = df[mask_leap]
 
-    if len(df) != 8760:
-        print(f"  Warning: Expected 8760 hours, got {len(df)}")
-        # Try to handle missing hours
-        if len(df) < 8760:
-            print(f"  Warning: Missing hours will be forward-filled")
+    if len(df) != 8760 or df.index.has_duplicates:
+        raise ValueError(f"Expected 8760 unique hourly records, got {len(df)}")
+    expected = pd.date_range("2001-01-01", periods=8760, freq="h")
+    if not np.array_equal(df.index.strftime("%m-%d %H:%M"),
+                          expected.strftime("%m-%d %H:%M")):
+        raise ValueError("TMY records must run sequentially from Jan 1 00:00 to Dec 31 23:00")
 
     # Map TMY columns to EPW format
     temp_c = df['DryBulb_C']
+    pressure_pa = df['Pressure_Pa']
+    if pressure_pa.notna().any() and pressure_pa.max() < 2000:
+        pressure_pa = pressure_pa * 100  # hPa to Pa
+    if pressure_reference == 'sea_level':
+        pressure_factor = (1 - 2.25577e-5 * elevation_m) ** 5.25588
+        pressure_pa = pressure_pa * pressure_factor
+        pressure_note = 'station_adjusted_from_sea_level'
+    else:
+        pressure_note = 'station'
 
     # Handle dewpoint: sTMY might have dewpoint directly or need to calculate from specific_humidity
     if 'DewPoint_C' in df.columns:
@@ -199,8 +214,6 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
         dewpoint_c = pd.Series(index=df.index, dtype=float)
 
         q = df['specific_humidity']  # kg/kg
-        pressure_pa = df['Pressure_Pa']
-
         valid_mask = q.notna() & pressure_pa.notna() & temp_c.notna()
         if valid_mask.any():
             # Use calc_dewpoint_from_Q utility function
@@ -258,20 +271,6 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
     if n_missing_rh > 0:
         print(f"  Info: {n_missing_rh} missing Relative Humidity values (will use EPW missing code 999)")
 
-    pressure_pa = df['Pressure_Pa']
-
-    # Detect and convert pressure unit if needed (hPa to Pa)
-    if pressure_pa.notna().any():
-        max_pressure = pressure_pa.max()
-        if max_pressure < 2000:  # Likely in hPa (millibar)
-            print(f"  Detected pressure in hPa (max={max_pressure:.1f}), converting to Pa...")
-            pressure_pa = pressure_pa * 100
-            min_p = pressure_pa.min()
-            max_p = pressure_pa.max()
-            print(f"  Pressure range after conversion: {min_p:.0f} - {max_p:.0f} Pa")
-            if min_p < 85000 or max_p > 110000:
-                print(f"  Warning: Pressure outside typical range (85000-110000 Pa)")
-
     n_missing_pressure = pressure_pa.isna().sum()
     if n_missing_pressure > 0:
         print(f"  Info: {n_missing_pressure} missing Atmospheric Pressure values (will use EPW missing code 999999)")
@@ -326,31 +325,27 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
     # Build EPW rows
     rows = []
     for i, ts in enumerate(df.index):
-        Y = ts.year
+        Y = 2001  # TMY is a synthetic non-leap calendar.
         M = ts.month
         D = ts.day
         H = ts.hour + 1  # EPW uses 1-24
-        Minute = 0  # Standard EPW uses 0 for minute field
+        Minute = 60  # Hourly EPW records end at minute 60.
 
-        # Data Source and Uncertainty Flags (30 characters for 10 fields)
-        # Standard format: ?9?9?9?9E0?9?9?9?9?9?9?9?9?9?9?9?9?9?9?9*9*9*9*9*9
-        # Each pair represents [Source][Uncertainty] for:
-        # DryBulb, DewPoint, RelHum, Pressure, ExtHorzRad, ExtDirNormRad, HorzIRSky,
-        # GlobHorzRad, DirNormRad, DifHorzRad + additional uncertainty flags
-        #
-        # Our mapping:
-        # - C0 for measured/reanalysis data (temp, dewpoint, RH, pressure, wind)
-        # - E0 for calibrated solar radiation (GHI, DNI, DHI)
-        # - ?9 for missing data
-        # - *9 for additional uncertainty flags
+        # Twenty source/uncertainty pairs: E0 for supplied or derived values,
+        # ?9 for unavailable fields. This does not claim measurement provenance.
+        temp_flag = "E0" if pd.notna(temp_c.iloc[i]) else "?9"
+        dewpoint_flag = "E0" if pd.notna(dewpoint_c.iloc[i]) else "?9"
+        rh_flag = "E0" if pd.notna(rh.iloc[i]) else "?9"
+        pressure_flag = "E0" if pd.notna(pressure_pa.iloc[i]) else "?9"
 
-        # Determine data source flags based on data availability
-        temp_flag = "C0" if pd.notna(temp_c.iloc[i]) else "?9"
-        dewpoint_flag = "C0" if pd.notna(dewpoint_c.iloc[i]) else "?9"
-        rh_flag = "C0" if pd.notna(rh.iloc[i]) else "?9"
-        pressure_flag = "C0" if pd.notna(pressure_pa.iloc[i]) else "?9"
-
-        data_flags = f"{temp_flag}{dewpoint_flag}{rh_flag}{pressure_flag}?9?9?9E0E0E0?9?9?9?9?9*9*9*9*9*9"
+        solar_flags = [("E0" if pd.notna(series.iloc[i]) else "?9")
+                       for series in (ghi, dni, dhi)]
+        wind_flags = [("E0" if pd.notna(series.iloc[i]) else "?9")
+                      for series in (wind_dir, wind_speed)]
+        data_flags = "".join((temp_flag, dewpoint_flag, rh_flag, pressure_flag,
+                              "?9", "?9", "?9", *solar_flags,
+                              "?9", "?9", "?9", "?9", "?9", *wind_flags,
+                              "?9", "?9", "?9"))
 
         # Use EPW standard missing value codes when data is missing
         # EPW missing value codes:
@@ -364,9 +359,8 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
         dewpoint_val = f"{dewpoint_c.iloc[i]:.1f}" if pd.notna(dewpoint_c.iloc[i]) else "99.9"
         rh_val = f"{int(rh.iloc[i])}" if pd.notna(rh.iloc[i]) else "999"
         pressure_val = f"{int(pressure_pa.iloc[i])}" if pd.notna(pressure_pa.iloc[i]) else "999999"
-        # Wind direction: use 0 for missing (not 999, which is out of range [0, 360])
-        winddir_val = f"{int(wind_dir.iloc[i])}" if pd.notna(wind_dir.iloc[i]) else "0"
-        windspeed_val = f"{wind_speed.iloc[i]:.1f}" if pd.notna(wind_speed.iloc[i]) else "0.0"
+        winddir_val = f"{int(wind_dir.iloc[i])}" if pd.notna(wind_dir.iloc[i]) else "999"
+        windspeed_val = f"{wind_speed.iloc[i]:.1f}" if pd.notna(wind_speed.iloc[i]) else "999"
 
         # Solar radiation values - use EPW missing code 9999 for missing values (not 999999)
         ghi_val = f"{int(ghi.iloc[i])}" if pd.notna(ghi.iloc[i]) else "9999"
@@ -385,10 +379,10 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
             ghi_val,  # [13] Global horizontal irradiance (Wh/m²)
             dni_val,  # [14] Direct normal irradiance (Wh/m²)
             dhi_val,  # [15] Diffuse horizontal irradiance (Wh/m²)
-            0,  # [16] Global horizontal illuminance (lux)
-            0,  # [17] Direct normal illuminance (lux)
-            0,  # [18] Diffuse horizontal illuminance (lux)
-            0,  # [19] Zenith luminance (Cd/m²)
+            999999,  # [16] Global horizontal illuminance unavailable (lux)
+            999999,  # [17] Direct normal illuminance unavailable (lux)
+            999999,  # [18] Diffuse horizontal illuminance unavailable (lux)
+            9999,  # [19] Zenith luminance unavailable (Cd/m²)
             winddir_val,  # [20] Wind direction (degrees)
             windspeed_val,  # [21] Wind speed (m/s)
             99,  # [22] Total sky cover (tenths)
@@ -398,7 +392,7 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
             9,  # [26] Present weather observation
             9,  # [27] Present weather codes
             999,  # [28] Precipitable water (mm)
-            0,  # [29] Aerosol optical depth (use 0 instead of .999)
+            0.999,  # [29] Aerosol optical depth unavailable
             999,  # [30] Snow depth (cm)
             99,  # [31] Days since last snowfall
             999,  # [32] Albedo
@@ -411,7 +405,10 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
     output_epw_path.parent.mkdir(parents=True, exist_ok=True)
     # Format city name (replace underscore with space)
     city_display = city_name.replace('_', ' ')
-    header = epw_header(city_display, state, country, lat, lon, tz, wmo_code=wmo_code)
+    header = epw_header(city_display, state, country, lat, lon, tz,
+                        elevation_m=elevation_m, wmo_code=wmo_code,
+                        source="sAMY-sTMY" if is_stmy else "sAMY-TMY",
+                        pressure_note=pressure_note)
 
     with open(output_epw_path, "w", encoding="utf-8") as f:
         f.write(header)

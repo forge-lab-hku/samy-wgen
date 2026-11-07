@@ -29,6 +29,17 @@ trajectory; a selected-year EPW alone does not describe the full multi-year
 sequence. DDY files summarize design conditions from hourly data and are not
 another weather trajectory.
 
+Hourly EPW records use hours 1–24 and minute 60. The exporter omits February 29
+and requires every other hour of the selected year; it does not invent missing
+weather records. For a leap-year source, EPW data rows use the non-leap 2001
+calendar while the filename retains the source year. Unavailable auxiliary
+fields use EPW missing-value codes rather than zeros.
+The CLI obtains elevation from the selected ISD station unless ``--elevation``
+overrides it, and converts its sea-level pressure series to station pressure
+for the EPW. For direct TMY/sTMY conversion, specify ``pressure_reference``
+as ``sea_level`` in city metadata only when the source pressure is sea-level;
+the default ``station`` leaves pressure unchanged.
+
 Check the CSV's first and last timestamps, missing/duplicate hours, source
 coverage, and physical QA before using outputs in a simulation. Check the
 EPW header's location, timezone, and elevation. File-format and physical

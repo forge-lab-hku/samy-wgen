@@ -313,7 +313,7 @@ class TestEPWHumidityFallback:
     def test_epw_writer_uses_dewpoint_when_rh_missing(self, tmp_path):
         from samy_wgen.pipeline.gen_samy import _write_epw_for_year
 
-        index = pd.date_range("2000-01-01 00:00:00", periods=8760, freq="h")
+        index = pd.date_range("2001-01-01 00:00:00", periods=8760, freq="h")
         df = pd.DataFrame(
             {
                 "temp": 30.0,
@@ -328,7 +328,7 @@ class TestEPWHumidityFallback:
         )
 
         out_path = tmp_path / "fallback.epw"
-        _write_epw_for_year(df, 2000, out_path)
+        _write_epw_for_year(df, 2001, out_path)
 
         first_row = out_path.read_text().splitlines()[8].split(",")
         assert float(first_row[7]) == pytest.approx(20.0, abs=0.2)
