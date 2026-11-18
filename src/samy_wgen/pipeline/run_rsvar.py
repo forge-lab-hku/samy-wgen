@@ -302,7 +302,11 @@ def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True, longitude
             if len(match) != 1:
                 raise ValueError(f"A unique longitude is required for {city}")
             longitude = float(match.iloc[0])
+        from samy_wgen.pipeline.input_checks import report_training_coverage_from_csv
         from samy_wgen.pipeline.solar_latent import fit_solar_latent_rsvar
+
+        report_training_coverage_from_csv(
+            isd_path, context=f"{city} ISD+NSRDB training series")
 
         rsvar_output, pipeline, calibration, solar_info = fit_solar_latent_rsvar(
             isd_path, latitude=lat, longitude=longitude,

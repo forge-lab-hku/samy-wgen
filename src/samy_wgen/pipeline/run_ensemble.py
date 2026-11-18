@@ -161,6 +161,10 @@ def run_and_save_ensemble(
     if target_vars is None:
         target_vars = TARGET_VARS
 
+    from samy_wgen.pipeline.input_checks import report_training_coverage_from_csv
+    report_training_coverage_from_csv(
+        isd_path, context="ISD+NSRDB training series")
+
     # --- Train ---
     print("\n" + "="*80)
     print("ENSEMBLE PIPELINE: TRAINING RS-VAR")

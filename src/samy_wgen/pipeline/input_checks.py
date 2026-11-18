@@ -17,6 +17,13 @@ import pandas as pd
 # Full monthly rsds trailing window required by the bounded solar calculation.
 CMIP6_SOLAR_TRAILING_YEARS = 20
 
+# Hourly coverage thresholds for the ISD+NSRDB training series.  A year is
+# "thin" below WARN (reported) and cannot train below FAIL (aborts).  Edge
+# years (first/last of the series) are exempt because a station record
+# legitimately starts or stops mid-year.
+TRAINING_COVERAGE_WARN = 0.70
+TRAINING_COVERAGE_FAIL = 0.30
+
 
 def _format_int_ranges(values: list[int]) -> str:
     """Render sorted integers as compact ranges (``1991-2010, 2025``)."""
@@ -229,3 +236,69 @@ def format_cmip6_issues(issues_by_city: dict[str, list[str]]) -> str:
         lines.append(f"  {city}:")
         lines.extend(f"    - {issue}" for issue in issues)
     return "\n".join(lines)
+
+
+def report_training_coverage(
+    frame: pd.DataFrame,
+    *,
+    key: str,
+    context: str,
+) -> None:
+    """Report per-year hourly coverage of the ISD+NSRDB training series.
+
+    The merged series is resampled to one row per hour, so coverage is
+    ``present hours / (days_in_year * 24)``.  Interior years below
+    ``TRAINING_COVERAGE_WARN`` are reported; interior years below
+    ``TRAINING_COVERAGE_FAIL`` abort, since such thin years cannot train a
+    stable weather generator (for example a file that only contains January).
+    Edge years are exempt: a station record legitimately starts or stops
+    mid-year.
+    """
+    if key not in frame.columns:
+        raise SystemExit(
+            f"ERROR: {context}: no '{key}' column to check coverage.")
+    present = frame[key].notna()
+    per_year: dict[int, float] = {}
+    for year, sub in present.groupby(frame.index.year):
+        days = pd.Timestamp(year, 12, 31).dayofyear
+        per_year[year] = float(sub.sum()) / (days * 24)
+
+    if not per_year:
+        raise SystemExit(f"ERROR: {context}: empty series, no coverage to report.")
+
+    overall = sum(per_year.values()) / len(per_year)
+    print(f"  [coverage] {context}: overall {overall:.0%} across "
+          f"{min(per_year)}-{max(per_year)} ({len(per_year)} year(s))")
+
+    if len(per_year) <= 2:
+        return  # nothing to gate: edge years are naturally partial
+
+    edge_years = {min(per_year), max(per_year)}
+    interior = {y: r for y, r in per_year.items() if y not in edge_years}
+    critical = {y: r for y, r in interior.items() if r < TRAINING_COVERAGE_FAIL}
+    thin = {y: r for y, r in interior.items() if r < TRAINING_COVERAGE_WARN}
+
+    if critical:
+        lines = "\n".join(
+            f"    - {y}: {r:.0%}" for y, r in sorted(critical.items()))
+        raise SystemExit(
+            f"ERROR: {context}: {len(critical)} year(s) below "
+            f"{TRAINING_COVERAGE_FAIL:.0%} hourly coverage:\n{lines}\n"
+            "Check the ISD/NSRDB inputs or extend the download year range.")
+    if thin:
+        lines = "\n".join(
+            f"    - {y}: {r:.0%}" for y, r in sorted(thin.items()))
+        print(f"  [warning] {context}: {len(thin)} year(s) below "
+              f"{TRAINING_COVERAGE_WARN:.0%} hourly coverage:\n{lines}")
+
+
+def report_training_coverage_from_csv(
+    csv_path: str | Path,
+    *,
+    context: str,
+    datetime_col: str = "DATE",
+    key: str = "temp",
+) -> None:
+    """Load a merged ISD+NSRDB CSV and run :func:`report_training_coverage`."""
+    frame = pd.read_csv(csv_path, parse_dates=[datetime_col]).set_index(datetime_col)
+    report_training_coverage(frame, key=key, context=context)

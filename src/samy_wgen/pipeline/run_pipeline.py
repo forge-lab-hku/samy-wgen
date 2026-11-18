@@ -42,6 +42,7 @@ from samy_wgen.pipeline.input_checks import (
     CMIP6_SOLAR_TRAILING_YEARS,
     cmip6_coverage_issues,
     format_cmip6_issues,
+    report_training_coverage,
 )
 
 
@@ -504,6 +505,8 @@ def _stage2_merge_nsrdb(isd_lst: pd.DataFrame, nsrdb_csv: Path,
     solar = nsrdb[solar_cols].clip(lower=0).resample("h").mean()
     merged = isd_lst.join(solar, how="inner").ffill(limit=3).bfill(limit=3)
     merged = merged.dropna(subset=["temp"] + solar_cols[:1])
+
+    report_training_coverage(merged, key="temp", context="ISD+NSRDB training series")
 
     yr_min, yr_max = merged.index.year.min(), merged.index.year.max()
     print(f"  {len(merged):,} hourly rows, {yr_min}–{yr_max}")

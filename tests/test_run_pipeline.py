@@ -307,6 +307,63 @@ class TestEnsurePipelineInputs:
         assert "1991-2004" in message
 
 
+class TestTrainingCoverageGate:
+    def test_exempts_partial_edge_years(self):
+        from samy_wgen.pipeline.input_checks import report_training_coverage
+
+        idx = pd.date_range("2000-01-01", "2002-02-28 23:00", freq="h")
+        frame = pd.DataFrame({"temp": 10.0}, index=idx)
+
+        # 2002 is a partial edge year (~16%); it must not abort the run.
+        report_training_coverage(frame, key="temp", context="test")
+
+    def test_fails_on_thin_interior_year(self):
+        from samy_wgen.pipeline.input_checks import report_training_coverage
+
+        idx = pd.date_range("2000-01-01", "2003-12-31 23:00", freq="h")
+        frame = pd.DataFrame({"temp": 10.0}, index=idx)
+        keep = ~((frame.index.year == 2001) & (frame.index.month != 1))
+        frame = frame.loc[keep]  # 2001 keeps only January (~8%)
+
+        with pytest.raises(SystemExit, match="2001"):
+            report_training_coverage(frame, key="temp", context="test")
+
+    def test_warns_on_thin_interior_year(self, capsys):
+        from samy_wgen.pipeline.input_checks import report_training_coverage
+
+        idx = pd.date_range("2000-01-01", "2003-12-31 23:00", freq="h")
+        frame = pd.DataFrame({"temp": 10.0}, index=idx)
+        keep = ~((frame.index.year == 2001) & (frame.index.month > 6))
+        frame = frame.loc[keep]  # 2001 keeps Jan–Jun (~50%)
+
+        report_training_coverage(frame, key="temp", context="test")
+
+        assert "warning" in capsys.readouterr().out
+
+    def test_from_csv_loads_date_column(self, tmp_path):
+        from samy_wgen.pipeline.input_checks import report_training_coverage_from_csv
+
+        csv_path = tmp_path / "2_isd_solar_lst.csv"
+        idx = pd.date_range("2000-01-01", "2000-01-02 23:00", freq="h")
+        pd.DataFrame({"temp": 10.0, "GHI": 0.0}, index=idx).rename_axis("DATE").to_csv(csv_path)
+
+        # A single short year is an edge case and must not abort.
+        report_training_coverage_from_csv(csv_path, context="test")
+
+    def test_from_csv_fails_on_thin_interior_year(self, tmp_path):
+        from samy_wgen.pipeline.input_checks import report_training_coverage_from_csv
+
+        csv_path = tmp_path / "2_isd_solar_lst.csv"
+        idx = pd.date_range("2000-01-01", "2003-12-31 23:00", freq="h")
+        frame = pd.DataFrame({"temp": 10.0}, index=idx)
+        keep = ~((frame.index.year == 2001) & (frame.index.month != 1))
+        frame = frame.loc[keep].rename_axis("DATE")
+        frame.to_csv(csv_path)
+
+        with pytest.raises(SystemExit, match="2001"):
+            report_training_coverage_from_csv(csv_path, context="test")
+
+
 class TestDeterministicArtifacts:
     def test_stage4_uses_mixed_resolution_inputs(self, tmp_path, monkeypatch):
         from samy_wgen.pipeline import run_climate_delta, run_pipeline
