@@ -1951,6 +1951,78 @@ class TestCmip6YearRange:
         mock_client.retrieve.assert_not_called()
 
 
+class TestCmip6CoverageValidation:
+    def test_monthly_coverage_requires_every_month(self):
+        from samy_wgen.pipeline.download_data import _cmip6_frame_covers_request
+
+        january_only = pd.DataFrame({
+            "time": pd.to_datetime([f"{year}-01-16" for year in (2031, 2032)]),
+            "rsds": 200.0,
+        })
+        variables = ["surface_downwelling_shortwave_radiation"]
+
+        assert _cmip6_frame_covers_request(january_only, [2031, 2032], variables)
+        assert not _cmip6_frame_covers_request(
+            january_only, [2031, 2032], variables, complete_months=True)
+
+        complete = pd.DataFrame({
+            "time": pd.to_datetime([
+                f"{year}-{month:02d}-16"
+                for year in (2031, 2032) for month in range(1, 13)
+            ]),
+            "rsds": 200.0,
+        })
+        assert _cmip6_frame_covers_request(
+            complete, [2031, 2032], variables, complete_months=True)
+
+    def test_write_cmip6_final_preserves_unrequested_columns(self, tmp_path):
+        from samy_wgen.pipeline.download_data import _write_cmip6_final
+
+        out_csv = tmp_path / "mpi_esm1_2_lr_ssp245.csv"
+        existing_times = pd.date_range("2031-01-01", "2050-12-31", freq="D")
+        pd.DataFrame({
+            "time": existing_times,
+            "tas": 300.0,
+            "psl": 101000.0,
+        }).to_csv(out_csv, index=False)
+
+        requested_times = pd.date_range("2031-01-01", "2060-12-31", freq="D")
+        refreshed = pd.DataFrame({"time": requested_times, "tas": 301.0})
+        years = list(range(2031, 2061))
+
+        assert _write_cmip6_final(
+            out_csv, refreshed, years, ["near_surface_air_temperature"])
+
+        final = pd.read_csv(out_csv, parse_dates=["time"])
+        assert {"time", "tas", "psl"}.issubset(final.columns)
+        assert final["psl"].notna().sum() == len(existing_times)
+        assert final["tas"].notna().sum() == len(requested_times)
+
+    def test_write_cmip6_final_rejects_incomplete_monthly_replacement(self, tmp_path):
+        from samy_wgen.pipeline.download_data import _write_cmip6_final
+
+        out_csv = tmp_path / "mpi_esm1_2_lr_ssp245_monthly.csv"
+        complete_times = pd.to_datetime([
+            f"{year}-{month:02d}-16"
+            for year in (2031, 2032) for month in range(1, 13)
+        ])
+        pd.DataFrame({"time": complete_times, "rsds": 200.0}).to_csv(
+            out_csv, index=False)
+        before = out_csv.read_bytes()
+
+        january_only = pd.DataFrame({
+            "time": pd.to_datetime([f"{year}-01-16" for year in (2031, 2032)]),
+            "rsds": 300.0,
+        })
+        written = _write_cmip6_final(
+            out_csv, january_only, [2031, 2032],
+            ["surface_downwelling_shortwave_radiation"],
+            complete_months=True)
+
+        assert written is False
+        assert out_csv.read_bytes() == before
+
+
 # ─── Integration tests (slow, real network) ───────────────────────────────────
 
 @pytest.mark.slow

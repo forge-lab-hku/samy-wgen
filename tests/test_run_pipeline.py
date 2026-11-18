@@ -8,6 +8,41 @@ import pandas as pd
 import pytest
 
 
+def _write_cmip6_inputs(
+    city_dir: Path,
+    *,
+    model: str = "mpi_esm1_2_lr",
+    ssp: str = "ssp245",
+    historical_daily_years=range(1991, 2015),
+    scenario_daily_years=range(2015, 2101),
+    historical_monthly_years=range(1991, 2015),
+    scenario_monthly_years=range(2015, 2101),
+) -> None:
+    """Write a small but coverage-complete CMIP6 fixture for pipeline checks."""
+    city_dir.mkdir(parents=True, exist_ok=True)
+
+    def daily(years):
+        times = pd.to_datetime([
+            f"{year}-{month:02d}-16" for year in years for month in range(1, 13)
+        ])
+        return pd.DataFrame({"time": times, "tas": 300.0, "psl": 101000.0})
+
+    def monthly(years):
+        times = pd.to_datetime([
+            f"{year}-{month:02d}-16" for year in years for month in range(1, 13)
+        ])
+        return pd.DataFrame({"time": times, "rsds": 200.0})
+
+    daily(historical_daily_years).to_csv(
+        city_dir / f"{model}_historical.csv", index=False)
+    daily(scenario_daily_years).to_csv(
+        city_dir / f"{model}_{ssp}.csv", index=False)
+    monthly(historical_monthly_years).to_csv(
+        city_dir / f"{model}_historical_monthly.csv", index=False)
+    monthly(scenario_monthly_years).to_csv(
+        city_dir / f"{model}_{ssp}_monthly.csv", index=False)
+
+
 class TestDownloadDefaults:
     def test_cmip6_download_experiments_follow_ssp(self):
         from samy_wgen.pipeline.run_pipeline import _cmip6_download_experiments
@@ -37,11 +72,57 @@ class TestDownloadDefaults:
         from samy_wgen.pipeline.run_pipeline import _has_required_cmip6_data
 
         city_dir = tmp_path / "CMIP6" / "Los_Angeles"
-        city_dir.mkdir(parents=True, exist_ok=True)
-        (city_dir / "mpi_esm1_2_lr_historical.csv").write_text("time,tas\n")
-        (city_dir / "mpi_esm1_2_lr_ssp245.csv").write_text("time,tas\n")
+        _write_cmip6_inputs(city_dir)
 
-        assert _has_required_cmip6_data("Los_Angeles", tmp_path / "CMIP6", "ssp245", ["mpi_esm1_2_lr"])
+        assert _has_required_cmip6_data(
+            "Los_Angeles", tmp_path / "CMIP6", "ssp245", ["mpi_esm1_2_lr"])
+
+    def test_has_required_cmip6_data_rejects_incomplete_monthly_coverage(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _has_required_cmip6_data
+
+        city_dir = tmp_path / "CMIP6" / "Miami"
+        _write_cmip6_inputs(
+            city_dir,
+            historical_daily_years=range(2005, 2015),
+            scenario_daily_years=[2050],
+            historical_monthly_years=range(2005, 2015),
+            scenario_monthly_years=[2050],
+        )
+
+        assert not _has_required_cmip6_data(
+            "Miami", tmp_path / "CMIP6", "ssp245", ["mpi_esm1_2_lr"],
+            forecast_years=range(2025, 2101), baseline_years=range(1991, 2011))
+
+    def test_has_required_cmip6_data_rejects_january_only_months(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _has_required_cmip6_data
+
+        city_dir = tmp_path / "CMIP6" / "Miami"
+        _write_cmip6_inputs(city_dir)
+        january_only = pd.DataFrame({
+            "time": pd.to_datetime([f"{year}-01-16" for year in range(2015, 2101)]),
+            "rsds": 200.0,
+        })
+        january_only.to_csv(
+            city_dir / "mpi_esm1_2_lr_ssp245_monthly.csv", index=False)
+
+        assert not _has_required_cmip6_data(
+            "Miami", tmp_path / "CMIP6", "ssp245", ["mpi_esm1_2_lr"])
+
+    def test_has_required_cmip6_data_rejects_january_only_daily(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _has_required_cmip6_data
+
+        city_dir = tmp_path / "CMIP6" / "Miami"
+        _write_cmip6_inputs(city_dir)
+        january_only = pd.DataFrame({
+            "time": pd.to_datetime([f"{year}-01-16" for year in range(1991, 2015)]),
+            "tas": 300.0,
+            "psl": 101000.0,
+        })
+        january_only.to_csv(
+            city_dir / "mpi_esm1_2_lr_historical.csv", index=False)
+
+        assert not _has_required_cmip6_data(
+            "Miami", tmp_path / "CMIP6", "ssp245", ["mpi_esm1_2_lr"])
 
 
 class TestEnsurePipelineInputs:
@@ -73,9 +154,7 @@ class TestEnsurePipelineInputs:
             (nsrdb_dir / "nsrdb_miami_1998-2024.csv").write_text("Year,Month,Day,Hour,GHI\n")
 
         city_dir = data_dir / "CMIP6" / "Miami"
-        city_dir.mkdir(parents=True, exist_ok=True)
-        (city_dir / "mpi_esm1_2_lr_historical.csv").write_text("time,tas\n")
-        (city_dir / "mpi_esm1_2_lr_ssp245.csv").write_text("time,tas\n")
+        _write_cmip6_inputs(city_dir)
 
         args = Namespace(
             city=["Miami"],
@@ -130,9 +209,7 @@ class TestEnsurePipelineInputs:
             (nsrdb_dir / "nsrdb_miami_1998-2024.csv").write_text("Year,Month,Day,Hour,GHI\n")
 
         city_dir = data_dir / "CMIP6" / "Miami"
-        city_dir.mkdir(parents=True, exist_ok=True)
-        (city_dir / "mpi_esm1_2_lr_historical.csv").write_text("time,tas\n")
-        (city_dir / "mpi_esm1_2_lr_ssp245.csv").write_text("time,tas\n")
+        _write_cmip6_inputs(city_dir)
 
         args = Namespace(
             city=["Miami", "Los_Angeles"],
@@ -166,9 +243,7 @@ class TestEnsurePipelineInputs:
 
         data_dir = tmp_path / "data"
         existing = data_dir / "CMIP6" / "Miami"
-        existing.mkdir(parents=True, exist_ok=True)
-        (existing / "mpi_esm1_2_lr_historical.csv").write_text("time,tas\n")
-        (existing / "mpi_esm1_2_lr_ssp245.csv").write_text("time,tas\n")
+        _write_cmip6_inputs(existing)
 
         captured: dict[str, object] = {}
 
@@ -178,6 +253,8 @@ class TestEnsurePipelineInputs:
             captured["experiments"] = experiments
             captured["year_range"] = year_range
             captured["output_dir"] = output_dir
+            for city in cities:
+                _write_cmip6_inputs(Path(output_dir) / city)
 
         args = Namespace(
             city=["Miami", "Los_Angeles"],
@@ -197,6 +274,37 @@ class TestEnsurePipelineInputs:
         assert captured["cities"] == ["Los_Angeles"]
         assert captured["models"] == ["mpi_esm1_2_lr"]
         assert captured["experiments"] == ["historical", "ssp2_4_5"]
+        assert captured["year_range"] == (1991, 2100)
+
+    def test_batch_cmip6_reports_missing_coverage_when_download_disabled(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _ensure_batch_cmip6_inputs
+
+        data_dir = tmp_path / "data"
+        _write_cmip6_inputs(
+            data_dir / "CMIP6" / "Miami",
+            historical_daily_years=range(2005, 2015),
+            scenario_daily_years=[2050],
+            historical_monthly_years=range(2005, 2015),
+            scenario_monthly_years=[2050],
+        )
+        args = Namespace(
+            city=["Miami"],
+            cmip6_dir=None,
+            skip_download=True,
+            download_data=["cmip6"],
+            ssp="ssp245",
+            cmip6_models=["mpi_esm1_2_lr"],
+            cmip6_experiments=None,
+            cmip6_years=None,
+        )
+
+        with pytest.raises(SystemExit) as excinfo:
+            _ensure_batch_cmip6_inputs(args, data_dir, ["Miami"])
+
+        message = str(excinfo.value)
+        assert "CMIP6 inputs are incomplete" in message
+        assert "solar" in message
+        assert "1991-2004" in message
 
 
 class TestDeterministicArtifacts:

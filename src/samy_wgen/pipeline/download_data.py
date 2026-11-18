@@ -1465,8 +1465,15 @@ def _cmip6_frame_covers_request(
     frame: pd.DataFrame,
     years: list[int],
     variables: list[str],
+    *,
+    complete_months: bool = False,
 ) -> bool:
-    """Return whether a CMIP6 frame has every requested field and year."""
+    """Return whether a CMIP6 frame has every requested field, year, and month.
+
+    Monthly products must be complete for every requested year when
+    ``complete_months`` is set; a single value per year is not enough for the
+    trailing solar window.
+    """
     required_columns = {CMIP6_VAR_SHORT.get(variable, variable) for variable in variables}
     if not required_columns.issubset(frame.columns) or "time" not in frame.columns:
         return False
@@ -1477,10 +1484,15 @@ def _cmip6_frame_covers_request(
     if times.empty or times.isna().any() or times.duplicated().any():
         return False
     requested_years = set(years)
+    expected_months = {(year, month) for year in requested_years for month in range(1, 13)}
     for column in required_columns:
         valid = frame[column].notna()
         if not valid.any() or not requested_years.issubset(set(times[valid].dt.year.unique())):
             return False
+        if complete_months:
+            available = set(zip(times[valid].dt.year, times[valid].dt.month))
+            if not expected_months.issubset(available):
+                return False
     return True
 
 
@@ -1488,21 +1500,29 @@ def _cmip6_csv_covers_request(
     path: Path,
     years: list[int],
     variables: list[str],
+    *,
+    complete_months: bool = False,
 ) -> bool:
     """Return whether an existing CMIP6 CSV satisfies the requested fields/years."""
     if not path.is_file():
         return False
     try:
-        return _cmip6_frame_covers_request(pd.read_csv(path), years, variables)
+        return _cmip6_frame_covers_request(
+            pd.read_csv(path), years, variables, complete_months=complete_months)
     except (OSError, pd.errors.ParserError, ValueError):
         return False
 
 
 def _cmip6_variable_covers_request(
-    frame: pd.DataFrame, years: list[int], variable: str
+    frame: pd.DataFrame,
+    years: list[int],
+    variable: str,
+    *,
+    complete_months: bool = False,
 ) -> bool:
     """Validate one extracted CMIP6 variable independently of its group."""
-    return _cmip6_frame_covers_request(frame, years, [variable])
+    return _cmip6_frame_covers_request(
+        frame, years, [variable], complete_months=complete_months)
 
 
 def _cmip6_cache_path(
@@ -1519,7 +1539,9 @@ def _cmip6_cache_path(
     )
 
 
-def _read_cmip6_variable(path: Path, years: list[int], variable: str) -> pd.DataFrame | None:
+def _read_cmip6_variable(
+    path: Path, years: list[int], variable: str, *, complete_months: bool = False,
+) -> pd.DataFrame | None:
     """Read a one-variable cache or legacy CSV slice after coverage checks."""
     short = CMIP6_VAR_SHORT.get(variable, variable)
     try:
@@ -1528,7 +1550,8 @@ def _read_cmip6_variable(path: Path, years: list[int], variable: str) -> pd.Data
         return None
     if short not in frame.columns and variable in frame.columns:
         frame = frame.rename(columns={variable: short})
-    if not _cmip6_variable_covers_request(frame, years, variable):
+    if not _cmip6_variable_covers_request(
+            frame, years, variable, complete_months=complete_months):
         return None
     return frame[["time", short]].copy()
 
@@ -1542,9 +1565,11 @@ def _write_cmip6_variable(path: Path, frame: pd.DataFrame) -> None:
 
 def _cmip6_existing_variable(
     out_csv: Path, years: list[int], variable: str, cache_path: Path,
+    *, complete_months: bool = False,
 ) -> pd.DataFrame | None:
     """Recover an individually valid field from an older group CSV."""
-    frame = _read_cmip6_variable(out_csv, years, variable)
+    frame = _read_cmip6_variable(
+        out_csv, years, variable, complete_months=complete_months)
     if frame is not None:
         _write_cmip6_variable(cache_path, frame)
     return frame
@@ -1565,12 +1590,41 @@ def _record_cmip6_failure(
         stream.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def _write_cmip6_final(out_csv: Path, frame: pd.DataFrame, years: list[int], variables: list[str]) -> bool:
-    """Atomically replace a group CSV only after its serialized form validates."""
+def _write_cmip6_final(
+    out_csv: Path,
+    frame: pd.DataFrame,
+    years: list[int],
+    variables: list[str],
+    *,
+    complete_months: bool = False,
+) -> bool:
+    """Atomically replace a group CSV after preserving unrequested variables.
+
+    A per-variable download only contains the fields that were requested.  Any
+    other columns already present in the group CSV (for example pressure when
+    only temperature is refreshed) are carried over, and rows outside the new
+    request are retained, so a partial refresh cannot silently delete data.
+    """
+    merged = frame.copy()
+    if out_csv.exists():
+        try:
+            existing = pd.read_csv(out_csv, parse_dates=["time"])
+        except (OSError, pd.errors.ParserError, ValueError, KeyError):
+            existing = None
+        if existing is not None and "time" in existing.columns:
+            existing = existing.drop_duplicates(subset="time", keep="last")
+            carried = [column for column in existing.columns if column != "time"
+                       and column not in merged.columns]
+            if carried:
+                merged = merged.merge(
+                    existing[["time", *carried]], on="time", how="outer")
+                merged = merged.sort_values("time").reset_index(drop=True)
+
     temporary = out_csv.with_name(f".{out_csv.name}.tmp")
     try:
-        frame.to_csv(temporary, index=False)
-        if not _cmip6_csv_covers_request(temporary, years, variables):
+        merged.to_csv(temporary, index=False)
+        if not _cmip6_csv_covers_request(
+                temporary, years, variables, complete_months=complete_months):
             temporary.unlink(missing_ok=True)
             return False
         temporary.replace(out_csv)
@@ -2355,8 +2409,10 @@ def download_cmip6(
 
             for temporal_res, var_list in variable_groups.items():
                 suffix  = "" if temporal_res == "daily" else "_monthly"
+                complete_months = temporal_res != "daily"
                 out_csv = city_dir / f"{model}_{label}{suffix}.csv"
-                if _cmip6_csv_covers_request(out_csv, years, var_list):
+                if _cmip6_csv_covers_request(
+                        out_csv, years, var_list, complete_months=complete_months):
                     logger.info(f"  {out_csv.name} covers requested fields and years, skipping")
                     summary["success"].append({"city": city, "model": model,
                         "experiment": cds_exp, "temporal_resolution": temporal_res,
@@ -2377,9 +2433,12 @@ def download_cmip6(
                     cache_path = _cmip6_cache_path(
                         output_root, model, cds_exp, temporal_res, variable, city, years, (lat, lon)
                     )
-                    cached = _read_cmip6_variable(cache_path, years, variable)
+                    cached = _read_cmip6_variable(
+                        cache_path, years, variable, complete_months=complete_months)
                     if cached is None:
-                        cached = _cmip6_existing_variable(out_csv, years, variable, cache_path)
+                        cached = _cmip6_existing_variable(
+                            out_csv, years, variable, cache_path,
+                            complete_months=complete_months)
                     if cached is not None:
                         city_frames[city].append(cached)
                         continue
@@ -2403,7 +2462,8 @@ def download_cmip6(
                         df_var   = _nc_bytes_to_point_df(nc_bytes, lat, lon)
                         rename   = {c: CMIP6_VAR_SHORT.get(c, c) for c in df_var.columns if c != "time"}
                         df_var = df_var.rename(columns=rename)[["time", short]]
-                        if not _cmip6_variable_covers_request(df_var, years, variable):
+                        if not _cmip6_variable_covers_request(
+                                df_var, years, variable, complete_months=complete_months):
                             raise ValueError(f"extracted data failed field/year validation: {short}")
                         _write_cmip6_variable(cache_path, df_var)
                         city_frames[city].append(df_var)
@@ -2422,11 +2482,13 @@ def download_cmip6(
                     time.sleep(1)
 
                 merged = _merge_cmip6_city_frames(city_frames, city)
-                if merged is None or not _cmip6_frame_covers_request(merged, years, var_list):
+                if merged is None or not _cmip6_frame_covers_request(
+                        merged, years, var_list, complete_months=complete_months):
                     logger.error("CMIP6 incomplete for city=%s model=%s experiment=%s resolution=%s",
                                  city, model, cds_exp, temporal_res)
                     continue
-                if not _write_cmip6_final(out_csv, merged, years, var_list):
+                if not _write_cmip6_final(
+                        out_csv, merged, years, var_list, complete_months=complete_months):
                     summary["incomplete"].append({"city": city, "model": model,
                         "experiment": cds_exp, "temporal_resolution": temporal_res, "variables": var_list})
                     continue
@@ -2498,10 +2560,12 @@ def download_cmip6_for_cities(
 
             for temporal_res, var_list in variable_groups.items():
                 suffix = "" if temporal_res == "daily" else "_monthly"
+                complete_months = temporal_res != "daily"
                 pending_cities = []
                 for city in city_points:
                     out_csv = output_root / city / f"{model}_{label}{suffix}.csv"
-                    if _cmip6_csv_covers_request(out_csv, years, var_list):
+                    if _cmip6_csv_covers_request(
+                            out_csv, years, var_list, complete_months=complete_months):
                         logger.info(
                             "CMIP6 output covers requested fields and years: %s",
                             out_csv,
@@ -2529,10 +2593,13 @@ def download_cmip6_for_cities(
                             output_root, model, cds_exp, temporal_res, variable,
                             city, years, city_points[city],
                         )
-                        cached = _read_cmip6_variable(cache_path, years, variable)
+                        cached = _read_cmip6_variable(
+                            cache_path, years, variable, complete_months=complete_months)
                         if cached is None:
                             out_csv = output_root / city / f"{model}_{label}{suffix}.csv"
-                            cached = _cmip6_existing_variable(out_csv, years, variable, cache_path)
+                            cached = _cmip6_existing_variable(
+                                out_csv, years, variable, cache_path,
+                                complete_months=complete_months)
                         if cached is None:
                             missing_cities.append(city)
                         else:
@@ -2571,7 +2638,9 @@ def download_cmip6_for_cities(
                                 if df_city is None:
                                     raise ValueError(f"extracted data missing city {city}")
                                 df_city = df_city.rename(columns=rename)[["time", short]]
-                                if not _cmip6_variable_covers_request(df_city, years, variable):
+                                if not _cmip6_variable_covers_request(
+                                        df_city, years, variable,
+                                        complete_months=complete_months):
                                     raise ValueError(f"extracted data for {city} failed field/year validation")
                                 cache_path = _cmip6_cache_path(
                                     output_root, model, cds_exp, temporal_res, variable,
@@ -2610,7 +2679,8 @@ def download_cmip6_for_cities(
 
                 for city in pending_cities:
                     merged = _merge_cmip6_city_frames(city_frames, city)
-                    if merged is None or not _cmip6_frame_covers_request(merged, years, var_list):
+                    if merged is None or not _cmip6_frame_covers_request(
+                            merged, years, var_list, complete_months=complete_months):
                         summary["incomplete"].append({"city": city, "model": model,
                             "experiment": cds_exp, "temporal_resolution": temporal_res,
                             "variables": var_list})
@@ -2623,7 +2693,9 @@ def download_cmip6_for_cities(
                     city_dir = output_root / city
                     city_dir.mkdir(parents=True, exist_ok=True)
                     out_csv = city_dir / f"{model}_{label}{suffix}.csv"
-                    if not _write_cmip6_final(out_csv, merged, years, var_list):
+                    if not _write_cmip6_final(
+                            out_csv, merged, years, var_list,
+                            complete_months=complete_months):
                         summary["incomplete"].append({"city": city, "model": model,
                             "experiment": cds_exp, "temporal_resolution": temporal_res,
                             "variables": var_list})

@@ -59,6 +59,14 @@ def _get_bundled_cities_config() -> Path:
 # Variable transformation types (consistent with V5 pipeline)
 ADDITIVE_VARS = {'temp', 'pressure', 'dewpoint'}
 MULTIPLICATIVE_VARS = {'wind_speed', 'relative_humidity', 'specific_humidity'}
+REQUIRED_DELTA_VARS = {'temp', 'pressure'}
+
+# model_name reported by _load_and_merge_climate_data → CMIP6 file stem
+MODEL_NAME_TO_STEM = {
+    'MPI-ESM1-2-LR': 'mpi_esm1_2_lr',
+    'CNRM-ESM2-1': 'cnrm_esm2_1',
+    'MRI-ESM2-0': 'mri_esm2_0',
+}
 
 # Mapping from forecast vars to CORDEX_CMIP5 vars
 VAR_TO_CORDEX = {
@@ -1338,6 +1346,11 @@ def apply_mixed_resolution_climate_delta(
             if var not in output_df.columns:
                 continue
             if cordex_var not in baseline:
+                if var in REQUIRED_DELTA_VARS:
+                    raise ValueError(
+                        f"Climate delta for required variable '{var}' is unavailable: "
+                        f"the baseline has no '{cordex_var}'. Provide complete daily "
+                        "CMIP6 files covering the baseline period.")
                 continue
 
             baseline_info = baseline[cordex_var]
@@ -1346,7 +1359,10 @@ def apply_mixed_resolution_climate_delta(
 
             if resolution == 'daily':
                 if cordex_var not in daily_view.columns:
-                    continue
+                    raise ValueError(
+                        f"Climate delta for '{var}' is unavailable: the scenario "
+                        f"file has no '{cordex_var}' column. Provide complete "
+                        "historical and scenario CMIP6 files.")
 
                 future_vals = daily_view[cordex_var].reindex(output_df['_date'])
                 baseline_doy = baseline_info['doy']
@@ -1354,7 +1370,10 @@ def apply_mixed_resolution_climate_delta(
 
             elif resolution == 'monthly':
                 if monthly_df.empty or cordex_var not in monthly_df.columns:
-                    continue
+                    raise ValueError(
+                        f"Climate delta for '{var}' is unavailable: the scenario "
+                        f"file has no monthly '{cordex_var}' column. Provide "
+                        "complete monthly CMIP6 files.")
 
                 monthly_df_copy = monthly_df.copy()
                 monthly_df_copy['_ym'] = monthly_df_copy.index.to_period('M')
@@ -1374,11 +1393,23 @@ def apply_mixed_resolution_climate_delta(
             if transform == 'additive':
                 delta = future_vals - baseline_vals
                 valid_mask = ~np.isnan(delta)
+                if not valid_mask.any():
+                    raise ValueError(
+                        f"Climate delta for '{var}' could not be applied: no valid "
+                        f"future '{cordex_var}' values for "
+                        f"{output_df.index.min()}..{output_df.index.max()}. "
+                        "Check that the scenario CMIP6 file covers the forecast period.")
                 output_df.loc[valid_mask, var] = output_df.loc[valid_mask, var].values + delta[valid_mask]
                 delta_stats[var] = delta[valid_mask].tolist()
             else:
                 ratio = np.where(baseline_vals > 0, future_vals / baseline_vals, 1.0)
                 valid_mask = ~np.isnan(ratio)
+                if not valid_mask.any():
+                    raise ValueError(
+                        f"Climate delta for '{var}' could not be applied: no valid "
+                        f"future '{cordex_var}' values for "
+                        f"{output_df.index.min()}..{output_df.index.max()}. "
+                        "Check that the scenario CMIP6 file covers the forecast period.")
                 output_df.loc[valid_mask, var] = output_df.loc[valid_mask, var].values * ratio[valid_mask]
                 delta_stats[var] = ratio[valid_mask].tolist()
 
@@ -1673,6 +1704,26 @@ def main():
                 )
             except Exception as e:
                 print(f"  [FAIL] Could not load data for {city}/{projection_label}: {e}")
+                n_fail += 1
+                continue
+
+            from samy_wgen.pipeline.input_checks import cmip6_coverage_issues
+            model_stem = MODEL_NAME_TO_STEM.get(meta.get("model_name"))
+            if model_stem is None:
+                print(f"  [FAIL] Unknown CMIP6 model '{meta.get('model_name')}' "
+                      f"for {city}/{projection_label}")
+                n_fail += 1
+                continue
+            coverage_issues = cmip6_coverage_issues(
+                city, projection["root"], projection["ssp"], [model_stem],
+                forecast_years=range(rsvar_df.index.year.min(),
+                                     rsvar_df.index.year.max() + 1),
+                baseline_years=range(args.baseline_start, args.baseline_end + 1),
+            )
+            if coverage_issues:
+                print(f"  [FAIL] Incomplete CMIP6 inputs for {city}/{projection_label}:")
+                for issue in coverage_issues:
+                    print(f"    - {issue}")
                 n_fail += 1
                 continue
 

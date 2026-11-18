@@ -80,6 +80,47 @@ def test_trailing_monthly_signal_uses_climate_mean_not_single_day_ratio():
     assert ratios.iloc[0] == pytest.approx(1.05)
 
 
+def _monthly_rsds_frame(years, months=range(1, 13), value=200.0):
+    index = pd.to_datetime([
+        f"{year}-{month:02d}-16" for year in years for month in months
+    ])
+    return pd.DataFrame({"rsds": value}, index=index)
+
+
+def test_trailing_window_error_names_forecast_and_missing_input_month():
+    index = pd.to_datetime([
+        f"{year}-{month:02d}-16"
+        for year in [*range(1991, 2011), *range(2031, 2051)]
+        for month in range(1, 13)
+    ])
+    projection = pd.DataFrame({"rsds": 200.0}, index=index)
+    projection = projection.drop(pd.Timestamp("2035-06-16"))
+    target_index = pd.date_range("2050-01-01", "2050-12-31 23:00", freq="h")
+
+    with pytest.raises(ValueError) as excinfo:
+        monthly_rsds_ratios(projection, target_index)
+
+    message = str(excinfo.value)
+    assert "forecast month 2050-06" in message
+    assert "2035-06" in message
+    assert "CORDEX" not in message
+
+
+def test_january_only_projection_raises_clear_error_instead_of_keyerror():
+    baseline = _monthly_rsds_frame(range(1991, 2011))
+    january_only = _monthly_rsds_frame(range(2031, 2051), months=[1])
+    projection = pd.concat([baseline, january_only])
+    target_index = pd.date_range("2050-01-01", "2050-12-31 23:00", freq="h")
+
+    with pytest.raises(ValueError) as excinfo:
+        monthly_rsds_ratios(projection, target_index)
+
+    message = str(excinfo.value)
+    assert "forecast month 2050-02" in message
+    assert "2031-02..2050-02" in message
+    assert "missing monthly input" in message
+
+
 def test_mixed_delta_rejects_old_direct_solar_and_reconstructs_new_solar():
     hours = pd.date_range("2025-01-01", "2025-01-31 23:00", freq="h")
     daily = pd.date_range("1991-01-01", "2025-12-31", freq="D")

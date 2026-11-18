@@ -38,6 +38,12 @@ from typing import Iterable
 import pandas as pd
 from samy_wgen.utils.city_utils import resolve_city, resolve_city_codes
 
+from samy_wgen.pipeline.input_checks import (
+    CMIP6_SOLAR_TRAILING_YEARS,
+    cmip6_coverage_issues,
+    format_cmip6_issues,
+)
+
 
 # ==========================================================================
 # DEFAULTS
@@ -210,7 +216,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cmip6-experiments", nargs="+", default=None,
                         help="CMIP6 CDS experiments for automatic downloads (default: historical + selected SSP)")
     parser.add_argument("--cmip6-years", nargs=2, type=int, metavar=("START", "END"), default=None,
-                        help="Year range for automatic CMIP6 downloads")
+                        help="Year range for automatic CMIP6 downloads (extended as needed to cover the baseline and solar trailing window)")
 
     parser.add_argument("--overwrite", action="store_true",
                         help="Ignore cached intermediate files and rerun all stages")
@@ -229,15 +235,60 @@ def _cmip6_download_experiments(ssp: str, requested: Iterable[str] | None = None
     return ["historical", cds_experiment]
 
 
-def _has_required_cmip6_data(city: str, cmip6_dir: Path, ssp: str, models: Iterable[str]) -> bool:
-    city_dir = cmip6_dir / city
-    if not city_dir.exists():
-        return False
-    required = []
-    for model in models:
-        required.append(city_dir / f"{model}_historical.csv")
-        required.append(city_dir / f"{model}_{ssp}.csv")
-    return all(path.exists() for path in required)
+def _forecast_years(args) -> list[int]:
+    start = pd.Timestamp(getattr(args, "start", FORECAST_START)).year
+    end = pd.Timestamp(getattr(args, "end", FORECAST_END)).year
+    return list(range(start, end + 1))
+
+
+def _baseline_years(args) -> list[int]:
+    start = int(getattr(args, "baseline_start", BASELINE_START))
+    end = int(getattr(args, "baseline_end", BASELINE_END))
+    return list(range(start, end + 1))
+
+
+def _cmip6_coverage_issues(city: str, cmip6_dir: Path, args) -> list[str]:
+    return cmip6_coverage_issues(
+        city,
+        cmip6_dir,
+        args.ssp,
+        args.cmip6_models,
+        forecast_years=_forecast_years(args),
+        baseline_years=_baseline_years(args),
+        trailing_years=CMIP6_SOLAR_TRAILING_YEARS,
+    )
+
+
+def _has_required_cmip6_data(
+    city: str,
+    cmip6_dir: Path,
+    ssp: str,
+    models: Iterable[str],
+    *,
+    forecast_years: Iterable[int] | None = None,
+    baseline_years: Iterable[int] | None = None,
+    trailing_years: int = 20,
+) -> bool:
+    """Return whether existing CMIP6 files cover the variables and years needed.
+
+    File presence alone is not sufficient: the bounded solar calculation needs
+    a complete monthly rsds trailing window in addition to the daily baseline
+    and forecast fields.
+    """
+    if forecast_years is None:
+        forecast_years = range(
+            int(FORECAST_START[:4]), int(FORECAST_END[:4]) + 1)
+    if baseline_years is None:
+        baseline_years = range(BASELINE_START, BASELINE_END + 1)
+    return not cmip6_coverage_issues(
+        city,
+        cmip6_dir,
+        ssp,
+        models,
+        forecast_years=forecast_years,
+        baseline_years=baseline_years,
+        trailing_years=trailing_years,
+    )
 
 
 def _normalize_city_args(requested: list[str]) -> list[str]:
@@ -248,6 +299,18 @@ def _parse_isd_station_args(values: list[str] | None, cities: list[str]) -> dict
     from samy_wgen.pipeline.download_data import _parse_isd_station_args as _parse
 
     return _parse(values, cities)
+
+
+def _cmip6_download_range(args) -> tuple[int, int]:
+    baseline = _baseline_years(args)
+    forecast = _forecast_years(args)
+    start = min(min(baseline), min(forecast) - CMIP6_SOLAR_TRAILING_YEARS + 1)
+    end = max(max(baseline), max(forecast))
+    requested = getattr(args, "cmip6_years", None)
+    if requested:
+        start = min(start, int(requested[0]))
+        end = max(end, int(requested[1]))
+    return start, end
 
 
 def _ensure_pipeline_inputs(args, data_dir: Path, city: str, cmip6_dir: Path | None = None) -> tuple[Path, Path, Path]:
@@ -303,10 +366,11 @@ def _ensure_pipeline_inputs(args, data_dir: Path, city: str, cmip6_dir: Path | N
             nsrdb_csv = _find_nsrdb_csv(city, data_dir)
 
     cmip6_dir = cmip6_dir or (Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6")
-    if not _has_required_cmip6_data(city, cmip6_dir, args.ssp, args.cmip6_models):
-        missing_city_dir = cmip6_dir / city
+    coverage_issues = _cmip6_coverage_issues(city, cmip6_dir, args)
+    if coverage_issues:
         raise SystemExit(
-            f"ERROR: Required CMIP6 files not found under {missing_city_dir}. "
+            f"ERROR: CMIP6 inputs under {cmip6_dir / city} are incomplete:\n"
+            f"{format_cmip6_issues({city: coverage_issues})}\n"
             "Provide --cmip6-dir, pre-download the files, or allow auto-download."
         )
 
@@ -317,29 +381,48 @@ def _ensure_batch_cmip6_inputs(args, data_dir: Path, cities: list[str]) -> Path:
     from samy_wgen.pipeline.download_data import download_cmip6_for_cities
 
     cmip6_dir = Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6"
-    missing_cities = [
-        city for city in cities
-        if not _has_required_cmip6_data(city, cmip6_dir, args.ssp, args.cmip6_models)
-    ]
-    if not missing_cities:
+    issues_by_city = {}
+    for city in cities:
+        issues = _cmip6_coverage_issues(city, cmip6_dir, args)
+        if issues:
+            issues_by_city[city] = issues
+    if not issues_by_city:
         return cmip6_dir
 
+    details = format_cmip6_issues(issues_by_city)
     if args.skip_download or "cmip6" not in set(args.download_data):
-        missing_city_dir = cmip6_dir / missing_cities[0]
         raise SystemExit(
-            f"ERROR: Required CMIP6 files not found under {missing_city_dir}. "
+            "ERROR: CMIP6 inputs are incomplete:\n"
+            f"{details}\n"
             "Provide --cmip6-dir, pre-download the files, or allow auto-download."
         )
 
     _print_title("Download CMIP6")
-    print(f"[batch] Downloading shared CMIP6 inputs for: {', '.join(missing_cities)}")
+    missing_cities = list(issues_by_city)
+    print(f"[batch] CMIP6 inputs are incomplete for: {', '.join(missing_cities)}")
+    print(details)
+    download_start, download_end = _cmip6_download_range(args)
+    print(f"[batch] Requesting CMIP6 years {download_start}-{download_end} "
+          "(includes baseline and solar trailing window)")
     download_cmip6_for_cities(
         cities=missing_cities,
         models=args.cmip6_models,
         experiments=_cmip6_download_experiments(args.ssp, args.cmip6_experiments),
-        year_range=tuple(args.cmip6_years) if args.cmip6_years else None,
+        year_range=(download_start, download_end),
         output_dir=str(cmip6_dir),
     )
+
+    remaining = {}
+    for city in missing_cities:
+        issues = _cmip6_coverage_issues(city, cmip6_dir, args)
+        if issues:
+            remaining[city] = issues
+    if remaining:
+        raise SystemExit(
+            "ERROR: CMIP6 download did not fill the required coverage:\n"
+            f"{format_cmip6_issues(remaining)}\n"
+            "Check the download log and retry, or provide complete files via --cmip6-dir."
+        )
     return cmip6_dir
 
 

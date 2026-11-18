@@ -194,15 +194,16 @@ def _stage5_load_cmip6(out_dir: Path, overwrite: bool = False):
     return daily_df, monthly_df, meta
 
 
-def _stage6_compute_baseline(daily_df: pd.DataFrame, out_dir: Path,
-                               overwrite: bool = False) -> dict:
-    """Compute CORDEX DOY baseline climatology (1991-2010). Returns baseline dict."""
-    from samy_wgen.pipeline.run_climate_delta import compute_cordex_baseline
+def _stage6_compute_baseline(daily_df: pd.DataFrame, monthly_df: pd.DataFrame,
+                               out_dir: Path, overwrite: bool = False) -> dict:
+    """Compute baseline climatology (1991-2010) for mixed daily/monthly data."""
+    from samy_wgen.pipeline.run_climate_delta import compute_mixed_resolution_baseline
 
     csv_path = out_dir / "5_cordex_baseline_doy.csv"
 
-    print(f"  [stage 6] Computing CORDEX baseline ({BASELINE_START}–{BASELINE_END})")
-    baseline = compute_cordex_baseline(daily_df, BASELINE_START, BASELINE_END, mode="daily")
+    print(f"  [stage 6] Computing mixed baseline ({BASELINE_START}–{BASELINE_END})")
+    baseline = compute_mixed_resolution_baseline(
+        daily_df, monthly_df, BASELINE_START, BASELINE_END, var_resolution_config={})
 
     if not csv_path.exists() or overwrite:
         rows = []
@@ -221,10 +222,13 @@ def _stage6_compute_baseline(daily_df: pd.DataFrame, out_dir: Path,
 
 
 def _stage7_apply_delta(rsvar_excel: Path, daily_df: pd.DataFrame,
-                         baseline: dict, out_dir: Path,
+                         monthly_df: pd.DataFrame, baseline: dict, out_dir: Path,
                          overwrite: bool = False) -> pd.DataFrame:
     """Apply MPI-SSP245 climate delta to RS-VAR output. Returns hourly output DataFrame."""
-    from samy_wgen.pipeline.run_climate_delta import load_rsvar_output, apply_climate_delta
+    from samy_wgen.pipeline.run_climate_delta import (
+        apply_mixed_resolution_climate_delta,
+        load_rsvar_output,
+    )
 
     csv_path = out_dir / "6_miami_mpi_ssp245_hourly.csv"
     if csv_path.exists() and not overwrite:
@@ -236,18 +240,19 @@ def _stage7_apply_delta(rsvar_excel: Path, daily_df: pd.DataFrame,
     print(f"  [stage 7] RS-VAR: {len(rsvar_df):,} rows, cols={list(rsvar_df.columns)}")
 
     print(f"  [stage 7] Applying delta: {MIAMI_GCM} {MIAMI_SSP}")
-    output_df, delta_stats = apply_climate_delta(
+    output_df, delta_stats = apply_mixed_resolution_climate_delta(
         rsvar_df=rsvar_df,
-        cordex=daily_df,
+        daily_df=daily_df,
+        monthly_df=monthly_df,
         baseline=baseline,
         gcm=MIAMI_GCM,
         rcm=None,
         lat=MIAMI_LAT,
+        longitude=MIAMI_LON,
         baseline_start=BASELINE_START,
         baseline_end=BASELINE_END,
         isd_path=None,
         debug=False,
-        delta_mode="daily",
     )
 
     # Save delta statistics summary
@@ -384,12 +389,13 @@ def test_miami_cmip6_ssp245_full_pipeline(overwrite):
     assert meta["model_name"] == MIAMI_GCM, f"Expected {MIAMI_GCM}, got {meta['model_name']}"
 
     # stage 6 — compute baseline
-    baseline = _stage6_compute_baseline(daily_df, OUTPUT_DIR, overwrite=ow)
+    baseline = _stage6_compute_baseline(daily_df, monthly_df, OUTPUT_DIR, overwrite=ow)
     assert "tas_C" in baseline, "Baseline missing 'tas_C'"
     assert "ps_hPa" in baseline, "Baseline missing 'ps_hPa'"
 
     # stage 7 — apply delta
-    output_df = _stage7_apply_delta(rsvar_excel, daily_df, baseline, OUTPUT_DIR, overwrite=ow)
+    output_df = _stage7_apply_delta(
+        rsvar_excel, daily_df, monthly_df, baseline, OUTPUT_DIR, overwrite=ow)
     assert not output_df.empty
     assert output_df.index.year.max() >= 2095, "Forecast doesn't reach 2095"
     _check_physical_plausibility(output_df)

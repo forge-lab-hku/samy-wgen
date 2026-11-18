@@ -201,24 +201,49 @@ def monthly_rsds_ratios(
     baseline_start: int = 1991, baseline_end: int = 2010,
     trailing_years: int = 20,
 ) -> pd.Series:
-    """Return trailing monthly CORDEX rsds means / baseline monthly means."""
-    if "rsds" not in daily or daily.index.has_duplicates:
-        raise ValueError("CORDEX daily input requires unique rsds timestamps")
+    """Return trailing monthly rsds means / baseline monthly means.
+
+    Raises a ValueError that names the forecast month and the missing input
+    months when the requested trailing window is not covered.
+    """
+    if "rsds" not in daily.columns or daily.index.has_duplicates:
+        raise ValueError("Projection rsds input requires unique rsds timestamps")
     rsds = daily["rsds"].astype(float)
     if not np.isfinite(rsds.to_numpy()).all():
-        raise ValueError("CORDEX daily rsds must be finite")
+        raise ValueError("Projection rsds values must be finite")
     monthly = rsds.groupby([rsds.index.year, rsds.index.month]).mean()
     reference = rsds.loc[(rsds.index.year >= baseline_start)
                          & (rsds.index.year <= baseline_end)]
     baseline = reference.groupby(reference.index.month).mean()
     if set(baseline.index) != set(range(1, 13)) or (baseline <= 0).any():
-        raise ValueError("Incomplete or nonpositive CORDEX solar baseline")
+        missing_months = sorted(set(range(1, 13)) - set(baseline.index))
+        detail = f"; missing month(s): {missing_months}" if missing_months else ""
+        raise ValueError(
+            f"Incomplete or nonpositive rsds solar baseline for "
+            f"{baseline_start}-{baseline_end}{detail}")
     result = {}
     for period in pd.DatetimeIndex(forecast_index).to_period("M").unique():
         year, month = period.year, period.month
-        window = monthly.loc[(slice(year - trailing_years + 1, year), month)]
-        if len(window) != trailing_years or not np.isfinite(window).all():
-            raise ValueError(f"Incomplete trailing CORDEX rsds window for {period}")
+        window_years = list(range(year - trailing_years + 1, year + 1))
+        missing_years = [
+            window_year for window_year in window_years
+            if (window_year, month) not in monthly.index
+            or not np.isfinite(monthly.loc[(window_year, month)])
+        ]
+        if missing_years:
+            if len(missing_years) == 1:
+                missing_text = f"{missing_years[0]}-{month:02d}"
+            else:
+                missing_text = (
+                    f"{missing_years[0]}-{month:02d}..{missing_years[-1]}-{month:02d} "
+                    f"({len(missing_years)} month(s))")
+            raise ValueError(
+                f"Incomplete rsds trailing window for forecast month {period}: "
+                f"missing monthly input for {missing_text}; required "
+                f"{window_years[0]}-{month:02d}..{window_years[-1]}-{month:02d} "
+                f"({len(missing_years)} of {trailing_years} months missing)")
+        window = np.array([monthly.loc[(window_year, month)]
+                           for window_year in window_years], dtype=float)
         result[period] = float(window.mean() / baseline[month])
     return pd.Series(result, name="rsds_trailing_monthly_ratio")
 

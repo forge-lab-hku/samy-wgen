@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 
 def test_resolve_city_dir_uses_canonical_ascii_code(tmp_path):
@@ -171,3 +172,44 @@ def test_mixed_resolution_infers_monthly_wind_from_csv_columns():
     )
 
     assert baseline["sfcWind"]["resolution"] == "monthly"
+
+
+def test_mixed_delta_raises_when_future_pressure_is_missing():
+    from samy_wgen.pipeline.run_climate_delta import (
+        apply_mixed_resolution_climate_delta,
+        compute_mixed_resolution_baseline,
+    )
+
+    hours = pd.date_range("2050-01-01", "2050-12-31 23:00", freq="h")
+    rsvar = pd.DataFrame({
+        "temp": 20.0,
+        "pressure": 1000.0,
+        "wind_speed": 3.0,
+        "relative_humidity": 60.0,
+        "specific_humidity": 0.01,
+    }, index=hours)
+    historical_days = pd.date_range("1991-01-01", "2010-12-31", freq="D")
+    future_days = pd.date_range("2050-01-01", "2050-12-31", freq="D")
+    historical = pd.DataFrame({"tas": 293.15, "psl": 100000.0}, index=historical_days)
+    complete_future = pd.DataFrame({"tas": 295.15, "psl": 101000.0}, index=future_days)
+    missing_pressure = pd.DataFrame({"tas": 295.15}, index=future_days)
+    monthly = pd.DataFrame(
+        {"rsds": 200.0},
+        index=pd.date_range("1991-01-01", "2010-12-01", freq="MS"),
+    )
+
+    complete_daily = pd.concat([historical, complete_future])
+    complete_baseline = compute_mixed_resolution_baseline(
+        complete_daily, monthly, 1991, 2010, var_resolution_config={})
+    complete, _ = apply_mixed_resolution_climate_delta(
+        rsvar, complete_daily, monthly, complete_baseline,
+        gcm="test", rcm=None, lat=25.76, longitude=-80.19, verbose=False)
+    assert complete["pressure"].iloc[0] == pytest.approx(1010.0)
+
+    incomplete_daily = pd.concat([historical, missing_pressure])
+    incomplete_baseline = compute_mixed_resolution_baseline(
+        incomplete_daily, monthly, 1991, 2010, var_resolution_config={})
+    with pytest.raises(ValueError, match="pressure.*ps_hPa"):
+        apply_mixed_resolution_climate_delta(
+            rsvar, incomplete_daily, monthly, incomplete_baseline,
+            gcm="test", rcm=None, lat=25.76, longitude=-80.19, verbose=False)
