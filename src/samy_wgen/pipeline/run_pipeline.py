@@ -316,7 +316,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cmip6-dir", default=None,
                         help="CMIP6 root directory (overrides data-dir/CMIP6)")
     parser.add_argument("--gcm", default=None,
-                        help="Optional CMIP6 GCM selector (e.g. MPI-ESM1-2-LR, CNRM-ESM2-1, MRI-ESM2-0). Omit to retain automatic selection.")
+                        help="CMIP6 GCM used for coverage, download, and generation. Overrides --cmip6-models.")
     parser.add_argument("--rsvar-input", default=None,
                         help="Optional existing 3_rsvar.xlsx/CSV to reuse instead of running Stage 3; single-city mode only.")
     parser.add_argument("--out-dir", default=None,
@@ -361,7 +361,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--download-years", nargs=2, type=int, metavar=("START", "END"), default=None,
                         help="Year range for automatic ISD/NSRDB downloads")
     parser.add_argument("--cmip6-models", nargs="+", default=[DEFAULT_CMIP6_MODEL],
-                        help="CMIP6 models used for automatic downloads")
+                        help="Ordered CMIP6 model list. The deterministic run uses the first when --gcm is omitted.")
     parser.add_argument("--cmip6-experiments", nargs="+", default=None,
                         help="CMIP6 CDS experiments for automatic downloads (default: historical + selected SSP)")
     parser.add_argument("--cmip6-years", nargs=2, type=int, metavar=("START", "END"), default=None,
@@ -401,11 +401,20 @@ def _cmip6_coverage_issues(city: str, cmip6_dir: Path, args) -> list[str]:
         city,
         cmip6_dir,
         args.ssp,
-        args.cmip6_models,
+        _pipeline_cmip6_models(args),
         forecast_years=_forecast_years(args),
         baseline_years=_baseline_years(args),
         trailing_years=CMIP6_SOLAR_TRAILING_YEARS,
     )
+
+
+def _pipeline_cmip6_models(args) -> list[str]:
+    """Use the model selected for the deterministic calculation throughout."""
+    if getattr(args, "mode", "deterministic") == "ensemble":
+        return args.cmip6_models
+    from samy_wgen.pipeline.run_climate_delta import cmip6_model_stem
+
+    return [cmip6_model_stem(getattr(args, "gcm", None) or args.cmip6_models[0])]
 
 
 def _has_required_cmip6_data(
@@ -558,7 +567,7 @@ def _ensure_batch_cmip6_inputs(args, data_dir: Path, cities: list[str]) -> Path:
           "(includes baseline and solar trailing window)")
     download_cmip6_for_cities(
         cities=missing_cities,
-        models=args.cmip6_models,
+        models=_pipeline_cmip6_models(args),
         experiments=_cmip6_download_experiments(args.ssp, args.cmip6_experiments),
         year_range=(download_start, download_end),
         output_dir=str(cmip6_dir),
@@ -717,16 +726,18 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
         load_cmip6_or_cordex6,
         compute_mixed_resolution_baseline,
         apply_mixed_resolution_climate_delta,
+        cmip6_model_stem,
     )
 
     csv_path = out_dir / "4_delta_corrected.csv"
     energy_path = out_dir / "4_solar_monthly_energy.csv"
     cache_path = out_dir / ".4_delta.json"
     climate_dir = cmip6_dir / city.replace(" ", "_")
+    model_prefix = cmip6_model_stem(gcm) if gcm else "*"
     climate_paths = sorted({
         path for label in ("historical", ssp)
         for suffix in ("", "_monthly")
-        for path in climate_dir.glob(f"*_{label}{suffix}.csv")
+        for path in climate_dir.glob(f"{model_prefix}_{label}{suffix}.csv")
     })
     rsvar_paths = [rsvar_xlsx]
     if rsvar_xlsx.suffix == ".xlsx":
@@ -1035,7 +1046,7 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             baseline_end=args.baseline_end,
             out_dir=out_dir,
             overwrite=ow,
-            gcm=args.gcm,
+            gcm=_pipeline_cmip6_models(args)[0],
         )
         export_manifest = out_dir / ".exports.json"
         export_inputs = {

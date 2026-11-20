@@ -87,8 +87,8 @@ samy-run --city Miami Los_Angeles
 # Custom forecast window and scenario
 samy-run --city Miami --start 2025-01-01 --end 2060-12-31 --ssp ssp585
 
-# Customize automatic download inputs
-samy-run --city Miami --cmip6-models mpi_esm1_2_lr cnrm_esm2_1 --download-years 1998 2024
+# Select a GCM for validation, download, and generation
+samy-run --city Miami --gcm CNRM-ESM2-1 --download-years 1998 2024
 
 # Generate stochastic regime-path members
 samy-run --city Miami --mode ensemble --members 50

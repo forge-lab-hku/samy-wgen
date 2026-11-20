@@ -44,6 +44,15 @@ def _write_cmip6_inputs(
 
 
 class TestDownloadDefaults:
+    def test_preflight_selects_the_requested_gcm(self, tmp_path):
+        from samy_wgen.pipeline import run_pipeline
+
+        _write_cmip6_inputs(tmp_path / "Miami", model="cnrm_esm2_1")
+        for selection in (["--cmip6-models", "cnrm_esm2_1"], ["--gcm", "CNRM-ESM2-1"]):
+            args = run_pipeline._build_parser().parse_args(["--city", "Miami", *selection])
+            assert run_pipeline._pipeline_cmip6_models(args) == ["cnrm_esm2_1"]
+            assert run_pipeline._cmip6_coverage_issues("Miami", tmp_path, args) == []
+
     def test_daily_preflight_reports_a_missing_date(self, tmp_path):
         from samy_wgen.pipeline.input_checks import _daily_coverage_issues
 

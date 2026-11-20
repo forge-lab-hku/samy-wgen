@@ -46,7 +46,7 @@ Fit, forecast, and projection options
    * - ``--ssp CODE``
      - CMIP6 scenario; default ``ssp245``.
    * - ``--gcm MODEL``
-     - Explicit supported GCM selector; default is automatic selection.
+     - Model used for coverage validation, download, and climate delta. Overrides ``--cmip6-models``.
    * - ``--rsvar-input FILE``
      - Reuse an existing Stage 3 XLSX/CSV; single-city mode only.
    * - ``--epw-years Y1,Y2,...``
@@ -89,7 +89,7 @@ Input and automatic-download options
    * - ``--download-years START END``
      - Automatic ISD/NSRDB request range.
    * - ``--cmip6-models MODEL [MODEL ...]``
-     - Models for automatic download; default ``mpi_esm1_2_lr``.
+     - The first model is used for a deterministic run without ``--gcm``; default ``mpi_esm1_2_lr``. Use ``samy-download`` to prefetch several models.
    * - ``--cmip6-experiments EXP [EXP ...]``
      - CDS experiments; default historical plus selected SSP.
    * - ``--cmip6-years START END``

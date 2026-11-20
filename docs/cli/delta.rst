@@ -28,7 +28,7 @@ with an SSP, or select a CORDEX-CMIP5 variant root explicitly.
    * - ``--ssp CODE``
      - Required when using CMIP6, for example ``ssp245``.
    * - ``--gcm NAME`` / ``--rcm NAME``
-     - Optional model-name metadata overrides on the standalone delta command.
+     - ``--gcm`` selects the CMIP6 model and adds its identifier to the default output label. For CORDEX, these options label the input variant.
    * - ``--scenario-label LABEL``
      - Output label in directory and file names.
 

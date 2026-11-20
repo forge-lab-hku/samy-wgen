@@ -73,6 +73,15 @@ MODEL_NAME_TO_STEM = {
     'MRI-ESM2-0': 'mri_esm2_0',
 }
 
+
+def cmip6_model_stem(label: str) -> str:
+    """Resolve a display name, file stem, or short CMIP6 alias."""
+    key = label.lower().replace("-", "_")
+    for name, stem in MODEL_NAME_TO_STEM.items():
+        if key in {stem, name.split("-")[0].lower()}:
+            return stem
+    raise ValueError(f"Unsupported CMIP6 model '{label}'. Choose from {', '.join(MODEL_NAME_TO_STEM)}.")
+
 # Mapping from forecast vars to CORDEX_CMIP5 vars
 VAR_TO_CORDEX = {
     'temp': 'tas_C',
@@ -120,12 +129,14 @@ def _resolve_projection_args(args) -> dict[str, Any]:
         if not args.ssp:
             raise SystemExit("ERROR: --ssp is required when --projection-type=cmip6.")
         projection_root = Path(args.projection_root) if args.projection_root else DEFAULT_CMIP6_DIR
+        gcm = cmip6_model_stem(args.gcm) if args.gcm else None
+        default_label = f"CMIP6_{args.ssp}" + (f"_{gcm}" if gcm else "")
         return {
             "type": "cmip6",
-            "label": args.scenario_label or f"CMIP6_{args.ssp}",
+            "label": args.scenario_label or default_label,
             "root": projection_root,
             "ssp": args.ssp,
-            "gcm": args.gcm,
+            "gcm": gcm,
             "rcm": args.rcm,
         }
 
@@ -649,17 +660,7 @@ def load_cmip6_projection(
     with _stdout_context(verbose):
         scenario_id_upper = (scenario_id or "").upper()
         if gcm:
-            requested = gcm.upper().replace("-", "_")
-            aliases = {
-                "MPI": "MPI", "MPI_ESM1_2_LR": "MPI",
-                "CNRM": "CNRM", "CNRM_ESM2_1": "CNRM",
-                "MRI": "MRI", "MRI_ESM2_0": "MRI",
-            }
-            if requested not in aliases:
-                raise ValueError(
-                    f"Unsupported explicit GCM '{gcm}'. Expected MPI-ESM1-2-LR, CNRM-ESM2-1, or MRI-ESM2-0."
-                )
-            model_order = [aliases[requested]]
+            model_order = [cmip6_model_stem(gcm).split("_")[0].upper()]
             print(f"  [Model Selection] Explicit GCM: {model_order[0]}")
         elif "MRI" in scenario_id_upper:
             model_order = ["MRI", "MPI", "CNRM"]
@@ -1619,7 +1620,7 @@ def main():
     )
     parser.add_argument(
         "--gcm", type=str, default=None,
-        help="Optional metadata override for GCM name."
+        help="Select a CMIP6 model, or set the GCM label for a CORDEX input."
     )
     parser.add_argument(
         "--rcm", type=str, default=None,
