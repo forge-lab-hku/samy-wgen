@@ -27,6 +27,8 @@ Required and output options
      - Input root; default ``data``.
    * - ``--mode deterministic|ensemble``
      - Output branch; default ``deterministic``.
+   * - ``--prepare-only``
+     - Stop after writing the prepared hourly ISD and solar CSVs. This path requires no CMIP6 data or station elevation.
    * - ``--overwrite``
      - Recompute cached stages and outputs.
 
@@ -48,7 +50,7 @@ Fit, forecast, and projection options
    * - ``--gcm MODEL``
      - Model used for coverage validation, download, and climate delta. Overrides ``--cmip6-models``.
    * - ``--rsvar-input FILE``
-     - Reuse an existing Stage 3 XLSX/CSV; single-city mode only.
+     - Reuse an existing Stage 3 XLSX/CSV for one city. Specify forecast bounds that match the file.
    * - ``--epw-years Y1,Y2,...``
      - Deterministic EPW years; default ``2030,2050,2080``.
    * - ``--elevation METRES``
@@ -95,5 +97,4 @@ Input and automatic-download options
    * - ``--cmip6-years START END``
      - CMIP6 request year range.
 
-``samy-run`` does not automatically download ERA5-Land or CORDEX-CMIP5. Use
-:doc:`download` for those sources and :doc:`delta` for a CORDEX projection.
+For CORDEX-CMIP5 projections, see :doc:`download` and :doc:`delta`.

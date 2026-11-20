@@ -26,7 +26,8 @@ To fit from an already prepared CSV without the one-click pipeline:
    samy-rsvar --isd output/Miami/2_isd_solar_lst.csv --city Miami \
      --output output/RSVAR/rsvar_output_Miami.xlsx
 
-The direct command uses its own forecast defaults. From Python,
+Use ``--baseline-start``, ``--baseline-end``, ``--start`` and ``--end``
+to set the periods for the direct command. From Python,
 :py:func:`~samy_wgen.pipeline.run_rsvar.run_and_save_rsvar` performs the fit
 and writes the workbook. ``samy-delta`` can later reuse that workbook.
 

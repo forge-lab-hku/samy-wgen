@@ -366,6 +366,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", default="deterministic",
                         choices=["deterministic", "ensemble"],
                         help="Output mode")
+    parser.add_argument("--prepare-only", action="store_true",
+                        help="Prepare hourly LST weather and solar CSVs without fitting or CMIP6")
     parser.add_argument("--epw-years", default=DEFAULT_EPW_YEARS,
                         help="Comma-separated years for EPW output (deterministic mode)")
 
@@ -569,7 +571,7 @@ def _ensure_pipeline_inputs(args, data_dir: Path, city: str, cmip6_dir: Path | N
             nsrdb_csv = Path(result["success"][0]["path"])
 
     cmip6_dir = cmip6_dir or (Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6")
-    coverage_issues = _cmip6_coverage_issues(city, cmip6_dir, args)
+    coverage_issues = [] if getattr(args, "prepare_only", False) else _cmip6_coverage_issues(city, cmip6_dir, args)
     if coverage_issues:
         raise SystemExit(
             f"ERROR: CMIP6 inputs under {cmip6_dir / city} are incomplete:\n"
@@ -748,7 +750,8 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
                            city: str, ssp: str, lat: float, longitude: float,
                            baseline_start: int, baseline_end: int,
                            out_dir: Path, overwrite: bool,
-                           gcm: str | None = None) -> pd.DataFrame:
+                           gcm: str | None = None, *,
+                           external_forecast: tuple[str, str] | None = None) -> pd.DataFrame:
     """Apply per-variable daily/monthly CMIP6 deltas → 4_delta_corrected.csv."""
     from samy_wgen.pipeline.run_climate_delta import (
         load_rsvar_output,
@@ -756,6 +759,7 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
         compute_mixed_resolution_baseline,
         apply_mixed_resolution_climate_delta,
         cmip6_model_stem,
+        validate_rsvar_metadata,
     )
 
     csv_path = out_dir / "4_delta_corrected.csv"
@@ -778,6 +782,7 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
         "climate_files": [_file_signature(path) for path in climate_paths],
         "city": city, "lat": lat, "longitude": longitude, "ssp": ssp, "gcm": gcm,
         "baseline": [baseline_start, baseline_end],
+        "external_forecast": list(external_forecast) if external_forecast else None,
     }
     if not overwrite and _cache_matches(cache_path, cache_inputs, csv_path, energy_path):
         _print_title("Stage 4 Apply Climate Delta")
@@ -798,7 +803,15 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
     baseline = compute_mixed_resolution_baseline(
         daily_df, monthly_df, baseline_start, baseline_end, var_resolution_config={}
     )
-    rsvar_df, _ = load_rsvar_output(rsvar_xlsx)
+    rsvar_df, rsvar_metadata = load_rsvar_output(rsvar_xlsx)
+    if external_forecast is not None:
+        validate_rsvar_metadata(rsvar_metadata, city, baseline_start, baseline_end, lat, longitude)
+        expected = pd.date_range(*external_forecast, freq="h")
+        if expected.empty or not rsvar_df.index.equals(expected):
+            raise ValueError(
+                f"External RS-VAR time axis does not match --start/--end "
+                f"({external_forecast[0]} through {external_forecast[1]})."
+            )
 
     output_df, _stats = apply_mixed_resolution_climate_delta(
         rsvar_df,
@@ -1003,8 +1016,9 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
     isd_station_dir, nsrdb_csv, cmip6_dir = _ensure_pipeline_inputs(args, data_dir, city, cmip6_dir)
 
     meta = _load_city_meta(city)
-    meta["elevation_m"] = _station_elevation(
-        isd_station_dir, data_dir / "ISD" / "isd-history.csv", args.elevation)
+    if not args.prepare_only:
+        meta["elevation_m"] = _station_elevation(
+            isd_station_dir, data_dir / "ISD" / "isd-history.csv", args.elevation)
 
     epw_years = [int(y.strip()) for y in args.epw_years.split(",")]
     ow = args.overwrite
@@ -1043,13 +1057,22 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
         nsrdb_csv = _resolve_solar_for_baseline(args, city, data_dir, out_dir, nsrdb_csv, meta)
     merged_csv = _stage2_merge_nsrdb(isd_lst, nsrdb_csv, out_dir, overwrite=ow, isd_csv=isd_lst_cache)
 
+    if args.prepare_only:
+        print(f"\nPrepared hourly input: {merged_csv}")
+        return
+
     if args.mode == "deterministic":
         if args.rsvar_input:
+            from samy_wgen.pipeline.input_checks import report_training_coverage_from_csv
+
             if len(args.city) != 1:
                 raise SystemExit("ERROR: --rsvar-input is supported only in single-city mode.")
             xlsx = Path(args.rsvar_input)
             if not xlsx.exists():
                 raise SystemExit(f"ERROR: --rsvar-input not found: {xlsx}")
+            report_training_coverage_from_csv(
+                merged_csv, context=f"{city} historical export inputs", baseline_years=_baseline_years(args),
+            )
             print(f"[stage 3] Reusing explicit RS-VAR input: {xlsx}")
         else:
             xlsx = _stage3_rsvar(
@@ -1076,6 +1099,7 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             out_dir=out_dir,
             overwrite=ow,
             gcm=_pipeline_cmip6_models(args)[0],
+            external_forecast=(args.start, args.end) if args.rsvar_input else None,
         )
         export_manifest = out_dir / ".exports.json"
         export_inputs = {
@@ -1154,7 +1178,15 @@ def main():
     args.city = _normalize_city_args(args.city)
     data_dir = Path(args.data_dir)
 
-    cmip6_dir = _ensure_batch_cmip6_inputs(args, data_dir, args.city)
+    if args.prepare_only:
+        if args.mode != "deterministic" or args.rsvar_input:
+            parser.error("--prepare-only cannot be combined with --mode ensemble or --rsvar-input")
+        cmip6_dir = Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6"
+    else:
+        try:
+            cmip6_dir = _ensure_batch_cmip6_inputs(args, data_dir, args.city)
+        except ValueError as exc:
+            parser.error(str(exc))
     for city in args.city:
         out_dir = _city_out_dir(args, city)
         out_dir.mkdir(parents=True, exist_ok=True)

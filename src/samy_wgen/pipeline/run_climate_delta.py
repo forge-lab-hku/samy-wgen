@@ -469,6 +469,27 @@ def load_rsvar_output(rsvar_path: Path, verbose: bool = True):
     return rsvar_df, metadata
 
 
+def validate_rsvar_metadata(metadata: dict, city: str, baseline_start: int, baseline_end: int,
+                            latitude: float, longitude: float) -> None:
+    """Reject contradictory provenance and report fields absent in legacy inputs."""
+    expected = {
+        "city": city, "baseline_start": baseline_start, "baseline_end": baseline_end,
+        "lat": latitude, "longitude": longitude,
+    }
+    missing = []
+    for name, target in expected.items():
+        value = metadata.get(name)
+        if value is None or pd.isna(value):
+            missing.append(name)
+        elif name == "city":
+            if str(value).casefold() != city.casefold():
+                raise ValueError(f"RS-VAR metadata {name}={value!r} does not match {target!r}")
+        elif not np.isclose(float(value), target, rtol=0, atol=1e-5):
+            raise ValueError(f"RS-VAR metadata {name}={value!r} does not match {target!r}")
+    if missing:
+        logger.warning("RS-VAR input has no metadata for %s. Verify its provenance.", ", ".join(missing))
+
+
 def load_and_merge_cordex_city_variant(variant_root: Path, city: str, verbose: bool = True) -> tuple[pd.DataFrame, dict]:
     """Load and concat historical+rcp85 for a given city under a given variant_root.
 
@@ -1567,6 +1588,8 @@ def main():
         "--rsvar-dir", type=str, default=str(DEFAULT_RSVAR_DIR),
         help="Directory containing RS-VAR outputs (default: output/RSVAR)"
     )
+    parser.add_argument("--rsvar-input", type=Path, help="Explicit RS-VAR XLSX or CSV for one city")
+    parser.add_argument("--isd", type=Path, help="Prepared hourly observation CSV for one city's diagnostics")
 
     parser.add_argument(
         "--out-dir", type=str, default=None,
@@ -1637,9 +1660,14 @@ def main():
     longitudes_by_name = dict(zip(cities_df["city_ascii"], cities_df["longitude"].astype(float)))
 
     requested_cities = _normalize_city_args(args.city, cities_df, cities_config_path)
+    if (args.rsvar_input or args.isd) and len(requested_cities) != 1:
+        parser.error("--rsvar-input and --isd require exactly one city")
+    for path in (args.rsvar_input, args.isd):
+        if path is not None and not path.is_file():
+            parser.error(f"Input file does not exist: {path}")
 
     rsvar_dir = Path(args.rsvar_dir)
-    if not rsvar_dir.exists():
+    if not args.rsvar_input and not rsvar_dir.exists():
         raise SystemExit(f"ERROR: RS-VAR directory not found: {rsvar_dir}")
 
     if args.out_dir:
@@ -1676,14 +1704,9 @@ def main():
         rsvar_xlsx = rsvar_dir / f"rsvar_output_{city_slug}.xlsx"
         rsvar_csv = rsvar_dir / f"rsvar_output_{city_slug}.csv"
 
-        # Find ISD file for baseline temperature
-        isd_path = isd_dir / f"{city_slug}_with_solar.csv"
-        if not isd_path.exists():
-            print(f"[WARNING] ISD file not found: {isd_path}")
-            isd_path = None
-        else:
-            print(f"[DEBUG] Found ISD file: {isd_path}")
-        if rsvar_xlsx.exists():
+        if args.rsvar_input:
+            rsvar_path = args.rsvar_input
+        elif rsvar_xlsx.exists():
             rsvar_path = rsvar_xlsx
         elif rsvar_csv.exists():
             rsvar_path = rsvar_csv
@@ -1698,10 +1721,26 @@ def main():
 
         try:
             rsvar_df, rsvar_metadata = load_rsvar_output(rsvar_path)
+            validate_rsvar_metadata(rsvar_metadata, city, args.baseline_start,
+                                    args.baseline_end, lat, longitude)
+            time = rsvar_df.index
+            if time.empty or time.hasnans or not time.equals(pd.date_range(time[0], time[-1], freq="h")):
+                raise ValueError("RS-VAR input needs a complete, ordered hourly time axis")
         except Exception as e:
             print(f"  [FAIL] Could not load RS-VAR for {city}: {e}")
             n_fail += 1
             continue
+
+        isd_path = args.isd
+        if isd_path is None:
+            candidates = [rsvar_path.parent / "2_isd_solar_lst.csv",
+                          Path("output") / city_slug / "2_isd_solar_lst.csv",
+                          isd_dir / f"{city_slug}_with_solar.csv"]
+            if isinstance(rsvar_metadata.get("isd_path"), str):
+                candidates.insert(0, Path(rsvar_metadata["isd_path"]))
+            isd_path = next((path for path in candidates if path.is_file()), None)
+        if isd_path is None:
+            print(f"[WARNING] No prepared ISD input found for {city}'s baseline diagnostics. Use --isd.")
 
         projection_label = projection["label"]
         gcm = projection["gcm"]

@@ -46,6 +46,9 @@ short gaps of at most three rows in each direction. It drops rows lacking
 temperature or the first available solar column. The result is
 ``2_isd_solar_lst.csv`` with a ``DATE`` index column.
 
+Use ``samy-run --city Miami --prepare-only`` to produce that file for
+``samy-rsvar --isd`` as a separate step.
+
 When NSRDB misses months in the fit baseline, ``samy-run`` can extend it
 with hourly ERA5-Land solar calibrated against overlapping NSRDB observations.
 The automatic extension retains complete hourly NSRDB triplets and writes

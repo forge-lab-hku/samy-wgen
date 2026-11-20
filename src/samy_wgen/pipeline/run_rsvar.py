@@ -333,6 +333,7 @@ def run_and_save_rsvar(
         rsvar_df = rsvar_df.reset_index(drop=True)
 
         metadata = pd.DataFrame([
+            ['city', city],
             ['isd_path', str(isd_path)],
             ['lat', lat],
             ['longitude', longitude],
@@ -395,12 +396,14 @@ def main():
 
     parser.add_argument(
         "--isd", type=str, default=None,
-        help=(
-            "Path to ISD + solar merged CSV. "
-            "If omitted, batch mode will use data/ISD_hguo/merged/<city>_with_solar.csv "
-            "for cities listed in data/cities_config.csv"
-        )
+        help="Path to an hourly ISD-plus-solar CSV for one city."
     )
+    parser.add_argument("--isd-dir", type=Path, default=None,
+                        help="Batch input root containing <City>_with_solar.csv or <City>/2_isd_solar_lst.csv")
+    parser.add_argument("--baseline-start", type=int, default=BASELINE_START, help="Baseline start year")
+    parser.add_argument("--baseline-end", type=int, default=BASELINE_END, help="Baseline end year")
+    parser.add_argument("--start", default=FORECAST_START, help="Forecast start")
+    parser.add_argument("--end", default=FORECAST_END, help="Forecast end")
     parser.add_argument(
         "--config", type=str, default=str(_get_bundled_cities_config()),
         help="Path to cities_config.csv (must include city_id and city_ascii)"
@@ -420,6 +423,14 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.baseline_start > args.baseline_end or pd.Timestamp(args.start) > pd.Timestamp(args.end):
+        parser.error("Baseline and forecast start must precede or equal their respective ends.")
+    if args.isd and args.isd_dir:
+        parser.error("--isd and --isd-dir are mutually exclusive")
+    periods = {
+        "baseline_start": args.baseline_start, "baseline_end": args.baseline_end,
+        "forecast_start": args.start, "forecast_end": args.end,
+    }
 
     cities_config_path = Path(args.config)
     cities_df = _load_cities_config(cities_config_path)
@@ -438,22 +449,14 @@ def main():
             print("ERROR: In --isd single-file mode, you must provide exactly one --city to select latitude")
             sys.exit(1)
 
-        city = args.city[0]
-        if city not in cities_by_name:
-            print(f"ERROR: City '{city}' not found in {cities_config_path}")
-            sys.exit(1)
+        city, = _normalize_city_args(args.city, list(cities_by_name))
 
         lat = cities_by_name[city]
         output_path = Path(args.output) if args.output else (DEFAULT_OUTPUT_DIR / f"rsvar_output_{city}.xlsx")
 
-        run_and_save_rsvar(isd_path, lat, output_path, city)
+        run_and_save_rsvar(isd_path, lat, output_path, city, **periods)
 
     else:
-        isd_dir = DEFAULT_ISD_MERGED_DIR
-        if not isd_dir.exists():
-            print(f"ERROR: ISD merged directory not found: {isd_dir}")
-            sys.exit(1)
-
         requested_cities = _normalize_city_args(args.city, list(cities_by_name.keys()))
 
         # In batch mode, --output must be a directory if provided
@@ -468,14 +471,17 @@ def main():
 
             lat = cities_by_name[city]
             # Input file is derived from city name
-            city_isd_path = isd_dir / f"{city.replace(' ', '_')}_with_solar.csv"
-            if not city_isd_path.exists():
-                print(f"ERROR: ISD file not found for city '{city}': {city_isd_path}")
-                sys.exit(1)
+            candidates = (
+                [(args.isd_dir or DEFAULT_ISD_MERGED_DIR) / f"{city}_with_solar.csv",
+                 (args.isd_dir or Path("output")) / city / "2_isd_solar_lst.csv"]
+            )
+            city_isd_path = next((path for path in candidates if path.is_file()), None)
+            if city_isd_path is None:
+                raise SystemExit(f"ERROR: no prepared input for {city}. Tried: {candidates}")
 
             city_output_path = output_dir / f"rsvar_output_{city.replace(' ', '_')}.xlsx"
 
-            rsvar_output, _pipeline = run_and_save_rsvar(city_isd_path, lat, city_output_path, city)
+            rsvar_output, _pipeline = run_and_save_rsvar(city_isd_path, lat, city_output_path, city, **periods)
             all_rsvar_outputs[city] = rsvar_output
 
     print("\n" + "="*80)

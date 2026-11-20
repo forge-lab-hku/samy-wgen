@@ -18,6 +18,12 @@ apply CMIP6 or CORDEX changes.
      - Meaning and default
    * - ``--isd FILE``
      - Prepared CSV; selects single-file mode. Without it, the command uses its batch input layout.
+   * - ``--isd-dir DIR``
+     - Batch root containing ``<City>_with_solar.csv`` or ``<City>/2_isd_solar_lst.csv``.
+   * - ``--baseline-start YEAR`` / ``--baseline-end YEAR``
+     - Observation baseline bounds; defaults 1991 and 2010.
+   * - ``--start DATE`` / ``--end DATE``
+     - Forecast bounds; defaults ``2025-01-01`` and ``2100-12-31 23:00``.
    * - ``--city CITY [CITY ...]``
      - ASCII city code(s); exactly one is required with ``--isd``. In batch mode the default is all configured cities.
    * - ``--output PATH``
@@ -26,6 +32,6 @@ apply CMIP6 or CORDEX changes.
      - City table; default is the bundled ``cities_config.csv``.
 
 The output includes ``RSVAR_Output``, ``Metadata``, and ``Seasonal_Profile``
-sheets, an adjacent CSV, and a solar calibration CSV. The standalone command
-uses the module's fit and forecast defaults; use ``samy-run`` to set periods
-on the one-click path.
+sheets, an adjacent CSV, and a solar calibration CSV. Without ``--isd-dir``,
+batch mode checks ``data/ISD_complete_solar/<City>_with_solar.csv`` and
+``output/<City>/2_isd_solar_lst.csv``.

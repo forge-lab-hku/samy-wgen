@@ -17,6 +17,10 @@ with an SSP, or select a CORDEX-CMIP5 variant root explicitly.
      - Meaning and default
    * - ``--rsvar-dir DIR``
      - Directory containing saved RS-VAR outputs; default ``output/RSVAR``.
+   * - ``--rsvar-input FILE``
+     - Explicit RS-VAR XLSX or CSV for a single city.
+   * - ``--isd FILE``
+     - Prepared observations for baseline-temperature diagnostics for a single city.
    * - ``--city CITY [CITY ...]``
      - ASCII city code(s); default all configured cities.
    * - ``--config CSV``
