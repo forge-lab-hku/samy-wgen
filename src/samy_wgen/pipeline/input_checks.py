@@ -298,6 +298,8 @@ def report_training_coverage(
     *,
     key: str,
     context: str,
+    baseline_years: Iterable[int] | None = None,
+    required_columns: Iterable[str] = (),
 ) -> None:
     """Report per-year hourly coverage of the ISD+NSRDB training series.
 
@@ -309,24 +311,40 @@ def report_training_coverage(
     Edge years are exempt: a station record legitimately starts or stops
     mid-year.
     """
-    if key not in frame.columns:
+    columns = [key, *required_columns]
+    missing = set(columns) - set(frame.columns)
+    if missing:
         raise SystemExit(
-            f"ERROR: {context}: no '{key}' column to check coverage.")
-    present = frame[key].notna()
-    per_year: dict[int, float] = {}
-    for year, sub in present.groupby(frame.index.year):
-        days = pd.Timestamp(year, 12, 31).dayofyear
-        per_year[year] = float(sub.sum()) / (days * 24)
-
-    if not per_year:
+            f"ERROR: {context}: missing coverage columns: {', '.join(sorted(missing))}.")
+    present = np.isfinite(frame[columns].apply(pd.to_numeric, errors="coerce")).all(axis=1)
+    hours = present.groupby(frame.index.floor("h")).any()
+    if not hours.any():
         raise SystemExit(f"ERROR: {context}: empty series, no coverage to report.")
-
+    first, last = hours.index[0].year, hours.index[-1].year
+    counts = hours.groupby(hours.index.year).sum()
+    per_year = {
+        year: counts.get(year, 0) / (pd.Timestamp(year, 12, 31).dayofyear * 24)
+        for year in range(first, last + 1)
+    }
     overall = sum(per_year.values()) / len(per_year)
     print(f"  [coverage] {context}: overall {overall:.0%} across "
           f"{min(per_year)}-{max(per_year)} ({len(per_year)} year(s))")
 
-    if len(per_year) <= 2:
-        return  # nothing to gate: edge years are naturally partial
+    if baseline_years is not None:
+        requested = sorted(set(baseline_years))
+        if not any(per_year.get(year, 0) > 0 for year in requested):
+            raise SystemExit(f"ERROR: {context}: no observations in baseline {_format_int_ranges(requested)}.")
+        thin_baseline = [year for year in requested
+                         if per_year.get(year, 0) < TRAINING_COVERAGE_WARN]
+        if thin_baseline:
+            print(f"  [warning] {context}: baseline years below {TRAINING_COVERAGE_WARN:.0%} "
+                  f"coverage: {_format_int_ranges(thin_baseline)}")
+        available = hours.index[hours.to_numpy()].to_period("M").unique()
+        requested_months = {(year, month) for year in requested for month in range(1, 13)}
+        missing_months = requested_months - set(zip(available.year, available.month))
+        if missing_months:
+            print(f"  [warning] {context}: no usable observations for baseline months "
+                  f"{_format_missing_months(missing_months)}")
 
     edge_years = {min(per_year), max(per_year)}
     interior = {y: r for y, r in per_year.items() if y not in edge_years}
@@ -353,7 +371,12 @@ def report_training_coverage_from_csv(
     context: str,
     datetime_col: str = "DATE",
     key: str = "temp",
+    baseline_years: Iterable[int] | None = None,
+    required_columns: Iterable[str] = (),
 ) -> None:
     """Load a merged ISD+NSRDB CSV and run :func:`report_training_coverage`."""
     frame = pd.read_csv(csv_path, parse_dates=[datetime_col]).set_index(datetime_col)
-    report_training_coverage(frame, key=key, context=context)
+    report_training_coverage(
+        frame, key=key, context=context, baseline_years=baseline_years,
+        required_columns=required_columns,
+    )

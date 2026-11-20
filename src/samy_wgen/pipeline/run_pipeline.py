@@ -164,35 +164,63 @@ def _station_elevation(station_dir: Path, history_path: Path, override: float | 
     return elevation
 
 
-def _find_isd_dir(city: str, base: Path) -> Path:
-    """Return the first station sub-directory under base/ISD/<city>/."""
+def _find_isd_dir(city: str, base: Path, station_id: str | None = None) -> Path:
+    """Find a station directory with usable ISD archives."""
+    from samy_wgen.pipeline.download_data import _usable_isd_archive
+
     city_dir = base / "ISD" / city
     if not city_dir.exists():
         raise SystemExit(f"ERROR: ISD directory not found: {city_dir}")
-    stations = [d for d in city_dir.iterdir() if d.is_dir()]
+    stations = [
+        path for path in sorted(city_dir.iterdir())
+        if path.is_dir() and (station_id is None or path.name.split("_", 1)[0] == station_id)
+        and any(_usable_isd_archive(archive) for archive in path.glob("*.gz"))
+    ]
     if not stations:
-        raise SystemExit(f"ERROR: No station sub-directories found in {city_dir}")
+        raise SystemExit(f"ERROR: No usable ISD archives for {station_id or city} under {city_dir}")
     if len(stations) > 1:
         print(f"  [info] Multiple ISD stations found, using: {stations[0].name}")
     return stations[0]
 
 
-def _find_nsrdb_csv(city: str, base: Path) -> Path:
-    """Auto-detect NSRDB CSV under base/NSRDB/ matching nsrdb_<city_lower>*.csv."""
+def _find_nsrdb_csv(city: str, base: Path, required_years: Iterable[int] = ()) -> Path:
+    """Select a local solar CSV by usable coverage."""
     nsrdb_dir = base / "NSRDB"
     if not nsrdb_dir.exists():
         raise SystemExit(f"ERROR: NSRDB directory not found: {nsrdb_dir}")
     city_slug = city.lower().replace(" ", "_")
     pattern = f"nsrdb_{city_slug}*.csv"
-    matches = list(nsrdb_dir.glob(pattern))
-    if not matches:
+    required = set(required_years)
+    candidates = []
+    for path in sorted(nsrdb_dir.glob(pattern)):
+        try:
+            solar = _load_solar_hourly(path).dropna()
+        except (OSError, KeyError, ValueError):
+            continue
+        # NSRDB downloads omit Feb 29 by request, even in leap years.
+        hours = solar.index[~((solar.index.month == 2) & (solar.index.day == 29))]
+        counts = hours.to_series().groupby(hours.year).size()
+        complete = set(counts.index[counts == 8760])
+        if complete and required.issubset(complete):
+            candidates.append((len(complete), path))
+    if not candidates:
         raise SystemExit(
-            f"ERROR: No NSRDB CSV found for '{city}' in {nsrdb_dir}.\n"
-            f"  Expected pattern: {pattern}"
+            f"ERROR: No NSRDB CSV with usable hourly solar coverage for '{city}' in {nsrdb_dir}.\n"
+            f"  Expected pattern: {pattern}, required years: {sorted(required)}"
         )
-    if len(matches) > 1:
-        print(f"  [info] Multiple NSRDB files found, using: {matches[0].name}")
-    return matches[0]
+    return max(candidates)[1]
+
+
+def _load_solar_hourly(path: Path) -> pd.DataFrame:
+    columns = ["GHI", "DNI", "DHI"]
+    source = pd.read_csv(path, usecols=lambda col: col in {*columns, "DATE", "Year", "Month", "Day", "Hour"})
+    if "DATE" in source:
+        times = pd.to_datetime(source["DATE"])
+    else:
+        times = pd.to_datetime(source[["Year", "Month", "Day", "Hour"]].rename(columns=str.lower))
+    solar = source[columns].apply(pd.to_numeric, errors="coerce")
+    solar.index = pd.DatetimeIndex(times, name="DATE")
+    return solar.where(solar.abs().lt(float("inf"))).clip(lower=0).resample("h").mean()
 
 
 def _solar_months(path: Path) -> pd.PeriodIndex:
@@ -475,23 +503,25 @@ def _cmip6_download_range(args) -> tuple[int, int]:
 def _ensure_pipeline_inputs(args, data_dir: Path, city: str, cmip6_dir: Path | None = None) -> tuple[Path, Path, Path]:
     from samy_wgen.pipeline.download_data import (
         _city_meta,
+        _resolve_nsrdb_source,
         download_isd,
         download_nsrdb,
         select_best_isd_station,
     )
 
+    station_map = _parse_isd_station_args(args.isd_station, args.city)
+    station_id = (station_map or {}).get(city)
     if args.isd_dir:
         isd_station_dir = Path(args.isd_dir)
     else:
         try:
-            isd_station_dir = _find_isd_dir(city, data_dir)
+            isd_station_dir = _find_isd_dir(city, data_dir, station_id)
         except SystemExit:
             if args.skip_download or "isd" not in set(args.download_data):
                 raise
             _print_title("Download ISD")
             yr_start, yr_end = args.download_years if args.download_years else DEFAULT_ISD_YEAR_RANGE
-            station_map = _parse_isd_station_args(args.isd_station, args.city)
-            station_id = (station_map or {}).get(city) or select_best_isd_station(
+            station_id = station_id or select_best_isd_station(
                 city=city,
                 radius_km=args.isd_radius,
                 cache_dir=str(data_dir / "ISD"),
@@ -502,29 +532,41 @@ def _ensure_pipeline_inputs(args, data_dir: Path, city: str, cmip6_dir: Path | N
                 years=list(range(yr_start, yr_end + 1)),
                 output_dir=str(data_dir / "ISD"),
             )
-            isd_station_dir = _find_isd_dir(city, data_dir)
+            isd_station_dir = _find_isd_dir(city, data_dir, station_id)
 
     if args.nsrdb:
         nsrdb_csv = Path(args.nsrdb)
     elif (calibrated := _cached_calibrated_solar(args, city, data_dir)) is not None:
         nsrdb_csv = calibrated
     else:
+        yr_start, yr_end = args.download_years or DEFAULT_NSRDB_YEAR_RANGE
+        requested_years = list(range(yr_start, yr_end + 1))
+        baseline = set(_baseline_years(args))
         try:
-            nsrdb_csv = _find_nsrdb_csv(city, data_dir)
+            static_sources = _resolve_nsrdb_source(city)
+        except ValueError:
+            static_sources = []
+        required = {
+            year for _, first, last in static_sources
+            for year in requested_years if year in baseline and first <= year <= last
+        }
+        try:
+            nsrdb_csv = _find_nsrdb_csv(city, data_dir, required)
         except SystemExit:
             if args.skip_download or "nsrdb" not in set(args.download_data):
                 raise
             _print_title("Download NSRDB")
             meta = _city_meta(city)
-            yr_start, yr_end = args.download_years if args.download_years else DEFAULT_NSRDB_YEAR_RANGE
-            download_nsrdb(
+            result = download_nsrdb(
                 city=city,
                 lat=meta["lat"],
                 lon=meta["lon"],
-                years=list(range(yr_start, yr_end + 1)),
+                years=requested_years,
                 output_dir=str(data_dir / "NSRDB"),
             )
-            nsrdb_csv = _find_nsrdb_csv(city, data_dir)
+            if not result["success"]:
+                raise SystemExit(f"ERROR: NSRDB download did not produce complete data for {city}: {result}")
+            nsrdb_csv = Path(result["success"][0]["path"])
 
     cmip6_dir = cmip6_dir or (Path(args.cmip6_dir) if args.cmip6_dir else data_dir / "CMIP6")
     coverage_issues = _cmip6_coverage_issues(city, cmip6_dir, args)
@@ -599,7 +641,8 @@ def _stage0_parse_isd(isd_station_dir: Path) -> pd.DataFrame:
     print(f"[stage 0] Parsing ISD .gz from: {isd_station_dir.name}")
     with tempfile.TemporaryDirectory() as tmp:
         result_path = process_station_directory(str(isd_station_dir), tmp)
-        assert result_path is not None, "process_station_directory returned None"
+        if result_path is None:
+            raise SystemExit(f"ERROR: could not read weather records from {isd_station_dir}")
         raw = pd.read_csv(result_path, parse_dates=["datestamp"], low_memory=False)
     print(f"  parsed {len(raw):,} records")
     return raw
@@ -637,7 +680,7 @@ def _stage2_merge_nsrdb(isd_lst: pd.DataFrame, nsrdb_csv: Path,
     csv_path = out_dir / "2_isd_solar_lst.csv"
     cache_path = out_dir / ".2_isd_solar_lst.json"
     cache_inputs = (
-        {"isd": _file_signature(isd_csv), "solar": _file_signature(nsrdb_csv)}
+        {"solar_policy": 2, "isd": _file_signature(isd_csv), "solar": _file_signature(nsrdb_csv)}
         if isd_csv is not None else None
     )
     if not overwrite and cache_inputs is not None and _cache_matches(cache_path, cache_inputs, csv_path):
@@ -648,24 +691,9 @@ def _stage2_merge_nsrdb(isd_lst: pd.DataFrame, nsrdb_csv: Path,
     _print_title("Stage 2 Merge NSRDB")
     cache_path.unlink(missing_ok=True)
     print(f"[stage 2] Merging NSRDB solar: {nsrdb_csv.name}")
-    nsrdb = pd.read_csv(nsrdb_csv)
-    if "DATE" in nsrdb:
-        nsrdb["DATE"] = pd.to_datetime(nsrdb["DATE"], errors="raise")
-    else:
-        nsrdb["DATE"] = pd.to_datetime(
-            nsrdb[["Year", "Month", "Day", "Hour"]].rename(
-                columns={"Year": "year", "Month": "month", "Day": "day", "Hour": "hour"}
-            )
-        )
-    nsrdb = nsrdb.set_index("DATE").sort_index()
-
-    solar_cols = [c for c in ["GHI", "DNI", "DHI"] if c in nsrdb.columns]
-    if not solar_cols:
-        raise ValueError(f"NSRDB CSV missing solar columns (GHI/DNI/DHI). Found: {nsrdb.columns.tolist()}")
-
-    solar = nsrdb[solar_cols].clip(lower=0).resample("h").mean()
+    solar = _load_solar_hourly(nsrdb_csv)
     merged = isd_lst.join(solar, how="inner").ffill(limit=3).bfill(limit=3)
-    merged = merged.dropna(subset=["temp"] + solar_cols[:1])
+    merged = merged.dropna(subset=["temp", "GHI", "DNI", "DHI"])
 
     report_training_coverage(merged, key="temp", context="ISD+NSRDB training series")
 
@@ -690,6 +718,7 @@ def _stage3_rsvar(merged_csv: Path, lat: float, longitude: float, city: str,
     calibration_path = xlsx_path.with_name(xlsx_path.stem + "_solar_calibration.csv")
     cache_path = out_dir / ".3_rsvar.json"
     cache_inputs = {
+        "coverage_policy": 2,
         "weather": _file_signature(merged_csv),
         "city": city, "lat": lat, "longitude": longitude,
         "baseline": [baseline_start, baseline_end],

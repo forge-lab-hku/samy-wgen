@@ -310,7 +310,10 @@ def run_and_save_rsvar(
         from samy_wgen.pipeline.solar_latent import fit_solar_latent_rsvar
 
         report_training_coverage_from_csv(
-            isd_path, context=f"{city} ISD+NSRDB training series")
+            isd_path, context=f"{city} ISD+NSRDB training series",
+            baseline_years=range(baseline_start, baseline_end + 1),
+            required_columns=("dewpoint", "pressure", "wind_speed", "GHI", "DNI", "DHI"),
+        )
 
         rsvar_output, pipeline, calibration, solar_info = fit_solar_latent_rsvar(
             isd_path, latitude=lat, longitude=longitude,

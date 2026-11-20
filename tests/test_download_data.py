@@ -9,6 +9,7 @@ Slow integration tests (real network) run with:
 
 from __future__ import annotations
 
+import gzip
 import io
 import sys
 import zipfile
@@ -328,7 +329,7 @@ class TestDownloadIsdUnit:
         station_dir = tmp_path / "Miami" / "722020-12839_MIAMI_INTL_AP"
         station_dir.mkdir(parents=True)
         existing = station_dir / "722020-12839-2000.gz"
-        existing.write_bytes(b"fake gz content")
+        existing.write_bytes(gzip.compress(b"fake gz content"))
 
         fake_history = pd.DataFrame({
             "USAF": ["722020"], "WBAN": ["12839"],
@@ -359,7 +360,7 @@ class TestDownloadIsdUnit:
         def fake_get(url: str, **kwargs):
             downloaded.append(url.rsplit("/", 1)[-1])
             response = MagicMock()
-            response.iter_content.return_value = [b"fake gz"]
+            response.iter_content.return_value = [gzip.compress(b"fake gz")]
             return response
 
         with (
@@ -387,7 +388,7 @@ class TestDownloadIsdUnit:
         def fake_get(url: str, **kwargs):
             downloaded.append(url.rsplit("/", 1)[-1])
             response = MagicMock()
-            response.iter_content.return_value = [b"fake gz"]
+            response.iter_content.return_value = [gzip.compress(b"fake gz")]
             return response
 
         with (
@@ -410,7 +411,7 @@ class TestDownloadIsdUnit:
         failed = MagicMock()
         failed.raise_for_status.side_effect = RuntimeError("HTTP 503")
         succeeded = MagicMock()
-        succeeded.iter_content.return_value = [b"fake gz"]
+        succeeded.iter_content.return_value = [gzip.compress(b"fake gz")]
 
         with (
             patch("samy_wgen.pipeline.download_data._load_isd_history", return_value=fake_history),
@@ -420,7 +421,7 @@ class TestDownloadIsdUnit:
 
         station_dir = tmp_path / "Miami" / "722020-12839_MIAMI_INTL_AP"
         assert not (station_dir / "722020-12839-2000.gz").exists()
-        assert (station_dir / "722020-12839-2001.gz").read_bytes() == b"fake gz"
+        assert gzip.decompress((station_dir / "722020-12839-2001.gz").read_bytes()) == b"fake gz"
         assert "2000 failed: HTTP 503" in caplog.text
 
 

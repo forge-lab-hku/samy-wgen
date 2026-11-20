@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 from datetime import date, timedelta
 import functools
+import gzip
 import hashlib
 import json
 import logging
@@ -29,6 +30,7 @@ import shutil
 import tempfile
 import time
 import zipfile
+import zlib
 
 from tqdm import tqdm
 
@@ -1882,6 +1884,14 @@ def select_best_isd_station(
     return station_id
 
 
+def _usable_isd_archive(path: Path) -> bool:
+    try:
+        with gzip.open(path, "rb") as stream:
+            return bool(stream.read(1))
+    except (OSError, EOFError, zlib.error):
+        return False
+
+
 def download_isd(
     station_id: str,
     city: str,
@@ -1924,13 +1934,15 @@ def download_isd(
 
     import requests
 
+    usable_years = 0
     with tqdm(valid_years, desc=f"ISD {city}", unit="yr") as pbar:
         for year in pbar:
             pbar.set_postfix(year=year)
             filename = f"{usaf}-{wban}-{year}.gz"
             local = station_dir / filename
-            if local.exists() and local.stat().st_size > 0:
+            if _usable_isd_archive(local):
                 logger.debug(f"  {year} already present, skipping")
+                usable_years += 1
                 continue
             tmp = local.with_suffix(".gz.tmp")
             response = None
@@ -1942,7 +1954,10 @@ def download_isd(
                     for chunk in response.iter_content(chunk_size=1024 * 1024):
                         if chunk:
                             f.write(chunk)
+                if not _usable_isd_archive(tmp):
+                    raise ValueError("response is not a readable nonempty gzip archive")
                 tmp.replace(local)
+                usable_years += 1
             except Exception as exc:
                 logger.warning(f"  {year} failed: {exc}")
                 if tmp.exists():
@@ -1953,7 +1968,7 @@ def download_isd(
 
     logger.info(
         "ISD download complete (%s/%s years requested after coverage filter) → %s",
-        len(valid_years),
+        usable_years,
         len(requested_years),
         station_dir,
     )

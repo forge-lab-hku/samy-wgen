@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
@@ -43,6 +44,12 @@ def _write_cmip6_inputs(
         city_dir / f"{model}_{ssp}_monthly.csv", index=False)
 
 
+def _write_nsrdb_fixture(path: Path) -> None:
+    times = pd.date_range("2001-01-01", periods=8760, freq="h")
+    pd.DataFrame({"Year": times.year, "Month": times.month, "Day": times.day,
+                  "Hour": times.hour, "GHI": 1.0, "DNI": 1.0, "DHI": 1.0}).to_csv(path, index=False)
+
+
 class TestDownloadDefaults:
     def test_preflight_selects_the_requested_gcm(self, tmp_path):
         from samy_wgen.pipeline import run_pipeline
@@ -61,6 +68,18 @@ class TestDownloadDefaults:
         issues = _daily_coverage_issues("MPI", "scenario", tmp_path / "climate.csv", frame, [2030])
         assert len(issues) == 2
         assert all("2030-01-31" in issue for issue in issues)
+
+    def test_source_selection_rejects_empty_station_and_thin_solar_csv(self, tmp_path):
+        from samy_wgen.pipeline.run_pipeline import _find_isd_dir, _find_nsrdb_csv
+
+        (tmp_path / "ISD" / "Miami" / "722020-12839").mkdir(parents=True)
+        nsrdb = tmp_path / "NSRDB"
+        nsrdb.mkdir()
+        (nsrdb / "nsrdb_miami_recent.csv").write_text("Year,Month,Day,Hour,GHI,DNI,DHI\n2020,1,1,0,0,0,0\n")
+        with pytest.raises(SystemExit, match="No usable ISD archives"):
+            _find_isd_dir("Miami", tmp_path)
+        with pytest.raises(SystemExit, match="usable hourly solar coverage"):
+            _find_nsrdb_csv("Miami", tmp_path)
 
     def test_cmip6_baseline_can_cross_historical_scenario_boundary(self, tmp_path):
         from samy_wgen.pipeline.input_checks import cmip6_coverage_issues
@@ -89,7 +108,7 @@ class TestDownloadDefaults:
         nsrdb_dir = tmp_path / "NSRDB"
         nsrdb_dir.mkdir(parents=True, exist_ok=True)
         target = nsrdb_dir / "nsrdb_los_angeles_1998-2024.csv"
-        target.write_text("Year,Month,Day,Hour,GHI\n")
+        _write_nsrdb_fixture(target)
 
         found = _find_nsrdb_csv("Los_Angeles", tmp_path)
 
@@ -167,9 +186,9 @@ class TestEnsurePipelineInputs:
             }
             station_dir = Path(output_dir) / city / f"{station_id}_AUTO"
             station_dir.mkdir(parents=True, exist_ok=True)
-            (station_dir / f"{station_id}-2000.gz").write_bytes(b"ok")
+            (station_dir / f"{station_id}-2000.gz").write_bytes(gzip.compress(b"ok"))
 
-        def fake_download_nsrdb(city: str, lat: float, lon: float, years: list[int], output_dir: str) -> None:
+        def fake_download_nsrdb(city: str, lat: float, lon: float, years: list[int], output_dir: str) -> dict:
             captured["nsrdb"] = {
                 "lat": lat,
                 "lon": lon,
@@ -178,7 +197,9 @@ class TestEnsurePipelineInputs:
             }
             nsrdb_dir = Path(output_dir)
             nsrdb_dir.mkdir(parents=True, exist_ok=True)
-            (nsrdb_dir / "nsrdb_miami_1998-2024.csv").write_text("Year,Month,Day,Hour,GHI\n")
+            path = nsrdb_dir / "nsrdb_miami_1998-2024.csv"
+            _write_nsrdb_fixture(path)
+            return {"success": [{"path": str(path)}]}
 
         city_dir = data_dir / "CMIP6" / "Miami"
         _write_cmip6_inputs(city_dir)
@@ -201,7 +222,8 @@ class TestEnsurePipelineInputs:
 
         with (
             patch("samy_wgen.pipeline.download_data.select_best_isd_station", return_value="722020-12839") as station_mock,
-            patch("samy_wgen.pipeline.download_data._city_meta", return_value={"lat": 25.7617, "lon": -80.1918}),
+            patch("samy_wgen.pipeline.download_data._city_meta", return_value={"lat": 25.7617, "lon": -80.1918, "country_iso2": "US",
+                              "cordex_domain": "NAM-22"}),
             patch("samy_wgen.pipeline.download_data.download_isd", side_effect=fake_download_isd),
             patch("samy_wgen.pipeline.download_data.download_nsrdb", side_effect=fake_download_nsrdb),
         ):
@@ -228,12 +250,14 @@ class TestEnsurePipelineInputs:
             captured["station_id"] = station_id
             station_dir = Path(output_dir) / city / f"{station_id}_AUTO"
             station_dir.mkdir(parents=True, exist_ok=True)
-            (station_dir / f"{station_id}-2000.gz").write_bytes(b"ok")
+            (station_dir / f"{station_id}-2000.gz").write_bytes(gzip.compress(b"ok"))
 
-        def fake_download_nsrdb(city: str, lat: float, lon: float, years: list[int], output_dir: str) -> None:
+        def fake_download_nsrdb(city: str, lat: float, lon: float, years: list[int], output_dir: str) -> dict:
             nsrdb_dir = Path(output_dir)
             nsrdb_dir.mkdir(parents=True, exist_ok=True)
-            (nsrdb_dir / "nsrdb_miami_1998-2024.csv").write_text("Year,Month,Day,Hour,GHI\n")
+            path = nsrdb_dir / "nsrdb_miami_1998-2024.csv"
+            _write_nsrdb_fixture(path)
+            return {"success": [{"path": str(path)}]}
 
         city_dir = data_dir / "CMIP6" / "Miami"
         _write_cmip6_inputs(city_dir)
@@ -256,7 +280,8 @@ class TestEnsurePipelineInputs:
 
         with (
             patch("samy_wgen.pipeline.download_data.select_best_isd_station") as station_mock,
-            patch("samy_wgen.pipeline.download_data._city_meta", return_value={"lat": 25.7617, "lon": -80.1918}),
+            patch("samy_wgen.pipeline.download_data._city_meta", return_value={"lat": 25.7617, "lon": -80.1918, "country_iso2": "US",
+                              "cordex_domain": "NAM-22"}),
             patch("samy_wgen.pipeline.download_data.download_isd", side_effect=fake_download_isd),
             patch("samy_wgen.pipeline.download_data.download_nsrdb", side_effect=fake_download_nsrdb),
         ):
@@ -335,6 +360,16 @@ class TestEnsurePipelineInputs:
 
 
 class TestTrainingCoverageGate:
+    def test_counts_an_absent_year_and_deduplicates_hours(self):
+        from samy_wgen.pipeline.input_checks import report_training_coverage
+
+        dates = pd.date_range("2011-01-01", "2013-12-31 23:00", freq="h")
+        edges = dates[dates.year != 2012]
+        jan = dates[(dates.year == 2012) & (dates.month == 1)]
+        for index in (edges, edges.append(jan.repeat(12))):
+            with pytest.raises(SystemExit, match="2012"):
+                report_training_coverage(pd.DataFrame({"temp": 20.0}, index=index),
+                                         key="temp", context="test")
     def test_exempts_partial_edge_years(self):
         from samy_wgen.pipeline.input_checks import report_training_coverage
 
