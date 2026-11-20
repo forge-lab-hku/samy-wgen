@@ -4,6 +4,7 @@ from pathlib import Path
 import calendar
 
 from samy_wgen.utils.calculate_weather_var import calc_RH_from_dewpoint, calc_dewpoint_from_RH
+from samy_wgen.utils.pressure import station_pressure_pa
 
 
 def _infer_pressure_pa(series: pd.Series) -> pd.Series:
@@ -107,11 +108,7 @@ def _write_epw_for_year(
     pressure_pa = year_df.get("pressure")
     if pressure_pa is None:
         raise ValueError("EPW input missing pressure")
-    pressure_pa = _infer_pressure_pa(pressure_pa)
-    if pressure_reference == "sea_level":
-        pressure_pa = pressure_pa * (1 - 2.25577e-5 * elevation_m) ** 5.25588
-    elif pressure_reference != "station":
-        raise ValueError("pressure_reference must be 'station' or 'sea_level'")
+    pressure_pa = station_pressure_pa(_infer_pressure_pa(pressure_pa), elevation_m, pressure_reference)
 
     # Wind with basic physical validation
     wind_speed = year_df.get("wind_speed")

@@ -263,5 +263,17 @@ class TestGenerateDDYWetbulb:
         assert abs(float(match.group(1)) - 10.0) > 3.0
 
 
+def test_ddy_sea_level_pressure_matches_already_corrected_station_pressure():
+    from samy_wgen.utils.create_epw_ddy import compute_ddy_params
+
+    weather = pd.DataFrame({"temp": [30.0, 30.0], "dewpoint": [20.0, 20.0], "pressure": 1013.25})
+    elevation_m = 1500.0
+    expected_pa = 101325 * (1 - 2.25577e-5 * elevation_m) ** 5.25588
+    sea_level = compute_ddy_params(weather, elevation_m, pressure_reference="sea_level")
+    station = compute_ddy_params(weather.assign(pressure=expected_pa), elevation_m)
+    assert sea_level["pressure_pa"] == pytest.approx(expected_pa)
+    assert sea_level["clg_h_004"] == pytest.approx(station["clg_h_004"])
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

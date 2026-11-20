@@ -908,6 +908,7 @@ def _output_ddy_files(merged_csv: Path, output_df: pd.DataFrame,
             tz=meta["tz"],
             elevation_m=meta.get("elevation_m", 0.0),
             label=label,
+            pressure_reference="sea_level",
         )
         print(f"  [DDY] {ddy_path.name}")
         written.append(ddy_path)
@@ -1037,6 +1038,7 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
         )
         export_manifest = out_dir / ".exports.json"
         export_inputs = {
+            "ddy_pressure_reference": "sea_level",
             "historical": _file_signature(merged_csv),
             "future": _file_signature(out_dir / "4_delta_corrected.csv"),
             "city": city, "ssp": args.ssp, "meta": meta, "epw_years": epw_years,

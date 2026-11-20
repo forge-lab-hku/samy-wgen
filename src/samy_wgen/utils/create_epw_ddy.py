@@ -27,6 +27,7 @@ from pathlib import Path
 import argparse
 from samy_wgen.utils.calculate_weather_var import calc_dewpoint_from_Q, calc_RH_from_dewpoint, calc_wetbulb
 from samy_wgen.utils.time_utils import get_utc_offset
+from samy_wgen.utils.pressure import station_pressure_pa
 
 
 def get_timezone_offset(latitude, longitude):
@@ -186,8 +187,7 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
     if pressure_pa.notna().any() and pressure_pa.max() < 2000:
         pressure_pa = pressure_pa * 100  # hPa to Pa
     if pressure_reference == 'sea_level':
-        pressure_factor = (1 - 2.25577e-5 * elevation_m) ** 5.25588
-        pressure_pa = pressure_pa * pressure_factor
+        pressure_pa = station_pressure_pa(pressure_pa, elevation_m, pressure_reference)
         pressure_note = 'station_adjusted_from_sea_level'
     else:
         pressure_note = 'station'
@@ -463,14 +463,16 @@ def _coincident_mean(primary: np.ndarray, other: np.ndarray, pct: float, *, high
     return float(threshold), float(np.mean(other[mask]))
 
 
-def _estimate_pressure_pa(pressure: pd.Series | None, elevation_m: float) -> float:
+def _estimate_pressure_pa(pressure: pd.Series | None, elevation_m: float,
+                          pressure_reference: str) -> float:
     if pressure is not None:
         pressure = pd.to_numeric(pressure, errors="coerce")
         valid = pressure[np.isfinite(pressure)]
         if not valid.empty:
             mean_val = float(valid.mean())
-            return mean_val * 100.0 if mean_val < 2000 else mean_val
-    return float(101325 * (1 - 2.25577e-5 * elevation_m) ** 5.25588)
+            pressure_pa = mean_val * 100.0 if mean_val < 2000 else mean_val
+            return station_pressure_pa(pressure_pa, elevation_m, pressure_reference)
+    return station_pressure_pa(101325.0, elevation_m, "sea_level")
 
 
 def _parse_epw_to_dataframe(epw_path: Path) -> tuple[pd.DataFrame, dict]:
@@ -529,7 +531,8 @@ def _parse_epw_to_dataframe(epw_path: Path) -> tuple[pd.DataFrame, dict]:
     return df, meta
 
 
-def compute_ddy_params(df: pd.DataFrame, elevation_m: float = 0.0) -> dict:
+def compute_ddy_params(df: pd.DataFrame, elevation_m: float = 0.0, *,
+                       pressure_reference: str = "station") -> dict:
     """Extract generalized 18-condition ASHRAE DDY parameters from hourly data."""
     required = {"temp", "dewpoint"}
     missing = required - set(df.columns)
@@ -563,7 +566,7 @@ def compute_ddy_params(df: pd.DataFrame, elevation_m: float = 0.0) -> dict:
     RH = np.clip(calc_RH_from_dewpoint(TDB, TDP), 0.1, 100.0)
     WB = calc_wetbulb(TDB, RH)
     Pw = 610.7 * np.exp(17.27 * TDP / (237.7 + TDP))
-    pressure_pa = _estimate_pressure_pa(sub.get("pressure"), elevation_m)
+    pressure_pa = _estimate_pressure_pa(sub.get("pressure"), elevation_m, pressure_reference)
     humidity_ratio = 0.62198 * Pw / np.maximum(pressure_pa - Pw, 1.0)
     enthalpy = 1006.0 * TDB + humidity_ratio * (2501000.0 + 1860.0 * TDB)
 
@@ -720,8 +723,9 @@ def render_ddy_content(params: dict, *, city: str, state: str = "", country: str
 
 def write_ddy_from_dataframe(df: pd.DataFrame, out_path: Path, *, city: str, state: str = "", country: str = "",
                              lat: float = 0.0, lon: float = 0.0, tz: float = 0.0,
-                             elevation_m: float = 0.0, label: str = "future") -> Path:
-    params = compute_ddy_params(df, elevation_m=elevation_m)
+                             elevation_m: float = 0.0, label: str = "future",
+                             pressure_reference: str = "station") -> Path:
+    params = compute_ddy_params(df, elevation_m=elevation_m, pressure_reference=pressure_reference)
     content = render_ddy_content(
         params,
         city=city,

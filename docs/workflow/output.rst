@@ -43,7 +43,7 @@ calendar while the filename retains the source year. Unavailable auxiliary
 fields use EPW missing-value codes rather than zeros.
 The CLI obtains elevation from the selected ISD station unless ``--elevation``
 overrides it, and converts its sea-level pressure series to station pressure
-for the EPW. For direct TMY/sTMY conversion, specify ``pressure_reference``
+for both the EPW and DDY. For direct TMY/sTMY conversion, specify ``pressure_reference``
 as ``sea_level`` in city metadata only when the source pressure is sea-level;
 the default ``station`` leaves pressure unchanged.
 
