@@ -213,3 +213,22 @@ def test_mixed_delta_raises_when_future_pressure_is_missing():
         apply_mixed_resolution_climate_delta(
             rsvar, incomplete_daily, monthly, incomplete_baseline,
             gcm="test", rcm=None, lat=25.76, longitude=-80.19, verbose=False)
+
+    one_gap = complete_daily.drop(pd.Timestamp("2050-07-15"))
+    with pytest.raises(ValueError, match=r"temp.*2050-07-15"):
+        apply_mixed_resolution_climate_delta(
+            rsvar, one_gap, monthly, complete_baseline,
+            gcm="test", rcm=None, lat=25.76, longitude=-80.19, verbose=False)
+
+
+def test_pressure_aliases_are_combined_within_reference_and_reject_reference_changes(tmp_path):
+    from samy_wgen.pipeline.run_climate_delta import _apply_unit_conversions, _load_and_merge_climate_data
+
+    aliases = pd.DataFrame({"ps": [95000.0, None], "surface_air_pressure": [None, 96000.0]})
+    assert _apply_unit_conversions(aliases)["ps_hPa"].tolist() == [950.0, 960.0]
+    historical = tmp_path / "historical.csv"
+    future = tmp_path / "future.csv"
+    pd.DataFrame({"time": ["2014-01-01"], "psl": [101325.0]}).to_csv(historical, index=False)
+    pd.DataFrame({"time": ["2015-01-01"], "ps": [95000.0]}).to_csv(future, index=False)
+    with pytest.raises(ValueError, match="Pressure reference differs"):
+        _load_and_merge_climate_data([(historical, future)])

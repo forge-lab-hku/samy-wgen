@@ -732,6 +732,7 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
     if rsvar_xlsx.suffix == ".xlsx":
         rsvar_paths.append(rsvar_xlsx.with_suffix(".csv"))
     cache_inputs = {
+        "coverage_policy": 2,
         "rsvar": [_file_signature(path) for path in rsvar_paths],
         "climate_dir": str(climate_dir.resolve()),
         "climate_files": [_file_signature(path) for path in climate_paths],

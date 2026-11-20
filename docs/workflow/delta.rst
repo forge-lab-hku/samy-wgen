@@ -62,3 +62,8 @@ them. See
 :py:func:`~samy_wgen.pipeline.run_climate_delta.load_cmip6_projection`,
 :py:func:`~samy_wgen.pipeline.run_climate_delta.compute_mixed_resolution_baseline`,
 and :py:func:`~samy_wgen.pipeline.run_climate_delta.apply_mixed_resolution_climate_delta`.
+
+Daily CMIP6 input checks require valid temperature and pressure on every
+source-calendar day. The application step verifies the requested forecast
+dates and reports missing optional signals. Conversion gaps from recognized
+360-day and no-leap calendars are filled from adjacent dates.

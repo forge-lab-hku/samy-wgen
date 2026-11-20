@@ -11,8 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
+from functools import lru_cache
 
+import numpy as np
 import pandas as pd
+
+from samy_wgen.utils.pressure import projection_pressure_pa
 
 # Full monthly rsds trailing window required by the bounded solar calculation.
 CMIP6_SOLAR_TRAILING_YEARS = 20
@@ -24,6 +28,50 @@ CMIP6_SCENARIO_START_YEAR = 2015
 # legitimately starts or stops mid-year.
 TRAINING_COVERAGE_WARN = 0.70
 TRAINING_COVERAGE_FAIL = 0.30
+
+
+@lru_cache(maxsize=512)
+def _calendar_days(year: int, calendar: str) -> pd.DatetimeIndex:
+    dates = pd.date_range(f"{year}-01-01", f"{year}-12-31", freq="D")
+    if calendar == "360_day":
+        return dates[np.rint(np.linspace(0, len(dates) - 1, 360)).astype(int)]
+    if calendar == "noleap":
+        return dates[~((dates.month == 2) & (dates.day == 29))]
+    return dates
+
+
+def cmip6_daily_calendar(times: pd.DatetimeIndex) -> str:
+    """Infer the source calendar from complete annual patterns in legacy CSVs."""
+    dates = times.normalize().unique().sort_values()
+    if not len(dates):
+        return "gregorian"
+    groups = {year: dates[dates.year == year] for year in dates.year.unique()}
+    for calendar in ("360_day", "noleap"):
+        if (all(not days.difference(_calendar_days(year, calendar)).size
+                for year, days in groups.items())
+                and any(days.equals(_calendar_days(year, calendar))
+                        and len(days) < len(_calendar_days(year, "gregorian"))
+                        for year, days in groups.items())):
+            return calendar
+    return "gregorian"
+
+
+def cmip6_missing_days(times: pd.DatetimeIndex, valid_times: pd.DatetimeIndex,
+                       years: Iterable[int]) -> pd.DatetimeIndex:
+    calendar = cmip6_daily_calendar(times)
+    actual = valid_times.normalize()
+    parts = [_calendar_days(year, calendar).difference(actual) for year in sorted(set(years))]
+    return pd.DatetimeIndex([]).append(parts)
+
+
+def cmip6_calendar_gaps(times: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """Return only date labels absent by design from the inferred calendar."""
+    calendar = cmip6_daily_calendar(times)
+    if calendar == "gregorian" or times.empty:
+        return pd.DatetimeIndex([])
+    parts = [_calendar_days(year, "gregorian").difference(_calendar_days(year, calendar))
+             for year in range(times.min().year, times.max().year + 1)]
+    return pd.DatetimeIndex([]).append(parts)
 
 
 def _format_int_ranges(values: list[int]) -> str:
@@ -78,21 +126,23 @@ def _daily_coverage_issues(
 ) -> list[str]:
     """Return coverage problems for one historical/scenario daily file.
 
-    Daily temperature/pressure must have at least one valid value in every
-    requested month (not every day), which matches how the DOY climatology
-    consumes them and avoids false failures from a few missing days.
+    Require finite temperature and pressure for every source-calendar day.
     """
     if frame is None:
         return [f"{model}: missing or unreadable {label} file {path.name}"]
     issues: list[str] = []
     temperature_column = next((column for column in ("tas", "tas_C")
                                if column in frame.columns), None)
-    pressure_column = next((column for column in ("psl", "ps", "surface_air_pressure")
-                            if column in frame.columns), None)
+    try:
+        pressure, reference = projection_pressure_pa(frame)
+    except ValueError as error:
+        return [f"{model}: {label} file {path.name}: {error}"]
+    if "ps_hPa" in frame:
+        pressure, reference = frame["ps_hPa"], "normalized"
     missing_columns = []
     if temperature_column is None:
         missing_columns.append("tas")
-    if pressure_column is None:
+    if pressure is None:
         missing_columns.append("psl (or ps/surface_air_pressure)")
     if missing_columns:
         issues.append(
@@ -100,21 +150,23 @@ def _daily_coverage_issues(
             f"{', '.join(missing_columns)}")
         return issues
 
-    times = pd.to_datetime(frame["time"], errors="coerce")
+    times = pd.DatetimeIndex(pd.to_datetime(frame["time"], errors="coerce"))
     if times.isna().any():
         issues.append(f"{model}: {label} file {path.name} has invalid timestamps")
         return issues
-    requested = set(required_years)
-    expected_months = {(year, month) for year in requested for month in range(1, 13)}
-    for column in (temperature_column, pressure_column):
-        valid = frame[column].notna()
-        available = set(zip(times[valid].dt.year, times[valid].dt.month))
-        missing_pairs = expected_months - available
-        if missing_pairs:
+    if times.normalize().has_duplicates:
+        return [f"{model}: {label} file {path.name} has duplicate daily dates"]
+    pressure_label = {"surface": "ps", "sea_level": "psl", "normalized": "ps_hPa"}[reference]
+    for column, values in ((temperature_column, frame[temperature_column]), (pressure_label, pressure)):
+        valid = np.isfinite(pd.to_numeric(values, errors="coerce"))
+        missing_days = cmip6_missing_days(times, times[valid], required_years)
+        if len(missing_days):
+            examples = ", ".join(missing_days[:5].strftime("%Y-%m-%d"))
+            missing_pairs = set(zip(missing_days.year, missing_days.month))
             issues.append(
                 f"{model}: {label} file {path.name} does not cover {column} for "
-                f"month(s) {_format_missing_months(missing_pairs)} "
-                f"(required {_format_int_ranges(sorted(requested))}, all months)")
+                f"{len(missing_days)} day(s) in {_format_missing_months(missing_pairs)} "
+                f"(first missing: {examples})")
     return issues
 
 
@@ -135,18 +187,17 @@ def _solar_coverage_issues(
     if times.duplicated().any():
         return [f"{model}: {label} input has duplicate timestamps"]
 
-    valid = frame["rsds"].notna()
+    valid = np.isfinite(pd.to_numeric(frame["rsds"], errors="coerce"))
     available = set(zip(times[valid].dt.year, times[valid].dt.month))
     issues: list[str] = []
 
     baseline_set = set(baseline_years)
-    baseline_months = {month for year, month in available if year in baseline_set}
-    missing_baseline_months = sorted(set(range(1, 13)) - baseline_months)
+    baseline_months = {(year, month) for year in baseline_set for month in range(1, 13)}
+    missing_baseline_months = baseline_months - available
     if missing_baseline_months:
         issues.append(
             f"{model}: {label} has no baseline rsds for month(s) "
-            f"{_format_int_ranges(missing_baseline_months)} in "
-            f"{baseline_years[0]}-{baseline_years[-1]}")
+            f"{_format_missing_months(missing_baseline_months)}")
 
     missing_pairs: set[tuple[int, int]] = set()
     for year in forecast_years:

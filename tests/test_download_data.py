@@ -1474,6 +1474,35 @@ class TestCdsConstraintHelpers:
 # ─── CMIP6 year_range filtering ───────────────────────────────────────────────
 
 class TestCmip6YearRange:
+    @pytest.mark.parametrize("calendar", ["360_day", "noleap", "gregorian"])
+    def test_daily_calendar_gaps_are_distinguished_from_missing_source_days(self, calendar):
+        import cftime
+
+        from samy_wgen.pipeline.download_data import _cmip6_calendar_time_index, _cmip6_frame_covers_request
+        from samy_wgen.pipeline.run_climate_delta import _cmip6_daily_view
+
+        constructors = {"360_day": cftime.Datetime360Day, "noleap": cftime.DatetimeNoLeap,
+                        "gregorian": cftime.DatetimeGregorian}
+        from datetime import timedelta
+        start = constructors[calendar](2028, 1, 1)
+        year_end = constructors[calendar](2029, 1, 1)
+        days = _cmip6_calendar_time_index(
+            start + timedelta(days=day) for day in range((year_end - start).days)
+        )
+        frame = pd.DataFrame({"time": days, "tas": 290.0})
+        assert _cmip6_frame_covers_request(frame, [2028], ["tas"], complete_days=True)
+        assert not _cmip6_frame_covers_request(frame.drop(index=30), [2028], ["tas"], complete_days=True)
+        prepared = _cmip6_daily_view(frame.set_index("time"))
+        assert len(prepared) == 366 and prepared["tas"].notna().all()
+
+    def test_cmip6_city_batches_keep_nearby_points_and_split_continents(self):
+        from samy_wgen.pipeline.download_data import _cmip6_city_groups
+
+        points = {"Miami": (25.76, -80.19), "Los_Angeles": (34.05, -118.24),
+                  "Sydney": (-33.87, 151.20)}
+        assert [set(group) for group in _cmip6_city_groups(points)] == [
+            {"Miami", "Los_Angeles"}, {"Sydney"},
+        ]
     @pytest.fixture(autouse=True)
     def cdsapi_stub(self):
         with patch.dict(sys.modules, {"cdsapi": SimpleNamespace(Client=MagicMock())}):
@@ -1598,9 +1627,9 @@ class TestCmip6YearRange:
         mock_client.retrieve.side_effect = fake_retrieve
 
         def fake_extract(_nc_bytes, city_points):
-            times = pd.date_range("1995-01-01", periods=2, freq="D")
+            times = pd.date_range("1995-01-01", "1995-12-31", freq="D")
             return {
-                city: pd.DataFrame({"time": times, "near_surface_air_temperature": [1.0, 2.0]})
+                city: pd.DataFrame({"time": times, "near_surface_air_temperature": 1.0})
                 for city in city_points
             }
 
@@ -1653,7 +1682,7 @@ class TestCmip6YearRange:
         def extract_for_request(_bytes, city_points):
             variable = requested[-1]
             raw = "precipitation" if variable == "precipitation" else "near_surface_air_temperature"
-            return {city: pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), raw: [1.0]})
+            return {city: pd.DataFrame({"time": pd.date_range("1995-01-01", "1995-12-31", freq="D"), raw: 1.0})
                     for city in city_points}
 
         with (
@@ -1698,7 +1727,7 @@ class TestCmip6YearRange:
         mock_client.retrieve.side_effect = retrieve
         def extract(_bytes, _lat, _lon):
             raw = "precipitation" if requested[-1] == "precipitation" else "near_surface_air_temperature"
-            return pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), raw: [1.0]})
+            return pd.DataFrame({"time": pd.date_range("1995-01-01", "1995-12-31", freq="D"), raw: 1.0})
 
         with (
             patch("cdsapi.Client", return_value=mock_client),
@@ -1737,8 +1766,8 @@ class TestCmip6YearRange:
                   return_value={"daily": ["near_surface_air_temperature"]}),
             patch("samy_wgen.pipeline.download_data._resolve_city_points", return_value=points),
             patch("samy_wgen.pipeline.download_data._nc_bytes_to_point_dfs", return_value={
-                "Miami": pd.DataFrame({"time": pd.to_datetime(["1994-01-01", "1995-01-01"]),
-                                       "near_surface_air_temperature": [1.0, 2.0]})}),
+                "Miami": pd.DataFrame({"time": pd.date_range("1994-01-01", "1995-12-31", freq="D"),
+                                       "near_surface_air_temperature": 1.0})}),
             patch("samy_wgen.pipeline.download_data.time.sleep"),
         ):
             cache = _cmip6_cache_path(tmp_path, "mpi_esm1_2_lr", "historical", "daily",
@@ -1754,7 +1783,7 @@ class TestCmip6YearRange:
 
         output = tmp_path / "Miami" / "mpi_esm1_2_lr_historical.csv"
         output.parent.mkdir(parents=True)
-        pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), "tas": [1.0]}).to_csv(output, index=False)
+        pd.DataFrame({"time": pd.date_range("1995-01-01", "1995-12-31", freq="D"), "tas": 1.0}).to_csv(output, index=False)
         mock_client = MagicMock()
         points = {"Miami": (25.76, -80.19)}
         with (
@@ -1773,7 +1802,7 @@ class TestCmip6YearRange:
 
         output = tmp_path / "Miami" / "mpi_esm1_2_lr_historical.csv"
         output.parent.mkdir(parents=True)
-        pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), "tas": [280.0]}).to_csv(output, index=False)
+        pd.DataFrame({"time": pd.date_range("1995-01-01", "1995-12-31", freq="D"), "tas": 280.0}).to_csv(output, index=False)
         points = {"Miami": (25.76, -80.19)}
         requested = []
         mock_client = MagicMock()
@@ -1787,7 +1816,7 @@ class TestCmip6YearRange:
                   return_value={"daily": ["near_surface_air_temperature", "precipitation"]}),
             patch("samy_wgen.pipeline.download_data._resolve_city_points", return_value=points),
             patch("samy_wgen.pipeline.download_data._nc_bytes_to_point_dfs", return_value={
-                "Miami": pd.DataFrame({"time": pd.to_datetime(["1995-01-01"]), "precipitation": [1.0]})}),
+                "Miami": pd.DataFrame({"time": pd.date_range("1995-01-01", "1995-12-31", freq="D"), "precipitation": 1.0})}),
             patch("samy_wgen.pipeline.download_data.time.sleep"),
         ):
             summary = download_cmip6_for_cities(["Miami"], models=["mpi_esm1_2_lr"],

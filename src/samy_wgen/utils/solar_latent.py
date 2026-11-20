@@ -266,10 +266,10 @@ def apply_monthly_solar_signal(
     for period in periods.unique():
         where = np.flatnonzero(periods == period)
         if period not in ratios.index:
-            raise ValueError(f"Missing CORDEX monthly ratio for {period}")
+            raise ValueError(f"Missing monthly solar radiation ratio for {period}")
         ratio = float(ratios.loc[period])
         if not np.isfinite(ratio) or ratio < 0:
-            raise ValueError(f"Invalid CORDEX monthly ratio for {period}: {ratio}")
+            raise ValueError(f"Invalid monthly solar radiation ratio for {period}: {ratio}")
         base_energy = float(base.GHI.to_numpy()[where].sum())
         target = base_energy * ratio
         available = horizontal[where]

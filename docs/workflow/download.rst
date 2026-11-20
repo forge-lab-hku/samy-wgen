@@ -55,6 +55,8 @@ Inspect the live CDS catalogue before requesting a GCM/experiment pair.
 ``samy-download`` extracts city grid-cell series and stores daily and monthly
 CSVs under ``data/CMIP6/<City>/``. ``--cmip6-years`` controls the projection
 request independently of ``--years``.
+For multi-city downloads, nearby cities share a request. Each request
+box spans at most 45° in latitude and longitude.
 
 .. code-block:: console
 

@@ -22,6 +22,7 @@ Climate delta calculation:
 
 import argparse
 import contextlib
+import logging
 import io
 import os
 from pathlib import Path
@@ -37,6 +38,10 @@ from samy_wgen.utils.physics_qa import (
 )
 from samy_wgen.utils.city_utils import load_city_table, resolve_city_codes
 from samy_wgen.utils.solar_latent import LATENT_COLUMNS
+from samy_wgen.pipeline.input_checks import cmip6_calendar_gaps
+from samy_wgen.utils.pressure import projection_pressure_pa
+
+logger = logging.getLogger(__name__)
 
 
 def _non_solar_for_delta(rsvar_df: pd.DataFrame, longitude: float | None) -> pd.DataFrame:
@@ -515,14 +520,10 @@ def _apply_unit_conversions(df: pd.DataFrame) -> pd.DataFrame:
     for col in ['tas', 'tasmax', 'tasmin']:
         if col in df.columns and f"{col}_C" not in df.columns:
             df[f"{col}_C"] = pd.to_numeric(df[col], errors='coerce') - 273.15
-    # ps (surface pressure) or psl (sea level pressure) -> hPa
-    if 'ps' in df.columns and 'ps_hPa' not in df.columns:
-        df['ps_hPa'] = pd.to_numeric(df['ps'], errors='coerce') / 100.0
-    if 'psl' in df.columns and 'ps_hPa' not in df.columns:
-        df['ps_hPa'] = pd.to_numeric(df['psl'], errors='coerce') / 100.0
-    # surface_air_pressure (CNRM format) -> ps_hPa
-    if 'surface_air_pressure' in df.columns and 'ps_hPa' not in df.columns:
-        df['ps_hPa'] = pd.to_numeric(df['surface_air_pressure'], errors='coerce') / 100.0
+    if 'ps_hPa' not in df.columns:
+        pressure, _ = projection_pressure_pa(df)
+        if pressure is not None:
+            df['ps_hPa'] = pressure / 100.0
     # near_surface_relative_humidity (CNRM format) -> hurs
     if 'near_surface_relative_humidity' in df.columns and 'hurs' not in df.columns:
         df['hurs'] = pd.to_numeric(df['near_surface_relative_humidity'], errors='coerce')
@@ -543,6 +544,14 @@ def _load_and_merge_climate_data(file_pairs: list[tuple[Path, Path]], required: 
         if hist_path.exists() and future_path.exists():
             hist = pd.read_csv(hist_path, parse_dates=['time']).set_index('time')
             future = pd.read_csv(future_path, parse_dates=['time']).set_index('time')
+            _, hist_reference = projection_pressure_pa(hist)
+            _, future_reference = projection_pressure_pa(future)
+            if hist_reference and future_reference and hist_reference != future_reference:
+                raise ValueError(
+                    f"Pressure reference differs between {hist_path.name} ({hist_reference}) and "
+                    f"{future_path.name} ({future_reference}). Use the same pressure variable in both.")
+            hist = _apply_unit_conversions(hist)
+            future = _apply_unit_conversions(future)
             merged = pd.concat([hist, future], axis=0)
             merged = merged[~merged.index.duplicated(keep='first')].sort_index()
 
@@ -733,6 +742,18 @@ def _cordex_daily_view(cordex: pd.DataFrame) -> pd.DataFrame:
     return daily
 
 
+def _cmip6_daily_view(frame: pd.DataFrame) -> pd.DataFrame:
+    daily = _cordex_daily_view(frame)
+    if daily.empty:
+        return daily
+    structural_gaps = cmip6_calendar_gaps(frame.index).intersection(daily.index)
+    if len(structural_gaps):
+        # Fill only calendar conversion gaps with a finite neighbor on each side.
+        neighbors = (daily.shift(1) + daily.shift(-1)) / 2.0
+        daily.loc[structural_gaps] = neighbors.loc[structural_gaps]
+    return daily
+
+
 def _cordex_monthly_view(cordex: pd.DataFrame) -> pd.DataFrame:
     """Return a one-row-per-month CORDEX dataframe (month-start index)."""
     if cordex.empty:
@@ -918,7 +939,7 @@ def compute_mixed_resolution_baseline(
         (daily_df.index.year >= baseline_start) &
         (daily_df.index.year <= baseline_end)
     )
-    daily_baseline_data = daily_df.loc[daily_mask]
+    daily_baseline_data = _cmip6_daily_view(daily_df.loc[daily_mask])
 
     if daily_baseline_data.empty:
         raise ValueError(
@@ -948,9 +969,15 @@ def compute_mixed_resolution_baseline(
 
             # Day-of-year climatology for daily data
             doy_clim = daily_baseline_data.groupby(daily_baseline_data.index.dayofyear)[var].mean()
+            month_day = daily_baseline_data.groupby(
+                daily_baseline_data.index.month * 100 + daily_baseline_data.index.day
+            )[var].mean()
+            if 229 not in month_day and {228, 301}.issubset(month_day.index):
+                month_day.loc[229] = (month_day.loc[228] + month_day.loc[301]) / 2.0
             baseline[var] = {
                 'resolution': 'daily',
                 'doy': doy_clim,
+                'month_day': month_day,
                 'overall': daily_baseline_data[var].mean(),
                 'transform': transform_type
             }
@@ -1101,7 +1128,11 @@ def compute_mixed_resolution_delta(daily_df, monthly_df, baseline, target_date):
                 continue
 
             future_val = cordex_daily.loc[target_day, var]
-            baseline_val = baseline_info['doy'].get(doy, baseline_info['overall'])
+            if "month_day" in baseline_info:
+                key = target_date.month * 100 + target_date.day
+                baseline_val = baseline_info["month_day"].get(key, baseline_info["overall"])
+            else:
+                baseline_val = baseline_info["doy"].get(doy, baseline_info["overall"])
 
         elif resolution == 'monthly':
             # Monthly variable: find the month containing target_date
@@ -1134,6 +1165,19 @@ def compute_mixed_resolution_delta(daily_df, monthly_df, baseline, target_date):
                 deltas[var] = 1.0
 
     return deltas
+
+
+def _report_delta_gaps(var: str, source: str, index: pd.DatetimeIndex, valid,
+                       model: str) -> None:
+    if valid.all():
+        return
+    dates = index[~valid].normalize().unique()
+    examples = ", ".join(dates[:5].strftime("%Y-%m-%d"))
+    message = (f"{model}: climate delta for '{var}' has no valid '{source}' values "
+               f"on {len(dates)} forecast day(s), starting with {examples}")
+    if var in REQUIRED_DELTA_VARS:
+        raise ValueError(message)
+    logger.warning("%s. Keeping the unadjusted values on these dates.", message)
 
 
 def apply_climate_delta(
@@ -1192,7 +1236,6 @@ def apply_climate_delta(
             cordex_monthly = _cordex_monthly_view(cordex)
 
         daily_deltas = {}
-        missing_days = 0
         delta_key_hits: dict[str, int] = {}
 
         for date in dates:
@@ -1200,16 +1243,15 @@ def apply_climate_delta(
                 d = compute_daily_delta(cordex, baseline, date, cordex_daily=cordex_daily_view)
             else:
                 d = compute_monthly_delta(cordex_monthly, baseline, date)
-            if not d:
-                missing_days += 1
-            else:
-                if debug:
-                    for k in d.keys():
-                        delta_key_hits[str(k)] = delta_key_hits.get(str(k), 0) + 1
-            daily_deltas[date.date()] = d
-
-        if missing_days:
-            print(f"  WARNING: {missing_days:,}/{len(dates):,} forecast days not found in CORDEX; leaving unchanged for those days")
+            finite = {key: value for key, value in d.items() if np.isfinite(value)}
+            if debug:
+                for key in finite:
+                    delta_key_hits[key] = delta_key_hits.get(key, 0) + 1
+            daily_deltas[date.date()] = finite
+        for var, source in VAR_TO_CORDEX.items():
+            if var in output_df:
+                valid = np.array([source in daily_deltas[date.date()] for date in dates])
+                _report_delta_gaps(var, source, dates, valid, model_name)
 
         if debug:
             print("\n[DEBUG] Daily delta key hit counts (top 20):")
@@ -1333,7 +1375,7 @@ def apply_mixed_resolution_climate_delta(
             print("[DEBUG] Baseline keys:")
             print("  ", sorted(map(str, baseline.keys())))
 
-        daily_view = _cordex_daily_view(daily_df)
+        daily_view = _cmip6_daily_view(daily_df)
         output_df['_date'] = output_df.index.normalize()
         output_df['_doy'] = output_df.index.dayofyear
         output_df['_month'] = output_df.index.month
@@ -1351,6 +1393,7 @@ def apply_mixed_resolution_climate_delta(
                         f"Climate delta for required variable '{var}' is unavailable: "
                         f"the baseline has no '{cordex_var}'. Provide complete daily "
                         "CMIP6 files covering the baseline period.")
+                logger.warning("%s: no baseline for optional climate delta '%s'.", model_name, var)
                 continue
 
             baseline_info = baseline[cordex_var]
@@ -1358,58 +1401,38 @@ def apply_mixed_resolution_climate_delta(
             transform = baseline_info['transform']
 
             if resolution == 'daily':
-                if cordex_var not in daily_view.columns:
-                    raise ValueError(
-                        f"Climate delta for '{var}' is unavailable: the scenario "
-                        f"file has no '{cordex_var}' column. Provide complete "
-                        "historical and scenario CMIP6 files.")
-
-                future_vals = daily_view[cordex_var].reindex(output_df['_date'])
-                baseline_doy = baseline_info['doy']
-                baseline_vals = output_df['_doy'].map(lambda d: baseline_doy.get(d, baseline_info['overall']))
+                future_vals = daily_view.get(cordex_var, pd.Series(dtype=float)).reindex(output_df['_date'])
+                if "month_day" in baseline_info:
+                    keys = output_df.index.month * 100 + output_df.index.day
+                    baseline_vals = baseline_info["month_day"].reindex(keys)
+                else:
+                    baseline_vals = output_df['_doy'].map(baseline_info['doy'])
 
             elif resolution == 'monthly':
-                if monthly_df.empty or cordex_var not in monthly_df.columns:
-                    raise ValueError(
-                        f"Climate delta for '{var}' is unavailable: the scenario "
-                        f"file has no monthly '{cordex_var}' column. Provide "
-                        "complete monthly CMIP6 files.")
-
-                monthly_df_copy = monthly_df.copy()
-                monthly_df_copy['_ym'] = monthly_df_copy.index.to_period('M')
-                monthly_lookup = monthly_df_copy.groupby('_ym')[cordex_var].first()
-
                 output_ym = output_df.index.to_period('M')
-                future_vals = output_ym.map(lambda ym: monthly_lookup.get(ym, np.nan))
-                month_clim = baseline_info['month_clim']
-                baseline_vals = output_df['_month'].map(lambda m: month_clim.get(m, baseline_info['overall']))
+                monthly_values = monthly_df.get(cordex_var, pd.Series(dtype=float))
+                if monthly_values.empty:
+                    future_vals = np.full(len(output_df), np.nan)
+                else:
+                    monthly_lookup = monthly_values.groupby(monthly_values.index.to_period('M')).first()
+                    future_vals = monthly_lookup.reindex(output_ym)
+                baseline_vals = output_df['_month'].map(baseline_info['month_clim'])
 
             else:
                 continue
 
-            future_vals = pd.to_numeric(future_vals, errors='coerce').values
-            baseline_vals = pd.to_numeric(baseline_vals, errors='coerce').values
+            future_vals = np.asarray(pd.to_numeric(future_vals, errors='coerce'), dtype=float)
+            baseline_vals = np.asarray(pd.to_numeric(baseline_vals, errors='coerce'), dtype=float)
+            valid_mask = np.isfinite(future_vals) & np.isfinite(baseline_vals)
+            _report_delta_gaps(var, cordex_var, output_df.index, valid_mask, model_name)
 
             if transform == 'additive':
                 delta = future_vals - baseline_vals
-                valid_mask = ~np.isnan(delta)
-                if not valid_mask.any():
-                    raise ValueError(
-                        f"Climate delta for '{var}' could not be applied: no valid "
-                        f"future '{cordex_var}' values for "
-                        f"{output_df.index.min()}..{output_df.index.max()}. "
-                        "Check that the scenario CMIP6 file covers the forecast period.")
                 output_df.loc[valid_mask, var] = output_df.loc[valid_mask, var].values + delta[valid_mask]
                 delta_stats[var] = delta[valid_mask].tolist()
             else:
-                ratio = np.where(baseline_vals > 0, future_vals / baseline_vals, 1.0)
-                valid_mask = ~np.isnan(ratio)
-                if not valid_mask.any():
-                    raise ValueError(
-                        f"Climate delta for '{var}' could not be applied: no valid "
-                        f"future '{cordex_var}' values for "
-                        f"{output_df.index.min()}..{output_df.index.max()}. "
-                        "Check that the scenario CMIP6 file covers the forecast period.")
+                ratio = np.divide(future_vals, baseline_vals, out=np.ones_like(future_vals),
+                                  where=valid_mask & (baseline_vals > 0))
                 output_df.loc[valid_mask, var] = output_df.loc[valid_mask, var].values * ratio[valid_mask]
                 delta_stats[var] = ratio[valid_mask].tolist()
 
@@ -1801,14 +1824,10 @@ def main():
                 n_fail += 1
                 continue
 
-            baseline = compute_cordex_baseline(
-                cordex,
-                args.baseline_start,
-                args.baseline_end,
-                mode=args.delta_mode
-            )
-
             try:
+                baseline = compute_cordex_baseline(
+                    cordex, args.baseline_start, args.baseline_end, mode=args.delta_mode
+                )
                 output_df, delta_stats = apply_climate_delta(
                     rsvar_df,
                     cordex,

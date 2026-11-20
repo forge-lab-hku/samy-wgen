@@ -22,8 +22,8 @@ def _write_cmip6_inputs(
     city_dir.mkdir(parents=True, exist_ok=True)
 
     def daily(years):
-        times = pd.to_datetime([
-            f"{year}-{month:02d}-16" for year in years for month in range(1, 13)
+        times = pd.DatetimeIndex([]).append([
+            pd.date_range(f"{year}-01-01", f"{year}-12-31", freq="D") for year in years
         ])
         return pd.DataFrame({"time": times, "tas": 300.0, "psl": 101000.0})
 
@@ -44,6 +44,15 @@ def _write_cmip6_inputs(
 
 
 class TestDownloadDefaults:
+    def test_daily_preflight_reports_a_missing_date(self, tmp_path):
+        from samy_wgen.pipeline.input_checks import _daily_coverage_issues
+
+        dates = pd.date_range("2030-01-01", "2030-12-31", freq="D")
+        frame = pd.DataFrame({"time": dates.delete(30), "tas": 290.0, "psl": 101000.0})
+        issues = _daily_coverage_issues("MPI", "scenario", tmp_path / "climate.csv", frame, [2030])
+        assert len(issues) == 2
+        assert all("2030-01-31" in issue for issue in issues)
+
     def test_cmip6_baseline_can_cross_historical_scenario_boundary(self, tmp_path):
         from samy_wgen.pipeline.input_checks import cmip6_coverage_issues
 
