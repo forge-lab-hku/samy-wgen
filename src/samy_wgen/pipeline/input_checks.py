@@ -16,6 +16,7 @@ import pandas as pd
 
 # Full monthly rsds trailing window required by the bounded solar calculation.
 CMIP6_SOLAR_TRAILING_YEARS = 20
+CMIP6_SCENARIO_START_YEAR = 2015
 
 # Hourly coverage thresholds for the ISD+NSRDB training series.  A year is
 # "thin" below WARN (reported) and cannot train below FAIL (aborts).  Edge
@@ -184,6 +185,9 @@ def cmip6_coverage_issues(
     if not forecast_years or not baseline_years:
         return [f"{city}: forecast/baseline year ranges are empty"]
 
+    required_years = sorted(set(baseline_years) | set(forecast_years))
+    historical_years = [year for year in required_years if year < CMIP6_SCENARIO_START_YEAR]
+    scenario_years = [year for year in required_years if year >= CMIP6_SCENARIO_START_YEAR]
     issues: list[str] = []
     for model in models:
         historical_daily_path = city_dir / f"{model}_historical.csv"
@@ -195,10 +199,10 @@ def cmip6_coverage_issues(
         scenario_daily = _read_cmip6_csv(scenario_daily_path)
         issues.extend(_daily_coverage_issues(
             model, "historical daily", historical_daily_path,
-            historical_daily, baseline_years))
+            historical_daily, historical_years))
         issues.extend(_daily_coverage_issues(
             model, "scenario daily", scenario_daily_path,
-            scenario_daily, forecast_years))
+            scenario_daily, scenario_years))
 
         daily_frames = [frame for frame in (historical_daily, scenario_daily)
                         if frame is not None]

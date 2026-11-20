@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 import time
 import zipfile
 
@@ -36,6 +37,7 @@ from typing import List, Optional
 
 import pandas as pd
 from samy_wgen.utils.city_utils import load_city_table, resolve_city, resolve_city_codes
+from samy_wgen.utils.file_lock import file_lock
 
 logger = logging.getLogger(__name__)
 
@@ -1605,33 +1607,36 @@ def _write_cmip6_final(
     only temperature is refreshed) are carried over, and rows outside the new
     request are retained, so a partial refresh cannot silently delete data.
     """
-    merged = frame.copy()
+    if not _cmip6_frame_covers_request(
+            frame, years, variables, complete_months=complete_months):
+        return False
+
+    with file_lock(out_csv.with_name(f".{out_csv.name}.lock")):
+        _update_cmip6_csv(out_csv, frame)
+    return True
+
+
+def _update_cmip6_csv(out_csv: Path, frame: pd.DataFrame) -> None:
+    merged = frame.assign(time=pd.to_datetime(frame["time"])).set_index("time")
     if out_csv.exists():
         try:
             existing = pd.read_csv(out_csv, parse_dates=["time"])
-        except (OSError, pd.errors.ParserError, ValueError, KeyError):
+        except (ValueError, KeyError):
             existing = None
-        if existing is not None and "time" in existing.columns:
-            existing = existing.drop_duplicates(subset="time", keep="last")
-            carried = [column for column in existing.columns if column != "time"
-                       and column not in merged.columns]
-            if carried:
-                merged = merged.merge(
-                    existing[["time", *carried]], on="time", how="outer")
-                merged = merged.sort_values("time").reset_index(drop=True)
+        if existing is not None:
+            existing["time"] = pd.to_datetime(existing["time"], errors="coerce")
+            existing = existing.dropna(subset=["time"]).drop_duplicates("time", keep="last")
+            carried = existing.set_index("time")
+            columns = list(merged.columns.union(carried.columns, sort=False))
+            merged = merged.combine_first(carried).reindex(columns=columns)
 
-    temporary = out_csv.with_name(f".{out_csv.name}.tmp")
+    with tempfile.NamedTemporaryFile(dir=out_csv.parent, delete=False) as stream:
+        temporary = Path(stream.name)
     try:
-        merged.to_csv(temporary, index=False)
-        if not _cmip6_csv_covers_request(
-                temporary, years, variables, complete_months=complete_months):
-            temporary.unlink(missing_ok=True)
-            return False
+        merged.sort_index().to_csv(temporary, index_label="time")
         temporary.replace(out_csv)
-        return True
-    except Exception:
+    finally:
         temporary.unlink(missing_ok=True)
-        raise
 
 
 def _cmip6_dataset_to_point_dfs(ds, city_points: dict[str, tuple[float, float]]) -> dict[str, pd.DataFrame]:

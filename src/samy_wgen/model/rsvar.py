@@ -161,10 +161,10 @@ class ForecastTo2100V5:
             if len(self.isd_baseline) < 8760 * 5:
                 print("  WARNING: Baseline period has less than 5 years of data!")
 
-            training_mask = self.isd_data.index.year <= 2010
+            training_mask = self.isd_data.index.year <= self.baseline_end
             self.isd_training = self.isd_data.loc[training_mask].copy()
 
-            print(f"\n*** TRAINING PERIOD (RS-VAR): ALL DATA UP TO 2010 ***")
+            print(f"\n*** TRAINING PERIOD (RS-VAR): ALL DATA UP TO {self.baseline_end} ***")
             print(f"    ISD training records: {len(self.isd_training):,} hours")
             print(f"    ISD training coverage: {self.isd_training.index.min()} to {self.isd_training.index.max()}")
             print(f"    Training years: {self.isd_training.index.year.max() - self.isd_training.index.year.min() + 1}")

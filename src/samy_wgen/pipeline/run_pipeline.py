@@ -19,7 +19,8 @@ Outputs land in --out-dir/<city>/ with numbered intermediate files:
   member_NNN.parquet       ensemble members (ensemble only)
   ensemble_summary.xlsx    p05/median/p95 (ensemble only)
 
-Intermediate files are skipped on re-runs unless --overwrite is passed.
+Intermediate files are reused when their inputs and parameters match.
+Pass --overwrite to rebuild them.
 
 USAGE:
   samy-run --city Miami
@@ -30,6 +31,7 @@ USAGE:
 """
 
 import argparse
+import json
 import math
 import tempfile
 from pathlib import Path
@@ -37,8 +39,10 @@ from typing import Iterable
 
 import pandas as pd
 from samy_wgen.utils.city_utils import resolve_city, resolve_city_codes
+from samy_wgen.utils.file_lock import file_lock
 
 from samy_wgen.pipeline.input_checks import (
+    CMIP6_SCENARIO_START_YEAR,
     CMIP6_SOLAR_TRAILING_YEARS,
     cmip6_coverage_issues,
     format_cmip6_issues,
@@ -56,7 +60,7 @@ FORECAST_START = "2025-01-01"
 FORECAST_END   = "2100-12-31 23:00"
 DEFAULT_EPW_YEARS = "2030,2050,2080"
 DEFAULT_SSP    = "ssp245"
-DEFAULT_DOWNLOAD_DATA = ["isd", "nsrdb", "cmip6"]
+DEFAULT_DOWNLOAD_DATA = ["isd", "nsrdb", "era5-land", "cmip6"]
 DEFAULT_CMIP6_MODEL = "mpi_esm1_2_lr"
 DEFAULT_ISD_RADIUS_KM = 50.0
 DEFAULT_ISD_YEAR_RANGE = (1970, 2024)
@@ -78,6 +82,47 @@ FUTURE_DDY_PERIODS = {
 
 def _print_title(title: str) -> None:
     print(f"\n{'-' * 12} {title} {'-' * 12}")
+
+
+def _file_signature(path: Path) -> list:
+    resolved = path.resolve()
+    try:
+        stat = resolved.stat()
+    except FileNotFoundError:
+        return [str(resolved), None]
+    return [str(resolved), stat.st_size, stat.st_mtime_ns]
+
+
+def _cached_outputs(path: Path, inputs: dict) -> list[Path] | None:
+    try:
+        manifest = json.loads(path.read_text())
+        if manifest["inputs"] != inputs:
+            return None
+        signatures = manifest["outputs"]
+        outputs = [Path(signature[0]) for signature in signatures]
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return None
+    if all(output.is_file() for output in outputs) and signatures == [
+        _file_signature(output) for output in outputs
+    ]:
+        return outputs
+    return None
+
+
+def _cache_matches(path: Path, inputs: dict, *outputs: Path) -> bool:
+    return _cached_outputs(path, inputs) == [output.resolve() for output in outputs]
+
+
+def _save_cache(path: Path, inputs: dict, *outputs: Path) -> None:
+    manifest = {"inputs": inputs, "outputs": [_file_signature(output) for output in outputs]}
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            json.dump(manifest, stream)
+            stream.close()
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 # ==========================================================================
@@ -150,6 +195,109 @@ def _find_nsrdb_csv(city: str, base: Path) -> Path:
     return matches[0]
 
 
+def _solar_months(path: Path) -> pd.PeriodIndex:
+    frame = pd.read_csv(
+        path, usecols=lambda col: col in {"DATE", "Year", "Month", "GHI", "DNI", "DHI"},
+    )
+    solar = ["GHI", "DNI", "DHI"]
+    if not set(solar).issubset(frame):
+        return pd.PeriodIndex([], freq="M")
+    frame = frame.dropna(subset=solar)
+    if "DATE" in frame:
+        dates = pd.to_datetime(frame["DATE"], errors="coerce")
+    elif {"Year", "Month"}.issubset(frame):
+        dates = pd.to_datetime(
+            {"year": frame["Year"], "month": frame["Month"], "day": 1}, errors="coerce",
+        )
+    else:
+        return pd.PeriodIndex([], freq="M")
+    return pd.PeriodIndex(dates.dropna(), freq="M").unique().sort_values()
+
+
+def _cached_calibrated_solar(args, city: str, data_dir: Path) -> Path | None:
+    from samy_wgen.utils.time_utils import get_utc_offset
+
+    calibrated = data_dir / "ERA5_Land" / "calibrated" / f"{city.lower()}_solar_calibrated.csv"
+    if not calibrated.is_file():
+        return None
+    try:
+        offset = json.loads(calibrated.with_suffix(".metadata.json").read_text())["utc_offset_hours"]
+        if offset != get_utc_offset(city=city):
+            return None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    years = _baseline_years(args)
+    expected = pd.period_range(f"{years[0]}-01", f"{years[-1]}-12", freq="M")
+    return calibrated if expected.isin(_solar_months(calibrated)).all() else None
+
+
+def _resolve_solar_for_baseline(args, city: str, data_dir: Path, out_dir: Path,
+                                nsrdb_csv: Path, meta: dict) -> Path:
+    """Extend the local NSRDB record when solar coverage misses baseline months."""
+    from samy_wgen.pipeline.download_data import _era5_land_file_covers_request, download_era5_land
+    from samy_wgen.utils.solar_calibration import calibrate_era5_land_solar
+
+    expected = pd.period_range(f"{args.baseline_start}-01", f"{args.baseline_end}-12", freq="M")
+    observed = _solar_months(nsrdb_csv)
+    if expected.isin(observed).all():
+        return nsrdb_csv
+
+    calibrated = _cached_calibrated_solar(args, city, data_dir)
+    if calibrated is not None:
+        print(f"  [solar] Using calibrated input: {calibrated}")
+        return calibrated
+    if observed.empty:
+        raise SystemExit(f"ERROR: No complete solar observations in {nsrdb_csv}; supply --nsrdb.")
+
+    # The fixed-LST baseline needs one extra UTC day at each edge.
+    start = min(expected[0].start_time - pd.Timedelta(days=1), observed[0].start_time)
+    end = max(expected[-1].end_time.normalize() + pd.Timedelta(days=1),
+              observed[-1].end_time.normalize())
+    era_dir = data_dir / "ERA5_Land"
+    variable = "surface_solar_radiation_downwards"
+    era_path = None
+    for candidate in sorted((era_dir / city).glob(f"era5_land_{city.lower()}_{variable}_*.nc")):
+        try:
+            first, last = map(pd.Timestamp, candidate.stem.rsplit("_", 1)[-1].split("-"))
+        except ValueError:
+            continue
+        if first <= start and last >= end and _era5_land_file_covers_request(candidate, variable, first, last):
+            era_path = candidate
+            break
+    if era_path is None:
+        if args.skip_download or "era5-land" not in args.download_data:
+            raise SystemExit(
+                f"ERROR: NSRDB misses months in the {args.baseline_start}–{args.baseline_end} baseline for {city}. "
+                "Supply a calibrated LST solar CSV via --nsrdb or allow ERA5-Land download."
+            )
+        _print_title("Download ERA5-Land Solar")
+        era_path, = download_era5_land(
+            city, lat=meta["lat"], lon=meta["lon"], start_date=start.date().isoformat(),
+            end_date=end.date().isoformat(), output_dir=str(era_dir), variables=[variable],
+        )
+
+    output = out_dir / "2_solar_extended_lst.csv"
+    cache_path = out_dir / ".2_solar_extended_lst.json"
+    cache_inputs = {
+        "era5": _file_signature(era_path), "nsrdb": _file_signature(nsrdb_csv),
+        "lat": meta["lat"], "longitude": meta["lon"], "tz": meta["tz"],
+    }
+    if not args.overwrite and _cache_matches(cache_path, cache_inputs, output):
+        return output
+
+    _print_title("Extend NSRDB With ERA5-Land")
+    cache_path.unlink(missing_ok=True)
+    solar = calibrate_era5_land_solar(
+        era_path, nsrdb_csv, latitude=meta["lat"], longitude=meta["lon"],
+        utc_offset_hours=meta["tz"], nsrdb_time_basis="lst", preserve_observations=True,
+    )
+    solar.to_csv(output)
+    if not expected.isin(_solar_months(output)).all():
+        raise SystemExit(f"ERROR: Calibrated solar still misses baseline months for {city}: {output}")
+    _save_cache(cache_path, cache_inputs, output)
+    return output
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="One-click SAMY weather generation pipeline",
@@ -164,7 +312,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--isd-dir", default=None,
                         help="ISD station directory (overrides auto-detect under data-dir/ISD/<city>/)")
     parser.add_argument("--nsrdb", default=None,
-                        help="NSRDB solar CSV path (overrides auto-detect under data-dir/NSRDB/)")
+                        help="Explicit solar CSV in fixed local standard time")
     parser.add_argument("--cmip6-dir", default=None,
                         help="CMIP6 root directory (overrides data-dir/CMIP6)")
     parser.add_argument("--gcm", default=None,
@@ -201,7 +349,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0, help="Base random seed")
 
     parser.add_argument("--download-data", nargs="+",
-                        choices=["isd", "nsrdb", "cmip6"],
+                        choices=["isd", "nsrdb", "era5-land", "cmip6"],
                         default=DEFAULT_DOWNLOAD_DATA,
                         help="Auto-download these datasets when required inputs are missing")
     parser.add_argument("--skip-download", action="store_true",
@@ -305,8 +453,9 @@ def _parse_isd_station_args(values: list[str] | None, cities: list[str]) -> dict
 def _cmip6_download_range(args) -> tuple[int, int]:
     baseline = _baseline_years(args)
     forecast = _forecast_years(args)
-    start = min(min(baseline), min(forecast) - CMIP6_SOLAR_TRAILING_YEARS + 1)
-    end = max(max(baseline), max(forecast))
+    start = min(min(baseline), min(forecast) - CMIP6_SOLAR_TRAILING_YEARS + 1,
+                CMIP6_SCENARIO_START_YEAR - 1)
+    end = max(max(baseline), max(forecast), CMIP6_SCENARIO_START_YEAR)
     requested = getattr(args, "cmip6_years", None)
     if requested:
         start = min(start, int(requested[0]))
@@ -348,6 +497,8 @@ def _ensure_pipeline_inputs(args, data_dir: Path, city: str, cmip6_dir: Path | N
 
     if args.nsrdb:
         nsrdb_csv = Path(args.nsrdb)
+    elif (calibrated := _cached_calibrated_solar(args, city, data_dir)) is not None:
+        nsrdb_csv = calibrated
     else:
         try:
             nsrdb_csv = _find_nsrdb_csv(city, data_dir)
@@ -447,17 +598,12 @@ def _stage0_parse_isd(isd_station_dir: Path) -> pd.DataFrame:
 
 def _stage1_remap_to_lst(isd_raw: pd.DataFrame, city: str,
                           lat: float, lon: float,
-                          out_dir: Path, overwrite: bool) -> pd.DataFrame:
+                          out_dir: Path) -> pd.DataFrame:
     """Remap ISD columns + UTC→LST + resample to hourly → 1_isd_lst.csv."""
     from samy_wgen.utils.parse_ISD import remap_isd_columns, resample_isd_hourly
     from samy_wgen.utils.time_utils import utc_to_lst
 
     csv_path = out_dir / "1_isd_lst.csv"
-    if csv_path.exists() and not overwrite:
-        _print_title("Stage 1 Remap To LST")
-        print(f"[stage 1] Cache hit: {csv_path.name}")
-        return pd.read_csv(csv_path, parse_dates=["DATE"]).set_index("DATE")
-
     _print_title("Stage 1 Remap To LST")
     print(f"[stage 1] Remapping ISD columns + UTC→LST")
     raw = isd_raw.dropna(subset=["datestamp"]).set_index("datestamp").sort_index()
@@ -477,15 +623,21 @@ def _stage1_remap_to_lst(isd_raw: pd.DataFrame, city: str,
 
 
 def _stage2_merge_nsrdb(isd_lst: pd.DataFrame, nsrdb_csv: Path,
-                         out_dir: Path, overwrite: bool) -> Path:
+                         out_dir: Path, overwrite: bool, *, isd_csv: Path | None = None) -> Path:
     """Merge ISD LST + NSRDB solar (GHI/DNI/DHI) → 2_isd_solar_lst.csv."""
     csv_path = out_dir / "2_isd_solar_lst.csv"
-    if csv_path.exists() and not overwrite:
+    cache_path = out_dir / ".2_isd_solar_lst.json"
+    cache_inputs = (
+        {"isd": _file_signature(isd_csv), "solar": _file_signature(nsrdb_csv)}
+        if isd_csv is not None else None
+    )
+    if not overwrite and cache_inputs is not None and _cache_matches(cache_path, cache_inputs, csv_path):
         _print_title("Stage 2 Merge NSRDB")
         print(f"[stage 2] Cache hit: {csv_path.name}")
         return csv_path
 
     _print_title("Stage 2 Merge NSRDB")
+    cache_path.unlink(missing_ok=True)
     print(f"[stage 2] Merging NSRDB solar: {nsrdb_csv.name}")
     nsrdb = pd.read_csv(nsrdb_csv)
     if "DATE" in nsrdb:
@@ -512,6 +664,8 @@ def _stage2_merge_nsrdb(isd_lst: pd.DataFrame, nsrdb_csv: Path,
     print(f"  {len(merged):,} hourly rows, {yr_min}–{yr_max}")
     merged.index.name = "DATE"
     merged.to_csv(csv_path)
+    if cache_inputs is not None:
+        _save_cache(cache_path, cache_inputs, csv_path)
     print(f"  saved: {csv_path.name}")
     return csv_path
 
@@ -525,31 +679,28 @@ def _stage3_rsvar(merged_csv: Path, lat: float, longitude: float, city: str,
 
     xlsx_path = out_dir / "3_rsvar.xlsx"
     calibration_path = xlsx_path.with_name(xlsx_path.stem + "_solar_calibration.csv")
-    if xlsx_path.exists() and calibration_path.exists() and not overwrite:
+    cache_path = out_dir / ".3_rsvar.json"
+    cache_inputs = {
+        "weather": _file_signature(merged_csv),
+        "city": city, "lat": lat, "longitude": longitude,
+        "baseline": [baseline_start, baseline_end],
+        "forecast": [pd.Timestamp(forecast_start).isoformat(), pd.Timestamp(forecast_end).isoformat()],
+    }
+    outputs = (xlsx_path, xlsx_path.with_suffix(".csv"), calibration_path)
+    if not overwrite and _cache_matches(cache_path, cache_inputs, *outputs):
         _print_title("Stage 3 Run RS-VAR")
         print(f"[stage 3] Cache hit: {xlsx_path.name}")
         return xlsx_path
 
     _print_title("Stage 3 Run RS-VAR")
     print(f"[stage 3] Training RS-VAR ({city}, lat={lat:.2f}°N)")
-    # Temporarily patch the module-level constants so run_and_save_rsvar uses our periods
-    import samy_wgen.pipeline.run_rsvar as _rsvar_mod
-    _orig_start = _rsvar_mod.BASELINE_START
-    _orig_end   = _rsvar_mod.BASELINE_END
-    _orig_fs    = _rsvar_mod.FORECAST_START
-    _orig_fe    = _rsvar_mod.FORECAST_END
-    try:
-        _rsvar_mod.BASELINE_START = baseline_start
-        _rsvar_mod.BASELINE_END   = baseline_end
-        _rsvar_mod.FORECAST_START = forecast_start
-        _rsvar_mod.FORECAST_END   = forecast_end
-        run_and_save_rsvar(isd_path=merged_csv, lat=lat, output_path=xlsx_path,
-                           city=city, verbose=False, longitude=longitude)
-    finally:
-        _rsvar_mod.BASELINE_START = _orig_start
-        _rsvar_mod.BASELINE_END   = _orig_end
-        _rsvar_mod.FORECAST_START = _orig_fs
-        _rsvar_mod.FORECAST_END   = _orig_fe
+    cache_path.unlink(missing_ok=True)
+    run_and_save_rsvar(
+        isd_path=merged_csv, lat=lat, output_path=xlsx_path, city=city,
+        verbose=False, longitude=longitude, baseline_start=baseline_start,
+        baseline_end=baseline_end, forecast_start=forecast_start, forecast_end=forecast_end,
+    )
+    _save_cache(cache_path, cache_inputs, *outputs)
 
     print(f"  saved: {xlsx_path.name}")
     return xlsx_path
@@ -569,13 +720,32 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
     )
 
     csv_path = out_dir / "4_delta_corrected.csv"
-    if csv_path.exists() and (out_dir / "4_solar_monthly_energy.csv").exists() and not overwrite:
+    energy_path = out_dir / "4_solar_monthly_energy.csv"
+    cache_path = out_dir / ".4_delta.json"
+    climate_dir = cmip6_dir / city.replace(" ", "_")
+    climate_paths = sorted({
+        path for label in ("historical", ssp)
+        for suffix in ("", "_monthly")
+        for path in climate_dir.glob(f"*_{label}{suffix}.csv")
+    })
+    rsvar_paths = [rsvar_xlsx]
+    if rsvar_xlsx.suffix == ".xlsx":
+        rsvar_paths.append(rsvar_xlsx.with_suffix(".csv"))
+    cache_inputs = {
+        "rsvar": [_file_signature(path) for path in rsvar_paths],
+        "climate_dir": str(climate_dir.resolve()),
+        "climate_files": [_file_signature(path) for path in climate_paths],
+        "city": city, "lat": lat, "longitude": longitude, "ssp": ssp, "gcm": gcm,
+        "baseline": [baseline_start, baseline_end],
+    }
+    if not overwrite and _cache_matches(cache_path, cache_inputs, csv_path, energy_path):
         _print_title("Stage 4 Apply Climate Delta")
         print(f"[stage 4] Cache hit: {csv_path.name}")
         return pd.read_csv(csv_path, parse_dates=["datetime"]).set_index("datetime")
 
     _print_title("Stage 4 Apply Climate Delta")
     print(f"[stage 4] Applying CMIP6 climate delta ({ssp})")
+    cache_path.unlink(missing_ok=True)
     daily_df, monthly_df, meta = load_cmip6_or_cordex6(
         base_path=cmip6_dir, city=city, ssp=ssp,
         scenario_id=f"{gcm}_{ssp}" if gcm else None,
@@ -606,7 +776,10 @@ def _stage4_climate_delta(rsvar_xlsx: Path, cmip6_dir: Path,
     output_df.to_csv(csv_path)
     monthly_energy = output_df.attrs.get("solar_monthly_energy")
     if monthly_energy is not None:
-        monthly_energy.to_csv(out_dir / "4_solar_monthly_energy.csv", index=False)
+        monthly_energy.to_csv(energy_path, index=False)
+        _save_cache(cache_path, cache_inputs, csv_path, energy_path)
+    else:
+        energy_path.unlink(missing_ok=True)
     print(f"  saved: {csv_path.name} ({len(output_df):,} rows)")
     return output_df
 
@@ -615,37 +788,45 @@ def _load_hourly_csv(csv_path: Path, datetime_col: str) -> pd.DataFrame:
     return pd.read_csv(csv_path, parse_dates=[datetime_col]).set_index(datetime_col)
 
 
-def _output_historical_epw(merged_csv: Path, city: str, meta: dict, out_dir: Path, overwrite: bool) -> Path:
-    """Write the actual historical 2000 EPW from the merged ISD+NSRDB sequence."""
+def _output_historical_epw(
+    merged_csv: Path, city: str, meta: dict, out_dir: Path, overwrite: bool,
+    baseline_start: int = BASELINE_START, baseline_end: int = BASELINE_END,
+) -> Path | None:
+    """Prefer 2000, then try the latest exportable year in the fit baseline."""
     from samy_wgen.pipeline.gen_samy import _write_epw_for_year
 
     historical_df = _load_hourly_csv(merged_csv, "DATE")
     epw_dir = out_dir / "EPW"
     epw_dir.mkdir(parents=True, exist_ok=True)
-    epw_path = epw_dir / f"{city}_historical_2000.epw"
-
-    if epw_path.exists() and not overwrite:
-        print(f"  [EPW] Cache hit: {epw_path.name}")
-        return epw_path
-
-    if (historical_df.index.year == 2000).sum() == 0:
-        raise SystemExit(
-            f"ERROR: historical merged sequence for {city} does not contain year 2000; cannot write {epw_path.name}"
-        )
-
-    _write_epw_for_year(
-        df=historical_df,
-        year=2000,
-        out_path=epw_path,
-        location=f"{city}-{meta.get('country', 'XX')}",
-        lat=meta["lat"],
-        lon=meta["lon"],
-        tz=meta["tz"],
-        elevation_m=meta.get("elevation_m", 0.0),
-        pressure_reference="sea_level",
+    years = historical_df.index.year.unique()
+    candidates = sorted(
+        (year for year in years if year == 2000 or baseline_start <= year <= baseline_end),
+        key=lambda year: (year == 2000, year), reverse=True,
     )
-    print(f"  [EPW] {epw_path.name}")
-    return epw_path
+    for year in candidates:
+        epw_path = epw_dir / f"{city}_historical_{year}.epw"
+        if epw_path.exists() and not overwrite:
+            print(f"  [EPW] Cache hit: {epw_path.name}")
+            return epw_path
+        try:
+            _write_epw_for_year(
+                df=historical_df,
+                year=year,
+                out_path=epw_path,
+                location=f"{city}-{meta.get('country', 'XX')}",
+                lat=meta["lat"],
+                lon=meta["lon"],
+                tz=meta["tz"],
+                elevation_m=meta.get("elevation_m", 0.0),
+                pressure_reference="sea_level",
+            )
+        except ValueError as exc:
+            print(f"  [EPW] WARNING: historical {year} skipped ({exc})")
+            continue
+        print(f"  [EPW] {epw_path.name}")
+        return epw_path
+    print("  [EPW] WARNING: no complete historical year available for export")
+    return None
 
 
 def _output_epw(output_df: pd.DataFrame, epw_years: list[int],
@@ -794,11 +975,18 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
     print("=" * 70)
 
     isd_lst_cache = out_dir / "1_isd_lst.csv"
-    if isd_lst_cache.exists() and not ow:
-        _print_title("Stage 0 Parse ISD")
+    isd_manifest = out_dir / ".1_isd_lst.json"
+    isd_inputs = {
+        "station": str(isd_station_dir.resolve()),
+        "files": [_file_signature(path) for path in sorted(isd_station_dir.glob("*.gz"))],
+        "city": city, "lat": meta["lat"], "longitude": meta["lon"], "tz": meta["tz"],
+    }
+    if not ow and _cache_matches(isd_manifest, isd_inputs, isd_lst_cache):
+        _print_title("Stage 1 Remap To LST")
         print("[stage 1] Cache hit: 1_isd_lst.csv  (skipping ISD parse)")
         isd_lst = pd.read_csv(isd_lst_cache, parse_dates=["DATE"]).set_index("DATE")
     else:
+        isd_manifest.unlink(missing_ok=True)
         isd_raw = _stage0_parse_isd(isd_station_dir)
         isd_lst = _stage1_remap_to_lst(
             isd_raw,
@@ -806,10 +994,12 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             meta["lat"],
             meta["lon"],
             out_dir,
-            overwrite=ow,
         )
+        _save_cache(isd_manifest, isd_inputs, isd_lst_cache)
 
-    merged_csv = _stage2_merge_nsrdb(isd_lst, nsrdb_csv, out_dir, overwrite=ow)
+    if not args.nsrdb:
+        nsrdb_csv = _resolve_solar_for_baseline(args, city, data_dir, out_dir, nsrdb_csv, meta)
+    merged_csv = _stage2_merge_nsrdb(isd_lst, nsrdb_csv, out_dir, overwrite=ow, isd_csv=isd_lst_cache)
 
     if args.mode == "deterministic":
         if args.rsvar_input:
@@ -845,40 +1035,56 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
             overwrite=ow,
             gcm=args.gcm,
         )
-        print(f"\n[output] Writing historical EPW for 2000")
-        historical_epw = _output_historical_epw(
-            merged_csv=merged_csv,
-            city=city,
-            meta=meta,
-            out_dir=out_dir,
-            overwrite=ow,
-        )
-        print(f"\n[output] Writing future EPW files for years: {epw_years}")
-        future_epws = _output_epw(
-            output_df=output_df,
-            epw_years=epw_years,
-            city=city,
-            ssp=args.ssp,
-            meta=meta,
-            out_dir=out_dir,
-            overwrite=ow,
-        )
-        print(f"\n[output] Writing baseline/future DDY files")
-        ddys = _output_ddy_files(
-            merged_csv=merged_csv,
-            output_df=output_df,
-            city=city,
-            ssp=args.ssp,
-            meta=meta,
-            baseline_start=args.baseline_start,
-            baseline_end=args.baseline_end,
-            out_dir=out_dir,
-            overwrite=ow,
-        )
+        export_manifest = out_dir / ".exports.json"
+        export_inputs = {
+            "historical": _file_signature(merged_csv),
+            "future": _file_signature(out_dir / "4_delta_corrected.csv"),
+            "city": city, "ssp": args.ssp, "meta": meta, "epw_years": epw_years,
+            "baseline": [args.baseline_start, args.baseline_end],
+        }
+        exports = None if ow else _cached_outputs(export_manifest, export_inputs)
+        if exports is None:
+            export_manifest.unlink(missing_ok=True)
+            print("\n[output] Writing historical EPW")
+            historical_epw = _output_historical_epw(
+                merged_csv=merged_csv,
+                city=city,
+                meta=meta,
+                out_dir=out_dir,
+                overwrite=True,
+                baseline_start=args.baseline_start,
+                baseline_end=args.baseline_end,
+            )
+            print(f"\n[output] Writing future EPW files for years: {epw_years}")
+            future_epws = _output_epw(
+                output_df=output_df,
+                epw_years=epw_years,
+                city=city,
+                ssp=args.ssp,
+                meta=meta,
+                out_dir=out_dir,
+                overwrite=True,
+            )
+            print("\n[output] Writing baseline/future DDY files")
+            ddys = _output_ddy_files(
+                merged_csv=merged_csv,
+                output_df=output_df,
+                city=city,
+                ssp=args.ssp,
+                meta=meta,
+                baseline_start=args.baseline_start,
+                baseline_end=args.baseline_end,
+                out_dir=out_dir,
+                overwrite=True,
+            )
+            exports = ([historical_epw] if historical_epw else []) + future_epws + ddys
+            _save_cache(export_manifest, export_inputs, *exports)
+        else:
+            print(f"\n[output] Cache hit: {', '.join(path.name for path in exports) or 'no exportable files'}")
         print(f"\n{'='*70}")
         print(
-            f"DONE — {1 + len(future_epws)} EPW file(s) in {out_dir / 'EPW'} "
-            f"and {len(ddys)} DDY file(s) in {out_dir / 'DDY'}"
+            f"DONE — {sum(path.suffix == '.epw' for path in exports)} EPW file(s) in {out_dir / 'EPW'} "
+            f"and {sum(path.suffix == '.ddy' for path in exports)} DDY file(s) in {out_dir / 'DDY'}"
         )
     else:
         ens_dir = _stage3_ensemble(
@@ -900,12 +1106,17 @@ def _run_city_pipeline(args, city: str, data_dir: Path, cmip6_dir: Path) -> None
 def main():
     parser = _build_parser()
     args = parser.parse_args()
+    if args.baseline_start > args.baseline_end:
+        parser.error("--baseline-start must be on or before --baseline-end")
     args.city = _normalize_city_args(args.city)
     data_dir = Path(args.data_dir)
 
     cmip6_dir = _ensure_batch_cmip6_inputs(args, data_dir, args.city)
     for city in args.city:
-        _run_city_pipeline(args, city, data_dir, cmip6_dir)
+        out_dir = _city_out_dir(args, city)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with file_lock(out_dir / ".samy-run.lock"):
+            _run_city_pipeline(args, city, data_dir, cmip6_dir)
 
 
 if __name__ == "__main__":

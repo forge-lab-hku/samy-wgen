@@ -2022,6 +2022,30 @@ class TestCmip6CoverageValidation:
         assert written is False
         assert out_csv.read_bytes() == before
 
+    @pytest.mark.parametrize("keep_pressure", [True, False])
+    def test_cmip6_refresh_preserves_prior_years_and_null_cells(self, tmp_path, keep_pressure):
+        from samy_wgen.pipeline.download_data import _write_cmip6_final
+
+        out_csv = tmp_path / "mpi_esm1_2_lr_ssp245.csv"
+        existing = pd.DataFrame({
+            "time": pd.to_datetime(["2030-01-01", "2031-01-01", "2031-01-02"]),
+            "tas": [280.0, 281.0, 282.0],
+        })
+        if keep_pressure:
+            existing["psl"] = 101000.0
+        existing.to_csv(out_csv, index=False)
+        refresh = pd.DataFrame({
+            "time": pd.to_datetime(["2031-01-01", "2031-01-02", "2032-01-01"]),
+            "tas": [290.0, np.nan, 292.0],
+        })
+
+        assert _write_cmip6_final(out_csv, refresh, [2031, 2032], ["tas"])
+
+        result = pd.read_csv(out_csv)
+        assert result["tas"].tolist() == [280.0, 290.0, 282.0, 292.0]
+        if keep_pressure:
+            assert result["psl"].notna().sum() == 3
+
 
 # ─── Integration tests (slow, real network) ───────────────────────────────────
 

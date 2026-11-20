@@ -142,6 +142,35 @@ def test_calibrate_era5_land_solar_rejects_insufficient_overlap(tmp_path):
         )
 
 
+def test_samy_run_extends_solar_baseline_and_preserves_nsrdb(tmp_path):
+    from samy_wgen.pipeline import download_data, run_pipeline
+    from samy_wgen.utils.solar_calibration import _cos_zenith
+
+    lat, lon, offset = 25.78, -80.21, -5.0
+    lst = pd.date_range("1999-12-31", "2001-01-09", freq="h")
+    utc = lst + pd.Timedelta(hours=-offset)
+    cosz = _cos_zenith(lat, lon, pd.DatetimeIndex(utc, tz="UTC"))
+    ghi = 400 * np.maximum(cosz, 0)
+    era5_path = tmp_path / "era5.nc"
+    _write_era5_nc(era5_path, utc, ghi * 0.5 * 3600)
+    overlap = lst.year == 2001
+    nsrdb = tmp_path / "nsrdb.csv"
+    _write_nsrdb_csv(nsrdb, lst[overlap], ghi[overlap],
+                     np.where(cosz[overlap] > 0, 300, 0), ghi[overlap] / 4)
+    with patch.object(download_data, "download_era5_land", return_value=[era5_path]) as download:
+        args = run_pipeline._build_parser().parse_args(
+            ["--city", "Miami", "--baseline-start", "2000", "--baseline-end", "2000"]
+        )
+        meta = {"lat": lat, "lon": lon, "tz": offset}
+        result = run_pipeline._resolve_solar_for_baseline(args, "Miami", tmp_path, tmp_path, nsrdb, meta)
+
+    download.assert_called_once()
+    solar = pd.read_csv(result, parse_dates=["DATE"]).set_index("DATE")
+    assert len(solar.loc["2000"]) == 8784
+    np.testing.assert_allclose(solar.loc[lst[overlap], "GHI"], ghi[overlap])
+    assert solar.loc["2000", "GHI"].max() > 0
+
+
 def test_download_parser_accepts_era5_land_and_range():
     from samy_wgen.pipeline.download_data import _build_parser
 

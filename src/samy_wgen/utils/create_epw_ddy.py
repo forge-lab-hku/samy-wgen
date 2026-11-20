@@ -23,15 +23,10 @@ import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from datetime import datetime
-import tempfile
 
-os.environ.setdefault("NUMBA_CACHE_DIR", str(Path(tempfile.gettempdir()) / "numba-cache"))
-
-from timezonefinder import TimezoneFinder
-import pytz
 import argparse
 from samy_wgen.utils.calculate_weather_var import calc_dewpoint_from_Q, calc_RH_from_dewpoint, calc_wetbulb
+from samy_wgen.utils.time_utils import get_utc_offset
 
 
 def get_timezone_offset(latitude, longitude):
@@ -45,20 +40,12 @@ def get_timezone_offset(latitude, longitude):
     Returns:
         UTC offset in hours (float)
     """
-    tf = TimezoneFinder()
-    tz_name = tf.timezone_at(lat=latitude, lng=longitude)
-
-    if tz_name is None:
+    try:
+        return get_utc_offset(latitude=latitude, longitude=longitude)
+    except ValueError:
         print(f"  Warning: Could not find timezone for lat={latitude}, lon={longitude}")
         print(f"  Using approximate timezone from longitude")
         return round(longitude / 15.0)
-
-    # EPW uses local standard time. January is summer in the Southern Hemisphere.
-    tz = pytz.timezone(tz_name)
-    offsets = [tz.localize(datetime(2020, month, 15, 12)).utcoffset().total_seconds() / 3600.0
-               for month in (1, 7)]
-    return min(offsets)
-
 
 def load_city_metadata(config_path):
     """

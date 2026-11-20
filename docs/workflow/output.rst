@@ -14,10 +14,17 @@ The default output directory is ``output/<City>/``:
    └── DDY/
 
 ``4_delta_corrected.csv`` is the continuous, climate-adjusted hourly series.
-The pipeline writes a historical EPW for 2000 from the merged observation
-record, plus future EPWs for selected years of the adjusted series. It also
-derives baseline and future DDY design-day files. By default, future EPW years
-are 2030, 2050, and 2080.
+The historical EPW uses 2000 when the merged weather record can provide a
+complete year. Otherwise the pipeline tries the latest complete year in the
+fit baseline and skips the historical EPW with a warning if none is
+available. It also writes future EPWs for selected years of the adjusted
+series and derives baseline and future DDY design-day files. By default,
+future EPW years are 2030, 2050, and 2080.
+
+On a rerun, the pipeline checks the saved input signatures and run parameters
+before reusing intermediates or exports. The run summary refers to the
+current invocation. The output directory may contain files from earlier
+invocations with different requested years.
 
 .. code-block:: console
 

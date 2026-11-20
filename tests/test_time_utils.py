@@ -40,6 +40,15 @@ class TestNormalizeCityArgs:
 
 
 class TestUtcToLst:
+    @pytest.mark.parametrize(("latitude", "longitude", "offset"), [
+        (-33.87, 151.20, 10), (-36.85, 174.76, 12), (-33.45, -70.67, -4),
+    ])
+    def test_southern_hemisphere_uses_standard_time_year_round(self, latitude, longitude, offset):
+        winter_and_summer = pd.DatetimeIndex(["2020-01-15", "2020-07-15"], tz="UTC")
+        frame = pd.DataFrame({"temp": [20.0, 20.0]}, index=winter_and_summer)
+        result = utc_to_lst(frame, latitude=latitude, longitude=longitude)
+        assert result.index.equals(winter_and_summer.tz_localize(None) + pd.Timedelta(hours=offset))
+
     def test_miami_shift(self):
         df = make_utc_df(48)
         lst = utc_to_lst(df, "Miami")

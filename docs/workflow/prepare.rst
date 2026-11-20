@@ -46,8 +46,16 @@ short gaps of at most three rows in each direction. It drops rows lacking
 temperature or the first available solar column. The result is
 ``2_isd_solar_lst.csv`` with a ``DATE`` index column.
 
-For an alternate calibrated solar CSV, specify its path. It must already be
-in the same fixed LST basis as the station record.
+When NSRDB misses months in the fit baseline, ``samy-run`` can extend it
+with hourly ERA5-Land solar calibrated against overlapping NSRDB observations.
+The automatic extension retains complete hourly NSRDB triplets and writes
+``2_solar_extended_lst.csv`` next to the merged file. The pipeline also
+discovers ``data/ERA5_Land/calibrated/<city_lower>_solar_calibrated.csv``
+when it covers the baseline and its metadata records the city's standard
+offset.
+
+To select a solar CSV explicitly, pass its path in the same fixed LST basis
+as the station record.
 
 .. code-block:: console
 

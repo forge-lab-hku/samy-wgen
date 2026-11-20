@@ -234,6 +234,7 @@ def calibrate_era5_land_solar(
     utc_offset_hours: float,
     nsrdb_time_basis: Literal["auto", "utc", "lst"] = "auto",
     min_overlap_samples: int = 24,
+    preserve_observations: bool = False,
 ) -> pd.DataFrame:
     """Return calibrated hourly GHI/DNI/DHI in local standard time.
 
@@ -241,6 +242,7 @@ def calibrate_era5_land_solar(
     it is converted to W m-2 before calibration. NSRDB overlap is used to learn
     monthly/hourly GHI scale factors and diffuse fractions. The output DATE is
     fixed local standard time (UTC plus utc_offset_hours), without DST.
+    With preserve_observations, complete hourly NSRDB triplets take precedence.
     """
     if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
         raise ValueError("Latitude/longitude are outside valid geographic bounds")
@@ -352,6 +354,11 @@ def calibrate_era5_land_solar(
         {"GHI": calibrated_ghi, "DNI": dni, "DHI": dhi},
         index=pd.DatetimeIndex(ghi.index, name="DATE"),
     )
+    if preserve_observations:
+        columns = ["GHI", "DNI", "DHI"]
+        observed = nsrdb[columns].replace([np.inf, -np.inf], np.nan)
+        observed = observed.dropna().clip(lower=0).resample("h").mean().dropna()
+        result = observed.combine_first(result).rename_axis("DATE")
     result.attrs.update({
         "time_basis": "fixed LST",
         "nsrdb_time_basis": basis,

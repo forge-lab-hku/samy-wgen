@@ -27,7 +27,7 @@ expected by the pipeline. Data access requirements are in :doc:`../getting-start
      - Optional input to ``samy-delta``; not selected by ``samy-run``.
    * - ERA5-Land
      - Longer hourly reanalysis record; solar can be calibrated to NSRDB.
-     - Optional explicit download and calibration path.
+     - Used to extend NSRDB when the ``samy-run`` fit baseline needs additional solar coverage.
 
 ISD and NSRDB
 -------------

@@ -44,6 +44,15 @@ def _write_cmip6_inputs(
 
 
 class TestDownloadDefaults:
+    def test_cmip6_baseline_can_cross_historical_scenario_boundary(self, tmp_path):
+        from samy_wgen.pipeline.input_checks import cmip6_coverage_issues
+
+        _write_cmip6_inputs(tmp_path / "Miami")
+        assert cmip6_coverage_issues(
+            "Miami", tmp_path, "ssp245", ["mpi_esm1_2_lr"],
+            forecast_years=[2030], baseline_years=range(2011, 2021),
+        ) == []
+
     def test_cmip6_download_experiments_follow_ssp(self):
         from samy_wgen.pipeline.run_pipeline import _cmip6_download_experiments
 
@@ -365,6 +374,79 @@ class TestTrainingCoverageGate:
 
 
 class TestDeterministicArtifacts:
+    def test_stage3_cache_checks_periods_and_input(self, tmp_path, monkeypatch):
+        from samy_wgen.pipeline import run_pipeline, run_rsvar
+
+        calls = []
+
+        def fake_rsvar(output_path, **kwargs):
+            calls.append(kwargs)
+            for path in (output_path, output_path.with_suffix(".csv"),
+                         output_path.with_name("3_rsvar_solar_calibration.csv")):
+                path.write_text("generated")
+
+        monkeypatch.setattr(run_rsvar, "run_and_save_rsvar", fake_rsvar)
+        weather = tmp_path / "2_isd_solar_lst.csv"
+        weather.write_text("original")
+        (tmp_path / "3_rsvar.xlsx").write_text("legacy")
+        (tmp_path / "3_rsvar_solar_calibration.csv").write_text("legacy")
+        kwargs = dict(
+            merged_csv=weather, lat=25.8, longitude=-80.2, city="Miami",
+            baseline_start=1991, baseline_end=2010, forecast_start="2025-01-01",
+            forecast_end="2050-12-31 23:00", out_dir=tmp_path, overwrite=False,
+        )
+        run_pipeline._stage3_rsvar(**kwargs)
+        run_pipeline._stage3_rsvar(**kwargs)
+        run_pipeline._stage3_rsvar(**(kwargs | {"baseline_end": 2012}))
+        run_pipeline._stage3_rsvar(**(kwargs | {"baseline_end": 2012, "forecast_end": "2051-01-01"}))
+        weather.write_text("changed weather")
+        run_pipeline._stage3_rsvar(**(kwargs | {"baseline_end": 2012, "forecast_end": "2051-01-01"}))
+
+        assert [(c["baseline_end"], c["forecast_end"]) for c in calls] == [
+            (2010, "2050-12-31 23:00"), (2012, "2050-12-31 23:00"),
+            (2012, "2051-01-01"), (2012, "2051-01-01"),
+        ]
+
+    def test_stage4_cache_checks_scenario_model_and_climate_files(self, tmp_path, monkeypatch):
+        from samy_wgen.pipeline import run_climate_delta, run_pipeline
+
+        def load_climate(**kwargs):
+            temp = 10 * (kwargs["ssp"] == "ssp585") + (kwargs["gcm"] == "MRI")
+            return pd.DataFrame({"temp": [temp]}, index=pd.DatetimeIndex(["2030-01-01"])), pd.DataFrame(), {}
+
+        climate = tmp_path / "CMIP6" / "Miami"
+        climate.mkdir(parents=True)
+        scenario = climate / "mri_esm2_0_ssp585.csv"
+        source = tmp_path / "rsvar.csv"
+        source.write_text("base")
+        monkeypatch.setattr(run_climate_delta, "load_cmip6_or_cordex6", load_climate)
+        monkeypatch.setattr(run_climate_delta, "compute_mixed_resolution_baseline", lambda *a, **k: {})
+        monkeypatch.setattr(run_climate_delta, "load_rsvar_output", lambda _path: (pd.DataFrame(), {}))
+
+        calls = []
+
+        def apply_delta(_rsvar, daily, _monthly, **kwargs):
+            calls.append(daily["temp"].iloc[0])
+            output = daily.copy()
+            output.attrs["solar_monthly_energy"] = pd.DataFrame({"energy": [1.0]})
+            return output, {}
+
+        monkeypatch.setattr(run_climate_delta, "apply_mixed_resolution_climate_delta", apply_delta)
+        kwargs = dict(
+            rsvar_xlsx=source, cmip6_dir=climate.parent, city="Miami",
+            ssp="ssp245", lat=25.8, longitude=-80.2, baseline_start=1991,
+            baseline_end=2010, out_dir=tmp_path, overwrite=False,
+        )
+        assert run_pipeline._stage4_climate_delta(**kwargs)["temp"].iloc[0] == 0
+        assert run_pipeline._stage4_climate_delta(**kwargs)["temp"].iloc[0] == 0
+        assert run_pipeline._stage4_climate_delta(**(kwargs | {"ssp": "ssp585"}))["temp"].iloc[0] == 10
+        changed_model = kwargs | {"ssp": "ssp585", "gcm": "MRI"}
+        assert run_pipeline._stage4_climate_delta(**changed_model)["temp"].iloc[0] == 11
+        scenario.write_text("new climate input")
+        run_pipeline._stage4_climate_delta(**changed_model)
+
+        assert calls == [0, 10, 11, 11]
+
     def test_stage4_uses_mixed_resolution_inputs(self, tmp_path, monkeypatch):
         from samy_wgen.pipeline import run_climate_delta, run_pipeline
 
@@ -409,7 +491,7 @@ class TestDeterministicArtifacts:
         assert captured["monthly"] is monthly_df
         assert "temp" in result.columns
 
-    def test_output_historical_epw_requires_actual_2000(self, tmp_path):
+    def test_output_historical_epw_skips_incomplete_year(self, tmp_path, capsys):
         from samy_wgen.pipeline.run_pipeline import _output_historical_epw
 
         merged_csv = tmp_path / "2_isd_solar_lst.csv"
@@ -418,14 +500,14 @@ class TestDeterministicArtifacts:
         )
         df.to_csv(merged_csv, index=False)
 
-        with pytest.raises(SystemExit, match="does not contain year 2000"):
-            _output_historical_epw(
-                merged_csv=merged_csv,
-                city="Miami",
-                meta={"lat": 1.0, "lon": 2.0, "tz": -5.0, "country": "US", "elevation_m": 0.0},
-                out_dir=tmp_path,
-                overwrite=True,
-            )
+        assert _output_historical_epw(
+            merged_csv=merged_csv,
+            city="Miami",
+            meta={"lat": 1.0, "lon": 2.0, "tz": -5.0, "country": "US", "elevation_m": 0.0},
+            out_dir=tmp_path,
+            overwrite=True,
+        ) is None
+        assert "no complete historical year" in capsys.readouterr().out
 
     def test_output_ddy_files_uses_expected_period_slices(self, tmp_path):
         from samy_wgen.pipeline.run_pipeline import _output_ddy_files

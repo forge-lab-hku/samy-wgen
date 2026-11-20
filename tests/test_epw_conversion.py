@@ -65,8 +65,9 @@ def test_cli_yearly_epw_accepts_city_country_and_preserves_dewpoint(tmp_path):
         101325.0 * (1 - 2.25577e-5 * 2.0) ** 5.25588, abs=1)
 
 
-def test_cli_historical_epw_accepts_city_country(tmp_path):
-    index = pd.date_range("2000-01-01", "2000-12-31 23:00", freq="h")
+@pytest.mark.parametrize(("year", "epw_year"), [(2000, 2001), (2019, 2019)])
+def test_cli_historical_epw_accepts_city_country(tmp_path, year, epw_year):
+    index = pd.date_range(f"{year}-01-01", f"{year}-12-31 23:00", freq="h")
     weather = _weather(index).drop(columns="relative_humidity")
     weather["dewpoint"] = 12.0
     weather["pressure"] = 1013.25  # input hPa
@@ -74,11 +75,13 @@ def test_cli_historical_epw_accepts_city_country(tmp_path):
     weather.rename_axis("DATE").to_csv(source)
     out = _output_historical_epw(source, "Miami",
                                  {"country": "US", "lat": 25.76, "lon": -80.19,
-                                  "tz": -5.0, "elevation_m": 2.0}, tmp_path, True)
+                                  "tz": -5.0, "elevation_m": 2.0}, tmp_path, True,
+                                 baseline_start=year - 5, baseline_end=year)
+    assert out.name == f"Miami_historical_{year}.epw"
     lines = out.read_text().splitlines()
     assert len(lines) == 8768
     assert lines[0].startswith("LOCATION,Miami,,US,")
-    assert lines[8].split(",")[0] == "2001"
+    assert lines[8].split(",")[0] == str(epw_year)
 
 
 @pytest.mark.parametrize("pressure_reference", ["station", "sea_level"])

@@ -74,15 +74,13 @@ def get_utc_offset(
 ) -> float:
     """Return fixed LST offset from UTC (hours) for a city or coordinate pair.
 
-    The returned offset is the standard-time offset, evaluated on January 15 to
-    avoid daylight-saving shifts.
+    Use the lower UTC offset across January and July so cities in either
+    hemisphere use the same standard offset year-round.
     """
     tz_name = get_timezone_name(city=city, latitude=latitude, longitude=longitude)
-    standard_dt = datetime(2020, 1, 15, 12, 0, tzinfo=ZoneInfo(tz_name))
-    offset = standard_dt.utcoffset()
-    if offset is None:
-        raise ValueError(f"Could not determine UTC offset for timezone '{tz_name}'.")
-    return offset.total_seconds() / 3600.0
+    zone = ZoneInfo(tz_name)
+    offsets = [datetime(2020, month, 15, 12, tzinfo=zone).utcoffset() for month in (1, 7)]
+    return min(offsets).total_seconds() / 3600.0
 
 
 def utc_to_lst(
@@ -109,7 +107,7 @@ def utc_to_lst(
     offset = pd.Timedelta(hours=offset_hours)
     out = df.copy()
     if out.index.tz is not None:
-        out.index = out.index.tz_localize(None)
+        out.index = out.index.tz_convert("UTC").tz_localize(None)
     out.index = out.index + offset
     label = city or f"lat={latitude}, lon={longitude}"
     logger.debug("utc_to_lst: shifted %s by %.1fh for %s", len(df), offset_hours, label)

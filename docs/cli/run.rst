@@ -77,7 +77,9 @@ Input and automatic-download options
    * - ``--cmip6-dir DIR``
      - Override the CMIP6 root under ``data/CMIP6``.
    * - ``--download-data SOURCE [SOURCE ...]``
-     - Auto-download sources from ``isd``, ``nsrdb``, ``cmip6``; all three by default.
+     - Allow automatic downloads of ``isd``, ``nsrdb``, ``era5-land``, and
+       ``cmip6``. All four are enabled by default. ERA5-Land solar is requested
+       when the NSRDB record misses months in the fit baseline.
    * - ``--skip-download``
      - Require local input files; disable automatic retrieval.
    * - ``--isd-station ID [CITY=ID ...]``

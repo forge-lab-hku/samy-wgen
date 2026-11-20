@@ -274,7 +274,11 @@ class RSVAROnlyPipeline(ForecastTo2100V5):
         return forecast_df
 
 
-def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True, longitude=None):
+def run_and_save_rsvar(
+    isd_path, lat, output_path, city, verbose=True, longitude=None, *,
+    baseline_start=BASELINE_START, baseline_end=BASELINE_END,
+    forecast_start=FORECAST_START, forecast_end=FORECAST_END,
+):
     """Run RS-VAR pipeline and save output to Excel.
 
     Args:
@@ -293,8 +297,8 @@ def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True, longitude
         print(f"  ISD data:    {isd_path}")
         print(f"  Latitude:    {lat}°N")
         print(f"  Note:        ISD data assumed to be in LST (Local Standard Time)")
-        print(f"\nBaseline period: {BASELINE_START}-{BASELINE_END}")
-        print(f"Forecast period: {FORECAST_START} to {FORECAST_END}")
+        print(f"\nBaseline period: {baseline_start}-{baseline_end}")
+        print(f"Forecast period: {forecast_start} to {forecast_end}")
 
         if longitude is None:
             configured = pd.read_csv(_get_bundled_cities_config())
@@ -310,8 +314,8 @@ def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True, longitude
 
         rsvar_output, pipeline, calibration, solar_info = fit_solar_latent_rsvar(
             isd_path, latitude=lat, longitude=longitude,
-            baseline_start=BASELINE_START, baseline_end=BASELINE_END,
-            forecast_start=FORECAST_START, forecast_end=FORECAST_END,
+            baseline_start=baseline_start, baseline_end=baseline_end,
+            forecast_start=forecast_start, forecast_end=forecast_end,
             verbose=verbose,
         )
         target_vars = ['temp', 'pressure', 'wind_speed', 'relative_humidity',
@@ -329,10 +333,10 @@ def run_and_save_rsvar(isd_path, lat, output_path, city, verbose=True, longitude
             ['isd_path', str(isd_path)],
             ['lat', lat],
             ['longitude', longitude],
-            ['baseline_start', BASELINE_START],
-            ['baseline_end', BASELINE_END],
-            ['forecast_start', FORECAST_START],
-            ['forecast_end', FORECAST_END],
+            ['baseline_start', baseline_start],
+            ['baseline_end', baseline_end],
+            ['forecast_start', forecast_start],
+            ['forecast_end', forecast_end],
             ['isd_baseline_temp_mean', pipeline.isd_baseline['temp'].mean()],
             ['isd_baseline_temp_std', pipeline.isd_baseline['temp'].std()],
             ['n_hours', len(rsvar_output)],
