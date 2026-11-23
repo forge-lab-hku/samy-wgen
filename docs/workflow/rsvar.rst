@@ -17,7 +17,7 @@ are covered by the prepared observations and projections.
 .. code-block:: console
 
    samy-run --city Miami --baseline-start 1991 --baseline-end 2010 \
-     --start 2025-01-01 --end 2050-12-31 --epw-years 2030,2050
+     --start 2025-01-01 --end "2050-12-31 23:00" --epw-years 2030,2050
 
 To fit from an already prepared CSV without the one-click pipeline:
 

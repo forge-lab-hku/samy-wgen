@@ -43,8 +43,11 @@ Fit, forecast, and projection options
      - Meaning and default
    * - ``--baseline-start YEAR`` / ``--baseline-end YEAR``
      - Observation/projection reference years; defaults 1991 and 2010.
-   * - ``--start DATE`` / ``--end DATE``
-     - Forecast bounds; defaults ``2025-01-01`` and ``2100-12-31 23:00``.
+   * - ``--start TIMESTAMP`` / ``--end TIMESTAMP``
+     - Inclusive forecast bounds. Defaults are ``2025-01-01`` and
+       ``2100-12-31 23:00``. A date without a time means midnight. To export
+       an EPW for the final year, include all hours through December 31 at
+       ``23:00``.
    * - ``--ssp CODE``
      - CMIP6 scenario; default ``ssp245``.
    * - ``--gcm MODEL``

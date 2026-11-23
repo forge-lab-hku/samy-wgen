@@ -6,7 +6,7 @@ The scenario-conditioned Actual Meteorological Year (sAMY) workflow addresses th
 
 **Development status:** This package is under active development. The core functionality has been implemented, but comprehensive testing and validation are still ongoing. APIs and outputs may change before the first stable release.
 
-**Documentation:** [samy-wgen documentation](https://forge-lab-hku.github.io/samy-wgen/)
+**Documentation:** [samy-wgen documentation](https://forge-lab-hku.github.io/samy-wgen/) · [Changelog](docs/CHANGELOG.md)
 
 **Citation:** Guo, H. & He, K. (2026). Scenario-conditioned actual meteorological years (sAMY): A stochastic weather generator using multi-decadal observations. *Energy and Buildings*, **364**, 117508. [doi:10.1016/j.enbuild.2026.117508](https://doi.org/10.1016/j.enbuild.2026.117508)
 
@@ -14,28 +14,28 @@ The scenario-conditioned Actual Meteorological Year (sAMY) workflow addresses th
 
 ## Installation
 
-**With conda (recommended)**
+Use Python 3.10 or newer. We recommend Python 3.11. To create an environment with conda:
 
 ```bash
-git clone https://github.com/forge-lab-hku/samy-wgen.git
-cd samy-wgen
-
 conda create -n samy-wgen python=3.11
 conda activate samy-wgen
-
-python -m pip install -e .          # core dependencies
-# For development and tests, use python -m pip install -e ".[dev]" instead.
 ```
 
-**With pip only**
+Install the tagged release in your Python environment:
+
+```bash
+git clone --branch v0.2.0 --depth 1 https://github.com/forge-lab-hku/samy-wgen.git
+cd samy-wgen
+python -m pip install .
+```
+
+For development and tests, clone the main branch and use an editable installation:
 
 ```bash
 git clone https://github.com/forge-lab-hku/samy-wgen.git
 cd samy-wgen
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 ```
-
-Python ≥ 3.10 required. All dependencies are declared in `pyproject.toml` and installed automatically.
 
 ---
 
@@ -76,7 +76,7 @@ After configuring the NSRDB and CDS credentials above, run this from the reposit
 samy-run --city Miami
 ```
 
-`samy-run` downloads missing ISD, NSRDB, and CMIP6 inputs, trains RS-VAR, applies the CMIP6 signal, and writes EPW and DDY files. The first run downloads decades of weather and projection data and can take substantial time. Intermediate deterministic outputs are cached for later runs. This example requires network access and accepted CDS dataset licences; it is not an offline demo. All user-facing city values use the canonical ASCII city code from `src/samy_wgen/config/cities_config.csv`.
+`samy-run` downloads missing ISD, NSRDB, and CMIP6 inputs, trains RS-VAR, applies the CMIP6 signal, and writes EPW and DDY files. When NSRDB coverage misses months in the fit baseline, the pipeline can use hourly ERA5-Land radiation calibrated against overlapping NSRDB observations. The first run requires network access and the applicable CDS dataset licences. Downloading decades of data can take substantial time. Later runs reuse cached stages when the inputs and run settings match. Use the canonical ASCII city codes from [`cities_config.csv`](src/samy_wgen/config/cities_config.csv).
 
 Other examples:
 
@@ -84,14 +84,17 @@ Other examples:
 # Batch one-click run for multiple cities
 samy-run --city Miami Los_Angeles
 
-# Custom forecast window and scenario
-samy-run --city Miami --start 2025-01-01 --end 2060-12-31 --ssp ssp585
+# Custom forecast window and scenario, with EPW export for selected years
+samy-run --city Miami --start 2025-01-01 --end "2060-12-31 23:00" --ssp ssp585 --epw-years 2030,2050
 
 # Select a GCM for validation, download, and generation
 samy-run --city Miami --gcm CNRM-ESM2-1 --download-years 1998 2024
 
 # Generate stochastic regime-path members
 samy-run --city Miami --mode ensemble --members 50
+
+# Prepare hourly weather and solar inputs for a separate fit
+samy-run --city Miami --prepare-only
 
 # Use only pre-existing local files
 samy-run --city Miami --skip-download
@@ -100,7 +103,7 @@ samy-run --city Miami --skip-download
 samy-run --city Miami --overwrite
 ```
 
-For individual commands, `samy-download` retrieves or inspects input data, `samy-rsvar` fits the weather model, and `samy-delta` applies a climate projection signal. Run a command with `--help` to see its options; detailed command references are in the [documentation](https://forge-lab-hku.github.io/samy-wgen/cli/index.html).
+For individual commands, `samy-download` retrieves or inspects input data, `samy-rsvar` fits the weather model, and `samy-delta` applies a climate projection signal. Run a command with `--help` to see its options. The [CLI reference](https://forge-lab-hku.github.io/samy-wgen/cli/index.html) covers each command in detail.
 
 ---
 

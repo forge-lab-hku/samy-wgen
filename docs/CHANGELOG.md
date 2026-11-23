@@ -1,8 +1,8 @@
 # Changelog
 
-## [0.2.0] - pending release
+## [0.2.0]
 
-This is the first version prepared for a public release. Earlier `0.1.x` entries below document development milestones; they were not tagged releases.
+First tagged public release. Earlier `0.1.x` entries document development milestones.
 
 ### Added
 - Added the `samy-download` data-retrieval CLI, automatic missing-input downloads in `samy-run`, and batched multi-city downloads with per-city ISD station overrides.
@@ -12,18 +12,21 @@ This is the first version prepared for a public release. Earlier `0.1.x` entries
 - Added `samy-download extract-cmip6` to create city time series from local CMIP6 NetCDF files, including ZIP-wrapped files.
 - Added MRI-ESM2-0 support, explicit `samy-run --gcm` selection, and `--rsvar-input` reuse of an existing single-city RS-VAR result.
 - Added live NSRDB source and coverage inspection to improve source selection and grouped downloads.
+- Added `samy-run --prepare-only` to prepare hourly weather and solar inputs before fitting. The standalone `samy-rsvar` and `samy-delta` commands support separate fitting and climate-delta stages.
 
 ### Changed
 - Simplified ensemble generation to regime-path sampling with zero VAR innovations.
-- Standardized user-facing city codes as ASCII identifiers and derive local solar time offsets from city coordinates.
+- Standardized user-facing city codes as ASCII identifiers and derived local standard-time offsets from city coordinates.
 - Switched NOAA ISD downloads from FTP to HTTPS.
 - Updated CMIP6 handling to preserve daily and monthly inputs together and determine temporal resolution per variable.
 - Improved automatic ISD station and NSRDB coverage selection using available station and query coverage.
+- Check input files and run parameters before reusing cached intermediates and exports.
 
 ### Fixed
-- Validate cached CMIP6 coverage against the requested years before skipping a download.
+- Validate observation and training coverage, required CMIP6 variables, and the monthly solar windows used for climate deltas. Use the selected GCM for downloads, validation, and delta application.
 - Harden RS-VAR fitting and regime-label handling for sparse assignments and non-finite posterior output.
 - Use dewpoint as a fallback when yearly EPW humidity inputs are unavailable, and generalize DDY generation for baseline and future periods.
+- Use a consistent station-pressure reference for EPW and DDY exports. Validate complete annual EPW coverage, write hours 1–24 with minute 60, and use EPW missing-value codes for unavailable auxiliary fields.
 
 ## Development milestone 0.1.2 - 2026-04-10
 
