@@ -41,6 +41,7 @@ def test_yearly_epw_has_valid_calendar_header_and_missing_codes(tmp_path):
         assert row[10:13] == ["9999"] * 3
         assert row[16:20] == ["999999", "999999", "999999", "9999"]
         assert row[20] == "999"
+        assert row[26:30] == ["9", "999999999", "999", "0.999"]
 
 
 def test_yearly_epw_rejects_missing_hour(tmp_path):
@@ -115,6 +116,7 @@ def test_tmy_epw_uses_end_of_hour_and_missing_wind_codes(tmp_path, pressure_refe
     assert row[0:5] == ["2001", "1", "1", "1", "60"]
     assert len(row[5]) == 40
     assert row[20:22] == ["999", "999"]
+    assert row[26:30] == ["9", "999999999", "999", "0.999"]
     assert row[16:20] == ["999999", "999999", "999999", "9999"]
     factor = (1 - 2.25577e-5 * 173.0) ** 5.25588
     expected_pressure = 101325.0 * (factor if pressure_reference == "sea_level" else 1)

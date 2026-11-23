@@ -180,8 +180,8 @@ def _write_epw_for_year(
         osky = 99
         vis_km = 9999
         ceil_m = 99999
-        wx_obs = 0
-        wx_codes = 0
+        wx_obs = 9  # Present weather observation unavailable
+        wx_codes = "999999999"  # Nine missing present weather codes
         pw_mm = 999
         aod = 0.999
         snow_cm = 999

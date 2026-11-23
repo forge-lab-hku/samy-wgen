@@ -377,7 +377,7 @@ def convert_tmy_to_epw(tmy_csv_path, output_epw_path, city_name, city_metadata):
             9999,  # [24] Visibility (km)
             99999,  # [25] Ceiling height (m)
             9,  # [26] Present weather observation
-            9,  # [27] Present weather codes
+            "999999999",  # [27] Present weather codes unavailable
             999,  # [28] Precipitable water (mm)
             0.999,  # [29] Aerosol optical depth unavailable
             999,  # [30] Snow depth (cm)
